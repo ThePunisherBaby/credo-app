@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <base href="$FLUTTER_BASE_HREF">
+
+  <meta charset="UTF-8">
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Credo — Red Social Internacional con Jerarquía Eclesiástica Mundial">
+  <meta name="theme-color" content="#7A1C2E">
+
+  <!-- iOS meta tags & icons -->
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Credo">
+  <link rel="apple-touch-icon" href="icons/Icon-192.png">
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/png" href="favicon.png"/>
+
+  <title>Credo — Red Eclesiástica Internacional</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400&display=swap" rel="stylesheet">
+  <style>
+    html, body {
+      background-color: #FAF7F2;
+      margin: 0;
+      height: 100%;
+      font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+    #credo-splash {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: #FAF7F2;
+      z-index: 9999;
+      transition: opacity 0.25s ease;
+    }
+    .credo-emblem {
+      width: 68px;
+      height: 68px;
+      border-radius: 20px;
+      background: linear-gradient(135deg, #7A1C2E, #56111F);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 10px 26px rgba(122, 28, 46, 0.22);
+      color: #FBF3DF;
+      font-size: 36px;
+      font-weight: 700;
+    }
+    .credo-title {
+      margin-top: 16px;
+      font-family: 'Cinzel', Georgia, serif;
+      font-size: 26px;
+      font-weight: 700;
+      letter-spacing: 3px;
+      color: #7A1C2E;
+    }
+    .credo-sub {
+      margin-top: 6px;
+      font-size: 13px;
+      color: #655D56;
+    }
+    .credo-spinner {
+      margin-top: 22px;
+      width: 26px;
+      height: 26px;
+      border: 2.5px solid #E6DDD0;
+      border-top-color: #B8860B;
+      border-radius: 50%;
+      animation: credo-spin 0.8s linear infinite;
+    }
+    @keyframes credo-spin {
+      to { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <div id="credo-splash" aria-label="Cargando Credo">
+    <div class="credo-emblem">+</div>
+    <div class="credo-title">CREDO</div>
+    <div class="credo-sub">Red Eclesiástica Internacional</div>
+    <div class="credo-spinner"></div>
+  </div>
+  <script src="flutter_bootstrap.js" async></script>
+</body>
+</html>

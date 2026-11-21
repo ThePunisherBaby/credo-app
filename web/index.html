@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="color-scheme" content="light dark" />
+  <script>
+    try {
+      var savedScheme = localStorage.getItem('credo-color-scheme');
+      if (savedScheme === 'dark' || savedScheme === 'light') {
+        document.querySelector('meta[name="color-scheme"]').content = savedScheme;
+      }
+      var savedGlass = localStorage.getItem('credo-glass-opacity');
+      if (savedGlass !== null) {
+        document.documentElement.style.setProperty('--glass-user-opacity', savedGlass);
+      }
+      var savedScale = localStorage.getItem('credo-font-scale');
+      if (savedScale) {
+        document.documentElement.dataset.fontScale = savedScale;
+      }
+    } catch (e) {}
+  </script>
+  <title>Credo — Fe, Comunión y Radio en Vivo</title>
+  <meta name="description" content="Feed oficial verificado, Aire 96 FM en vivo, Liturgia del Día de Reflexionando la Palabra, Oración y Jerarquía Eclesiástica." />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,500;0,600;1,500&family=Nunito:wght@500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/styles.css?v=6" />
+</head>
+<body>
+  <!-- Soft progressive top scroll edge blur (functional layer) -->
+  <div class="edge-soft" aria-hidden="true"></div>
+
+  <div class="app-shell">
+    <!-- Desktop Adaptive Floating Sidebar Rail (Functional Liquid Glass Layer) -->
+    <aside class="desktop-sidebar" aria-label="Navegación principal">
+      <div class="lg lg-rail" id="desktopRailGlass">
+        <div class="lg__shadow" aria-hidden="true"></div>
+        <div class="lg__glass" aria-hidden="true"></div>
+        <div class="lg__rim" aria-hidden="true"></div>
+        <div class="lg__glow" aria-hidden="true"></div>
+        <div class="lg__content rail-inner">
+          <a href="#/feed" class="brand-lockup" aria-label="Credo Inicio">
+            <span class="brand-crest" aria-hidden="true">
+              <svg viewBox="0 0 28 28" width="22" height="22" fill="none">
+                <path d="M14 4v20M7.5 10.5h13" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+              </svg>
+            </span>
+            <span class="brand-wordmark">
+              <strong>Credo</strong>
+              <small id="railSubTag">Iglesia Universal</small>
+            </span>
+          </a>
+
+          <nav class="rail-nav" id="desktopNav" aria-label="Secciones"></nav>
+
+          <div class="rail-footer">
+            <button type="button" class="btn btn-gold btn-block" id="desktopPublishBtn" hidden>
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+              <span data-i18n="feed.publishBtn">Publicar</span>
+            </button>
+            <button type="button" class="rail-account-chip" id="desktopAccountBtn"></button>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Dynamic View Viewport — ONLY the active route's DOM is mounted here -->
+    <main class="main-stage" id="mainStage" tabindex="-1">
+      <div id="appView" class="view-mount"></div>
+    </main>
+  </div>
+
+  <!-- Persistent Floating Liquid Glass Mini-Player (Matching Circular Capsule Island) -->
+  <div class="mini-player-anchor" id="miniPlayerAnchor" hidden>
+    <div class="lg lg-mini" id="miniPlayerGlass" role="region" aria-label="Reproductor en vivo">
+      <div class="lg__shadow" aria-hidden="true"></div>
+      <div class="lg__glass" aria-hidden="true"></div>
+      <div class="lg__rim" aria-hidden="true"></div>
+      <div class="lg__glow" aria-hidden="true"></div>
+      <div class="lg__content mini-inner">
+        <button type="button" class="mini-expand-hit" id="miniExpandBtn" aria-label="Expandir reproductor">
+          <img class="mini-art" id="miniArt" src="" alt="" width="40" height="40" />
+          <span class="mini-meta">
+            <span class="mini-title-row">
+              <span class="live-dot" aria-hidden="true"></span>
+              <strong id="miniStationName"></strong>
+            </span>
+            <span class="mini-prog" id="miniProgramName"></span>
+          </span>
+        </button>
+        <div class="mini-controls">
+          <button type="button" class="icon-btn-44" id="miniPlayPauseBtn" aria-label="Reproducir o pausar"></button>
+          <button type="button" class="icon-btn-44" id="miniCloseBtn" aria-label="Cerrar reproductor">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Mobile Floating Dynamic Island Dock (5 Core Tabs + Apple Spring Sliding Pill) -->
+  <nav class="mobile-dock" id="mobileDockNav" aria-label="Navegación móvil">
+    <div class="lg lg-dock" id="mobileDockGlass">
+      <div class="lg__shadow" aria-hidden="true"></div>
+      <div class="lg__glass" aria-hidden="true"></div>
+      <div class="lg__rim" aria-hidden="true"></div>
+      <div class="lg__glow" aria-hidden="true"></div>
+      <div class="lg__content dock-items" id="mobileNav">
+        <span class="dock-pill-indicator" id="dockIndicator" aria-hidden="true"></span>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Full-Screen Apple Music-Style Live Audio Player Sheet (1:1 Spring Drag-to-Dismiss) -->
+  <div class="full-player-backdrop" id="fullPlayerBackdrop" hidden></div>
+  <section class="full-player-sheet" id="fullPlayerSheet" hidden aria-modal="true" role="dialog" aria-label="Reproductor en vivo">
+    <div class="fp-bg-glow" id="fpBgGlow" aria-hidden="true"></div>
+    <div class="fp-drag-zone" id="fpDragHandle">
+      <div class="sheet-grabber" aria-hidden="true"></div>
+      <div class="fp-top-row">
+        <span class="live-pill-lg"><span class="live-dot" aria-hidden="true"></span><span id="fpLiveBadge">EN VIVO</span></span>
+        <button type="button" class="icon-btn-44 fp-close-btn" id="fpCloseBtn" aria-label="Minimizar reproductor">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <div class="fp-body">
+      <div class="fp-art-frame" id="fpArtFrame">
+        <img id="fpArt" src="" alt="" />
+      </div>
+
+      <div class="fp-info">
+        <span class="fp-freq" id="fpFreq"></span>
+        <h2 class="fp-station" id="fpStation"></h2>
+        <p class="fp-program" id="fpProgram"></p>
+      </div>
+
+      <div class="fp-visualizer" id="fpVisualizer" aria-hidden="true">
+        <span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+      </div>
+
+      <div class="fp-transport">
+        <button type="button" class="icon-btn-48 fp-side-btn" id="fpPrevStationBtn" aria-label="Emisora anterior">
+          <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M6 6h2v12H6zm3.5 6 8.5 6V6z"/></svg>
+        </button>
+        <button type="button" class="fp-play-main" id="fpPlayBtn" aria-label="Reproducir o pausar"></button>
+        <button type="button" class="icon-btn-48 fp-side-btn" id="fpNextStationBtn" aria-label="Siguiente emisora">
+          <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M16 6h2v12h-2zM6 18l8.5-6L6 6z"/></svg>
+        </button>
+      </div>
+
+      <div class="fp-utility-row">
+        <button type="button" class="fp-util-chip" id="fpSleepBtn">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+          <span id="fpSleepLabel">Temporizador</span>
+        </button>
+        <button type="button" class="fp-util-chip" id="fpAirplayBtn">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M5 17H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-1"/><polygon points="12 15 17 21 7 21 12 15"/></svg>
+          <span>AirPlay / Cast</span>
+        </button>
+        <button type="button" class="fp-util-chip" id="fpShareBtn">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
+          <span>Compartir</span>
+        </button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Top-Layer Native Modal Dialog (Light-dismiss + @starting-style + Safari fallback) -->
+  <dialog id="modalDialog" class="credo-dialog" closedby="any" aria-labelledby="modalTitle"></dialog>
+
+  <!-- Official Story Viewer Dialog -->
+  <dialog id="storyDialog" class="story-dialog" closedby="any" aria-label="Destacado oficial"></dialog>
+
+  <!-- Live Toast Feedback -->
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script type="module" src="/app.js?v=6"></script>
+</body>
+</html>
