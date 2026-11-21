@@ -195,6 +195,13 @@ class MainActivity : AppCompatActivity() {
             }
         })
 
+        val prefs = getSharedPreferences("credo_app_prefs", MODE_PRIVATE)
+        val lastVerCode = prefs.getInt("last_ver_code", 0)
+        if (lastVerCode != BuildConfig.VERSION_CODE) {
+            webView.clearCache(true)
+            prefs.edit().putInt("last_ver_code", BuildConfig.VERSION_CODE).apply()
+        }
+
         val startUrl = intent?.dataString?.takeIf { it.startsWith("https://credoapp.tech") }
             ?: BuildConfig.CREDO_URL
         webView.loadUrl(startUrl)
