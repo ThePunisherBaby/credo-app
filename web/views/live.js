@@ -14,9 +14,6 @@ export async function mount({ root, app, signal }) {
         <p class="t-footnote">${app.esc(d.live.subtitle)}</p>
         <h1 class="t-large-title">${app.esc(d.live.title)}</h1>
       </div>
-      ${app.isCredoPlus()
-        ? `<span class="rank-tag" style="padding:6px 12px">✦ Credo Plus · Sin esperas</span>`
-        : `<button type="button" class="btn btn-sm btn-soft" id="liveUpgradeBtn">✦ Credo Plus</button>`}
     </header>
 
     <section id="liveHeroHost">
@@ -38,10 +35,6 @@ export async function mount({ root, app, signal }) {
     </div>
     <section class="tv-list" id="tvList" hidden></section>
   `;
-
-  root.querySelector('#liveUpgradeBtn')?.addEventListener('click', () => {
-    location.hash = '#/profile';
-  });
 
   const heroHost = root.querySelector('#liveHeroHost');
   const radioGrid = root.querySelector('#radioGrid');
@@ -169,7 +162,7 @@ export async function mount({ root, app, signal }) {
       if (cur.channel?.id === ch.id) {
         audioEngine.togglePlay();
       } else {
-        app.playLiveWithPreRoll(ch);
+        app.playLive(ch);
       }
       return;
     }
@@ -179,7 +172,7 @@ export async function mount({ root, app, signal }) {
       const ch = channelsData.all.find((c) => c.id === Number(expandBtn.dataset.expandChannel));
       if (!ch) return;
       app.setLiveQueue(channelsData.all);
-      app.playLiveWithPreRoll(ch, { expandPlayer: true });
+      app.playLive(ch, { expandPlayer: true });
       return;
     }
 
@@ -188,7 +181,7 @@ export async function mount({ root, app, signal }) {
       const tv = channelsData.tv_channels.find((c) => c.id === Number(tvBtn.dataset.playTv));
       if (!tv) return;
       app.setLiveQueue(channelsData.all);
-      app.playLiveWithPreRoll(tv, { expandPlayer: true });
+      app.playLive(tv, { expandPlayer: true });
     }
   });
 

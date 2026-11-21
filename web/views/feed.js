@@ -142,7 +142,7 @@ export async function mount({ root, app, signal }) {
       const liveBtn = e.target.closest('[data-live-slug]');
       if (liveBtn) {
         const ch = state.liveStations.find((c) => c.slug === liveBtn.dataset.liveSlug);
-        if (ch) app.playLiveWithPreRoll(ch);
+        if (ch) app.playLive(ch);
         return;
       }
       const stBtn = e.target.closest('[data-story-idx]');
@@ -353,9 +353,7 @@ export async function mount({ root, app, signal }) {
       const box = playVid.closest('[data-video-box]');
       const yt = box?.dataset.yt;
       if (!yt) return;
-      await app.runPreRollIfNeeded(() => {
-        box.innerHTML = `<iframe src="https://www.youtube-nocookie.com/embed/${encodeURIComponent(yt)}?autoplay=1&rel=0&modestbranding=1" title="Video oficial de Credo" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe>`;
-      });
+      box.innerHTML = `<iframe src="https://www.youtube-nocookie.com/embed/${encodeURIComponent(yt)}?autoplay=1&rel=0&modestbranding=1" title="Video oficial de Credo" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe>`;
       return;
     }
 

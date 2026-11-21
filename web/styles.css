@@ -363,11 +363,11 @@ img { display: block; max-width: 100%; }
    ========================================================================== */
 .mobile-dock {
   position: fixed;
-  left: 16px;
-  right: 16px;
+  left: 12px;
+  right: 12px;
   bottom: calc(14px + env(safe-area-inset-bottom, 0px));
   z-index: 40;
-  max-width: 344px;
+  max-width: 376px;
   margin: 0 auto;
   transition: transform 420ms var(--ease-smooth);
 }
@@ -378,8 +378,8 @@ img { display: block; max-width: 100%; }
 .dock-items {
   position: relative;
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  padding: 5px 6px;
+  grid-template-columns: repeat(5, 1fr);
+  padding: 5px 5px;
   gap: 2px;
 }
 
@@ -1640,3 +1640,133 @@ dialog.story-dialog::backdrop { background: rgba(0, 0, 0, 0.84); }
 
 .dm-bubble { max-width: 82%; padding: 11px 14px; border-radius: 10px; background: var(--surface-2); align-self: flex-start; font-size: 0.92rem; }
 .dm-bubble.mine { background: var(--navy); color: #FFFFFF; align-self: flex-end; }
+
+/* ==========================================================================
+   REELS — Vertical Catholic Video Stream (Crisp dark cinema frame)
+   ========================================================================== */
+.reels-stage {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  scroll-snap-type: y mandatory;
+}
+.reel-card {
+  position: relative;
+  height: calc(100dvh - 154px);
+  min-height: 460px;
+  max-height: 760px;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #07080B;
+  color: #FFFFFF;
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
+  border: var(--hairline) solid var(--sep-strong);
+}
+.reel-media {
+  position: absolute;
+  inset: 0;
+  background: #07080B;
+}
+.reel-media img,
+.reel-media iframe {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border: 0;
+  display: block;
+}
+.reel-play-btn {
+  position: absolute;
+  inset: 0;
+  border: none;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.72), transparent 46%);
+  display: grid;
+  place-items: center;
+  color: #FFFFFF;
+  z-index: 2;
+}
+.reel-views-tag {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  background: rgba(0, 0, 0, 0.65);
+  color: #FFFFFF;
+  font-size: 0.74rem;
+  font-weight: 700;
+  padding: 4px 9px;
+  border-radius: 6px;
+}
+.reel-scrim {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.88) 0%, rgba(0, 0, 0, 0.25) 38%, transparent 64%);
+  pointer-events: none;
+  z-index: 3;
+}
+.reel-rail {
+  position: absolute;
+  right: 10px;
+  bottom: 22px;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+.reel-rail-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  min-width: 48px;
+  padding: 8px 6px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(12, 14, 20, 0.65);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  color: #FFFFFF;
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-decoration: none;
+}
+.reel-rail-btn.is-active {
+  border-color: var(--gold-bright);
+  color: var(--gold-bright);
+}
+.reel-overlay {
+  position: absolute;
+  left: 14px;
+  right: 74px;
+  bottom: 18px;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  pointer-events: none;
+}
+.reel-channel-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+.reel-title {
+  margin: 0;
+  font-family: var(--font-rounded);
+  font-size: 1.04rem;
+  font-weight: 800;
+  line-height: 1.24;
+  color: #FFFFFF;
+}
+.reel-desc {
+  margin: 0;
+  font-size: 0.82rem;
+  line-height: 1.4;
+  color: rgba(255, 255, 255, 0.8);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}

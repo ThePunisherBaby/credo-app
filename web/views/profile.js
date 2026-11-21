@@ -1,10 +1,9 @@
-// views/profile.js — Pantalla 5: Perfil, Guardados, Accesibilidad (Dark OLED / Claro / Vidrio) y Credo Plus
+// views/profile.js — Pantalla 5: Perfil, Parroquias, Mensajes, Guardados y Ajustes
 // Loaded on demand ONLY when on #/profile.
 
 export async function mount({ root, app, signal }) {
   const d = app.dict();
-  let subTab = 'plus';
-  let plusPlan = 'annual';
+  let subTab = 'settings';
 
   const currentScheme = () => {
     try {
@@ -17,12 +16,11 @@ export async function mount({ root, app, signal }) {
 
   function renderShell() {
     const u = app.user;
-    const isPlus = app.isCredoPlus();
 
     root.innerHTML = `
       <header class="page-head">
         <div>
-          <p class="t-footnote">${isPlus ? '✦ ' + app.esc(d.profile.plusActive) : app.esc(d.profile.plusFree)}</p>
+          <p class="t-footnote">${u ? app.esc(d.ranks[u.ecclesiastical_rank] || u.ecclesiastical_rank) : app.esc(d.profile.guestName)}</p>
           <h1 class="t-large-title">${app.esc(d.profile.title)}</h1>
         </div>
         ${u
@@ -30,7 +28,7 @@ export async function mount({ root, app, signal }) {
           : `<button type="button" class="btn btn-sm btn-gold" id="profLoginBtn">${app.esc(d.profile.signIn)}</button>`}
       </header>
 
-      <article class="card" style="display:flex;flex-direction:column;gap:12px;margin-bottom:16px">
+      <article class="card" style="display:flex;flex-direction:column;gap:12px;margin-bottom:14px">
         <div style="display:flex;align-items:center;gap:14px">
           <span class="avatar" style="--av-sz:60px;--av-bg:${app.esc(u?.avatar_color || '#0F1E36')}">
             ${u?.avatar_url ? `<img src="${app.esc(u.avatar_url)}" alt="${app.esc(u.full_name)}" />` : (u ? app.initials(u.full_name) : '✝')}
@@ -40,7 +38,6 @@ export async function mount({ root, app, signal }) {
               <strong style="font-size:1.05rem">${app.esc(u ? (u.title_prefix ? `${u.title_prefix} ` : '') + u.full_name : d.profile.guestName)}</strong>
               ${u?.can_publish ? '<span class="verified-check">✓</span>' : ''}
               ${u?.is_ceo ? '<span class="rank-tag" style="background:linear-gradient(135deg,#D9B75A,#B98E34);color:#0B1220;font-weight:800">CEO · Credo</span>' : ''}
-              ${isPlus ? '<span class="rank-tag">✦ Plus</span>' : ''}
             </div>
             <p class="t-footnote" style="margin-top:3px">
               ${u ? `${app.esc(u.current_office_title || d.ranks[u.ecclesiastical_rank] || u.ecclesiastical_rank)}${u.lineage?.length ? ` · ${app.esc(u.lineage[u.lineage.length - 1].name)}` : ''}` : app.esc(d.profile.guestHint)}
@@ -54,21 +51,35 @@ export async function mount({ root, app, signal }) {
           </div>` : (u ? `<div style="display:flex;justify-content:flex-end"><a href="#/user/${u.id}" class="btn btn-sm btn-soft">Ver perfil público</a></div>` : '')}
       </article>
 
-      <a href="#/parishes" class="card" style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;padding:14px 16px;text-decoration:none;color:inherit">
-        <div style="display:flex;align-items:center;gap:12px;min-width:0">
-          <span style="width:40px;height:40px;border-radius:8px;background:var(--gold-soft);color:var(--gold-text);display:grid;place-items:center;flex-shrink:0">
-            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v5"/><path d="M9.5 4.5h5"/><path d="M5 21V11l7-4 7 4v10"/><path d="M9 21v-5a3 3 0 0 1 6 0v5"/><path d="M3 21h18"/></svg>
-          </span>
-          <div style="min-width:0">
-            <strong style="display:block;font-size:0.95rem">Parroquias y Jerarquía</strong>
-            <span class="t-footnote">Diócesis, conferencias episcopales y comunidad</span>
+      <div style="display:grid;gap:10px;margin-bottom:14px">
+        <a href="#/parishes" class="card" style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px 16px;text-decoration:none;color:inherit">
+          <div style="display:flex;align-items:center;gap:12px;min-width:0">
+            <span style="width:40px;height:40px;border-radius:8px;background:var(--gold-soft);color:var(--gold-text);display:grid;place-items:center;flex-shrink:0">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v5"/><path d="M9.5 4.5h5"/><path d="M5 21V11l7-4 7 4v10"/><path d="M9 21v-5a3 3 0 0 1 6 0v5"/><path d="M3 21h18"/></svg>
+            </span>
+            <div style="min-width:0">
+              <strong style="display:block;font-size:0.95rem">Parroquias y Jerarquía</strong>
+              <span class="t-footnote">Diócesis, conferencias episcopales y comunidad</span>
+            </div>
           </div>
-        </div>
-        <span style="color:var(--label-3);font-weight:700;font-size:1.1rem" aria-hidden="true">›</span>
-      </a>
+          <span style="color:var(--label-3);font-weight:700;font-size:1.1rem" aria-hidden="true">›</span>
+        </a>
+
+        <a href="#/messages" class="card" style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px 16px;text-decoration:none;color:inherit">
+          <div style="display:flex;align-items:center;gap:12px;min-width:0">
+            <span style="width:40px;height:40px;border-radius:8px;background:var(--surface-2);color:var(--label);display:grid;place-items:center;flex-shrink:0">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            </span>
+            <div style="min-width:0">
+              <strong style="display:block;font-size:0.95rem">Mensajes Directos</strong>
+              <span class="t-footnote">Conversaciones privadas y canales parroquiales</span>
+            </div>
+          </div>
+          <span style="color:var(--label-3);font-weight:700;font-size:1.1rem" aria-hidden="true">›</span>
+        </a>
+      </div>
 
       <div class="segmented" id="profTabs" role="tablist" style="margin-bottom:16px">
-        <button type="button" class="seg-btn${subTab === 'plus' ? ' is-active' : ''}" data-tab="plus">✦ ${app.esc(d.profile.tabs.plus)}</button>
         <button type="button" class="seg-btn${subTab === 'settings' ? ' is-active' : ''}" data-tab="settings">${app.esc(d.profile.tabs.settings)}</button>
         <button type="button" class="seg-btn${subTab === 'saved' ? ' is-active' : ''}" data-tab="saved">${app.esc(d.profile.tabs.saved)}</button>
       </div>
@@ -95,63 +106,6 @@ export async function mount({ root, app, signal }) {
 
   async function renderSubTab() {
     const host = root.querySelector('#profTabBody');
-    if (subTab === 'plus') {
-      const isPlus = app.isCredoPlus();
-      host.innerHTML = `
-        <article class="plus-hero">
-          <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
-            <span class="rank-tag" style="background:rgba(212,175,55,0.22);color:#FFE07D;padding:5px 12px">✦ ${app.esc(d.profile.plusTitle)}</span>
-            ${isPlus ? `<span style="font-size:0.78rem;color:#30D158;font-weight:700">● Activo</span>` : ''}
-          </div>
-          <h2 class="t-title-2" style="color:#fff">${app.esc(d.profile.plusSubtitle)}</h2>
-
-          <table class="plus-compare" aria-label="Comparativa Gratis vs Credo Plus">
-            <thead>
-              <tr>
-                <th>Beneficio</th>
-                <th>Gratis</th>
-                <th style="color:#FFE07D">Plus</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${d.profile.plusCompare
-                .map(
-                  ([label, free, plus]) => `
-                <tr>
-                  <td>${app.esc(label)}</td>
-                  <td>${free ? '✓' : '—'}</td>
-                  <td style="color:#FFE07D;font-weight:700">${plus ? '✓' : '—'}</td>
-                </tr>`
-                )
-                .join('')}
-            </tbody>
-          </table>
-
-          <div class="segmented" id="plusPlanSeg" style="background:rgba(255,255,255,0.1);border-color:rgba(255,255,255,0.16)">
-            <button type="button" class="seg-btn${plusPlan === 'monthly' ? ' is-active' : ''}" data-plan="monthly" style="${plusPlan === 'monthly' ? '' : 'color:rgba(255,255,255,0.75)'}">${app.esc(d.profile.plusMonthly)}</button>
-            <button type="button" class="seg-btn${plusPlan === 'annual' ? ' is-active' : ''}" data-plan="annual" style="${plusPlan === 'annual' ? '' : 'color:rgba(255,255,255,0.75)'}">${app.esc(d.profile.plusAnnual)} · ${app.esc(d.profile.plusSaveBadge)}</button>
-          </div>
-
-          ${isPlus
-            ? `<button type="button" class="btn btn-outline btn-block" id="togglePlusBtn" style="color:#fff;border-color:rgba(255,255,255,0.3)">${app.esc(d.profile.plusDeactivate)}</button>`
-            : `<button type="button" class="btn btn-gold btn-block" id="togglePlusBtn"> Pay / Tarjeta · ${app.esc(d.profile.plusCta)}</button>`}
-
-          <p class="plus-legal">ⓘ ${app.esc(d.profile.plusLegal)}</p>
-        </article>
-      `;
-
-      host.querySelector('#plusPlanSeg').onclick = (e) => {
-        const b = e.target.closest('[data-plan]');
-        if (!b) return;
-        plusPlan = b.dataset.plan;
-        renderSubTab();
-      };
-      host.querySelector('#togglePlusBtn').onclick = async () => {
-        await app.setCredoPlus(!isPlus, plusPlan);
-        renderShell();
-      };
-      return;
-    }
 
     if (subTab === 'settings') {
       const scheme = currentScheme();

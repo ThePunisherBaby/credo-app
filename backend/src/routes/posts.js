@@ -271,6 +271,14 @@ router.get('/:id', optionalAuth, async (req, res) => {
   }
 });
 
+function extractYouTubeId(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return '';
+  if (/^[A-Za-z0-9_-]{11}$/.test(s)) return s;
+  const m = s.match(/(?:youtube\.com\/(?:watch\?v=|shorts\/|embed\/|live\/)|youtu\.be\/)([A-Za-z0-9_-]{11})/);
+  return m ? m[1] : '';
+}
+
 // Create post — STRICTLY CLERGY ONLY (requireClergy middleware)
 router.post('/', requireAuth, requireClergy, async (req, res) => {
   try {
@@ -283,6 +291,7 @@ router.post('/', requireAuth, requireClergy, async (req, res) => {
       visual_theme = '',
       media_kind = 'article',
       youtube_id = '',
+      youtube_url = '',
       video_duration = '',
       channel_name = '',
       scripture_ref = '',
@@ -298,7 +307,9 @@ router.post('/', requireAuth, requireClergy, async (req, res) => {
       return res.status(400).json({ error: 'Invalid post_type' });
     }
 
-    const safeMediaKind = ['article', 'video', 'photo'].includes(media_kind) ? media_kind : 'article';
+    const ytId = extractYouTubeId(youtube_url || youtube_id);
+    const safeMediaKind = ytId ? 'video' : (['article', 'video', 'photo'].includes(media_kind) ? media_kind : 'article');
+    const resolvedImage = String(image_url).trim() || (ytId ? `https://i.ytimg.com/vi/${ytId}/hqdefault.jpg` : '');
     const targetUnitId = scope_unit_id ? Number(scope_unit_id) : req.user.primary_unit_id;
     const { rows } = await pool.query(
       `INSERT INTO posts (
@@ -313,10 +324,10 @@ router.post('/', requireAuth, requireClergy, async (req, res) => {
         post_type,
         String(title).trim().slice(0, 200),
         String(content).trim().slice(0, 8000),
-        String(image_url).trim().slice(0, 1000),
+        resolvedImage.slice(0, 1000),
         String(visual_theme).trim().slice(0, 120),
         safeMediaKind,
-        String(youtube_id).trim().slice(0, 32),
+        ytId,
         String(video_duration).trim().slice(0, 16),
         String(channel_name).trim().slice(0, 120),
         String(scripture_ref).trim().slice(0, 120),

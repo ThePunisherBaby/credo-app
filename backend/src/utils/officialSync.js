@@ -195,8 +195,91 @@ async function getLiveDailyLiturgy() {
   return null;
 }
 
+let reelsCache = { expiresAt: 0, items: [] };
+
+async function fetchXmlText(url) {
+  const res = await fetch(url, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (compatible; CredoApp/1.0; +https://credoapp.tech)',
+      Accept: 'application/atom+xml, application/xml, text/xml',
+    },
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status} fetching ${url}`);
+  return res.text();
+}
+
+function extractTag(xml, tag) {
+  const m = xml.match(new RegExp(`<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/${tag}>`, 'i'));
+  return m ? decodeEntities(m[1].trim()) : '';
+}
+
+async function getLiveCatholicReels() {
+  if (reelsCache.items.length > 0 && Date.now() < reelsCache.expiresAt) {
+    return reelsCache.items;
+  }
+
+  const sources = [
+    {
+      name: 'Vatican News - Español',
+      handle: '@VaticanNewsES',
+      accent: '#B8860B',
+      url: 'https://www.youtube.com/feeds/videos.xml?channel_id=UCnB5vfb9FMMNTnC6-kAT3fQ',
+    },
+    {
+      name: 'EWTN Español',
+      handle: '@EWTNespanol',
+      accent: '#1E3A5F',
+      url: 'https://www.youtube.com/feeds/videos.xml?channel_id=UC5IhMW3nYXyBODozNVFwtOg',
+    },
+  ];
+
+  const results = [];
+
+  await Promise.allSettled(
+    sources.map(async (src) => {
+      try {
+        const xml = await fetchXmlText(src.url);
+        const entries = xml.match(/<entry>[\s\S]*?<\/entry>/gi) || [];
+        for (const entry of entries.slice(0, 12)) {
+          const ytId = extractTag(entry, 'yt:videoId');
+          if (!ytId) continue;
+          const title = extractTag(entry, 'title');
+          const published = extractTag(entry, 'published') || new Date().toISOString();
+          const desc = extractTag(entry, 'media:description').slice(0, 600);
+          const thumbMatch = entry.match(/<media:thumbnail[^>]*url="([^"]+)"/i);
+          const viewsMatch = entry.match(/<media:statistics[^>]*views="(\d+)"/i);
+          results.push({
+            id: `yt-${ytId}`,
+            is_external: true,
+            youtube_id: ytId,
+            title,
+            description: desc,
+            thumbnail_url: thumbMatch ? thumbMatch[1] : `https://i.ytimg.com/vi/${ytId}/hqdefault.jpg`,
+            views_count: viewsMatch ? Number(viewsMatch[1]) : null,
+            published_at: published,
+            source_url: `https://www.youtube.com/watch?v=${ytId}`,
+            channel_name: src.name,
+            channel_handle: src.handle,
+            accent_color: src.accent,
+          });
+        }
+      } catch (err) {
+        console.warn(`[officialSync] Reels fetch failed (${src.name}):`, err.message);
+      }
+    })
+  );
+
+  results.sort((a, b) => new Date(b.published_at) - new Date(a.published_at));
+  if (results.length > 0) {
+    reelsCache = { expiresAt: Date.now() + 15 * 60 * 1000, items: results };
+  }
+  return results;
+}
+
 module.exports = {
   ALLOWED_PROXY_HOSTS,
   syncOfficialSources,
   getLiveDailyLiturgy,
+  getLiveCatholicReels,
 };

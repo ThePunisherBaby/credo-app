@@ -13,23 +13,28 @@ const NAV_TABS = [
   {
     id: 'feed',
     hash: '#/feed',
-    icon: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="m3 10.5 9-7.5 9 7.5V20a1 1 0 0 1-1 1h-5.5v-6.5h-5V21H4a1 1 0 0 1-1-1z"/></svg>',
+    icon: '<svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="m3 10.5 9-7.5 9 7.5V20a1 1 0 0 1-1 1h-5.5v-6.5h-5V21H4a1 1 0 0 1-1-1z"/></svg>',
+  },
+  {
+    id: 'reels',
+    hash: '#/reels',
+    icon: '<svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M3 8.5h18"/><path d="m10 3 2.5 5.5"/><path d="m15.5 3 2 5.5"/><path d="m10.2 12.2 5 2.8-5 2.8z" fill="currentColor" stroke="none"/></svg>',
   },
   {
     id: 'live',
     hash: '#/live',
     livePip: true,
-    icon: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9"/><path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5"/><circle cx="12" cy="12" r="2" fill="currentColor"/><path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5"/><path d="M19.1 4.9C23 8.8 23 15.1 19.1 19"/></svg>',
+    icon: '<svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9"/><path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5"/><circle cx="12" cy="12" r="2" fill="currentColor"/><path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5"/><path d="M19.1 4.9C23 8.8 23 15.1 19.1 19"/></svg>',
   },
   {
     id: 'prayer',
     hash: '#/prayer',
-    icon: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M7 8h10"/></svg>',
+    icon: '<svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M7 8h10"/></svg>',
   },
   {
     id: 'profile',
     hash: '#/profile',
-    icon: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-3.8 3.6-6.5 8-6.5s8 2.7 8 6.5"/></svg>',
+    icon: '<svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-3.8 3.6-6.5 8-6.5s8 2.7 8 6.5"/></svg>',
   },
 ];
 
@@ -159,29 +164,6 @@ class CredoApp {
     } catch {
       return 'dev_session';
     }
-  }
-
-  isCredoPlus() {
-    return Boolean(this.user?.is_credo_plus || this.guestPlus);
-  }
-
-  async setCredoPlus(active, plan = 'annual') {
-    this.guestPlus = Boolean(active);
-    try {
-      localStorage.setItem('credo-guest-plus', active ? '1' : '0');
-    } catch {}
-    if (this.user && this.token) {
-      try {
-        const res = await this.api('/api/v1/users/me/credo-plus', {
-          method: 'POST',
-          body: { active, plan },
-        });
-        if (res.user) this.user = res.user;
-      } catch (err) {
-        this.toast(err.message);
-      }
-    }
-    this.toast(active ? '✦ Credo Plus activado: 0 anuncios y 0 esperas Pre-Roll' : 'Plan Gratuito activado (modo demo)');
   }
 
   setLinkedParish(unitId, { silent = false } = {}) {
@@ -397,12 +379,13 @@ class CredoApp {
   parseRoute() {
     const raw = (location.hash || '#/feed').replace(/^#\/?/, '');
     const [seg, arg] = raw.split('/');
+    if (seg === 'reels') return { route: 'reels', tab: 'reels', params: {} };
     if (seg === 'live') return { route: 'live', tab: 'live', params: {} };
     if (seg === 'prayer') return { route: 'prayer', tab: 'prayer', params: {} };
     if (seg === 'parishes') return { route: 'parishes', tab: 'parishes', params: {} };
     if (seg === 'unit' && arg) return { route: 'unit', tab: 'parishes', params: { id: arg } };
     if (seg === 'user' && arg) return { route: 'user', tab: 'parishes', params: { id: arg } };
-    if (seg === 'messages') return { route: 'messages', tab: 'parishes', params: { id: arg || null } };
+    if (seg === 'messages') return { route: 'messages', tab: 'profile', params: { id: arg || null } };
     if (seg === 'profile') return { route: 'profile', tab: 'profile', params: {} };
     return { route: 'feed', tab: 'feed', params: {} };
   }
@@ -437,6 +420,7 @@ class CredoApp {
     let mod;
     try {
       if (route === 'feed') mod = await import('./views/feed.js');
+      else if (route === 'reels') mod = await import('./views/reels.js');
       else if (route === 'live') mod = await import('./views/live.js');
       else if (route === 'prayer') mod = await import('./views/prayer.js');
       else if (route === 'parishes' || route === 'unit' || route === 'user') mod = await import('./views/parishes.js');
@@ -599,16 +583,9 @@ class CredoApp {
     this._sheetCtrl?.reset();
   }
 
-  async playLiveWithPreRoll(channel, { expandPlayer = false } = {}) {
-    await this.runPreRollIfNeeded(() => {
-      audioEngine.playChannel(channel);
-      if (expandPlayer) this.openFullPlayer();
-    });
-  }
-
-  runPreRollIfNeeded(onComplete) {
-    onComplete();
-    return Promise.resolve();
+  playLive(channel, { expandPlayer = false } = {}) {
+    audioEngine.playChannel(channel);
+    if (expandPlayer) this.openFullPlayer();
   }
 
   // =========================================================================
@@ -816,7 +793,7 @@ class CredoApp {
     this.renderChrome();
   }
 
-  openComposer() {
+  openComposer({ defaultKind = 'article' } = {}) {
     const d = this.dict();
     if (!this.user) {
       this.openAuthModal();
@@ -836,14 +813,15 @@ class CredoApp {
       return;
     }
 
+    const isReel = defaultKind === 'reel';
     const dlg = this.openModal(
-      'Nueva Publicación Oficial',
+      isReel ? 'Nuevo Reel / Video Oficial' : 'Nueva Publicación Oficial',
       `
       <form id="composeForm" style="display:flex;flex-direction:column;gap:12px">
         <div class="field">
           <label for="cType">Tipo de publicación</label>
           <select id="cType" name="post_type">
-            <option value="homily">Homilía</option>
+            <option value="homily"${isReel ? ' selected' : ''}>Homilía</option>
             <option value="reflection">Reflexión</option>
             <option value="pastoral_letter">Carta Pastoral</option>
             <option value="announcement">Aviso Oficial</option>
@@ -853,6 +831,10 @@ class CredoApp {
         <div class="field">
           <label for="cTitle">Título</label>
           <input id="cTitle" name="title" type="text" placeholder="Ej. Homilía dominical · Permanezcan en mi amor" />
+        </div>
+        <div class="field">
+          <label for="cYouTube">Enlace de YouTube / Reel ${isReel ? '(recomendado)' : '(opcional)'}</label>
+          <input id="cYouTube" name="youtube_url" type="url" placeholder="https://www.youtube.com/shorts/..." ${isReel ? 'required' : ''} />
         </div>
         <div class="field">
           <label for="cBody">Contenido</label>
@@ -893,6 +875,7 @@ class CredoApp {
           body: {
             post_type: fd.get('post_type'),
             title: fd.get('title'),
+            youtube_url: fd.get('youtube_url'),
             content: fd.get('content'),
             scripture_ref: fd.get('scripture_ref'),
             image_url,
@@ -900,7 +883,8 @@ class CredoApp {
         });
         this.closeModal();
         this.toast('Publicación oficial enviada');
-        if (this.parseRoute().route === 'feed') this.navigate();
+        const curRoute = this.parseRoute().route;
+        if (curRoute === 'feed' || curRoute === 'reels') this.navigate();
       } catch (err) {
         this.toast(err.message);
       }

@@ -115,18 +115,10 @@ export async function mount({ root, app, signal, route, params }) {
                 .join('')}
             </div>` : ''}
 
-          <div class="offering-banner">
-            <div>
-              <strong style="display:block;font-size:0.94rem">${app.esc(d.parishes.offeringBtn)}</strong>
-              <span class="t-footnote" style="color:var(--gold-text)">✓ ${app.esc(d.parishes.offeringSeal)}</span>
-            </div>
-            <button type="button" class="btn btn-gold btn-sm" id="openOfferingBtn">${app.esc(d.parishes.offeringBtn)}</button>
-          </div>
         </div>
       </article>
     `;
 
-    myParishHost.querySelector('#openOfferingBtn').onclick = () => openOfferingModal(myParish, app, d);
     myParishHost.querySelector('#changeMyParishBtn').onclick = () => openParishPicker(app, (chosen) => {
       app.setLinkedParish(chosen.id);
       loadMyParish(chosen.id);
@@ -361,8 +353,8 @@ async function mountUnitDetail({ root, app, signal, unitId }) {
         <a href="#/parishes" class="btn btn-sm btn-soft">← ${app.esc(d.parishes.title)}</a>
       </div>
       <article class="parish-hero">
-        <div class="parish-cover">
-          <img src="${app.esc(u.image_url || 'https://images.unsplash.com/photo-1548625149-fc4a29cf7092?auto=format&fit=crop&w=1080&q=80')}" alt="${app.esc(u.name)}" fetchpriority="high" />
+        <div class="parish-cover" style="background:linear-gradient(145deg, ${app.esc(u.accent_color || '#0F1E36')}, #0B0D12)">
+          ${u.image_url ? `<img src="${app.esc(u.image_url)}" alt="${app.esc(u.name)}" fetchpriority="high" />` : ''}
           <div class="parish-cover-scrim"></div>
           <div class="parish-cover-meta">
             <span class="rank-tag" style="background:rgba(212,175,55,0.22);color:#FFE07D">${app.esc(d.unitTypes[u.unit_type] || u.unit_type)}</span>
@@ -377,7 +369,6 @@ async function mountUnitDetail({ root, app, signal, unitId }) {
           ${u.description ? `<p class="t-subhead">${app.esc(u.description)}</p>` : ''}
           <div style="display:flex;gap:8px;flex-wrap:wrap">
             <button type="button" class="btn btn-gold btn-sm" id="unitSetMineBtn">✦ Elegir como Mi Parroquia</button>
-            <button type="button" class="btn btn-soft btn-sm" id="unitOfferBtn">${app.esc(d.parishes.offeringBtn)}</button>
             <button type="button" class="btn btn-outline btn-sm" id="unitFollowBtn">${u.is_following ? d.parishes.following : d.parishes.follow}</button>
           </div>
           ${masses.length > 0 ? `
@@ -421,7 +412,6 @@ async function mountUnitDetail({ root, app, signal, unitId }) {
       app.setLinkedParish(u.id);
       app.toast(`"${u.name}" guardada como Mi Parroquia`);
     };
-    root.querySelector('#unitOfferBtn').onclick = () => openOfferingModal(u, app, d);
     root.querySelector('#unitFollowBtn').onclick = async (ev) => {
       if (!app.user) return app.openAuthModal();
       const btn = ev.currentTarget;
@@ -544,7 +534,7 @@ async function mountUserProfile({ root, app, signal, userId }) {
         const liveRes = await app.api('/api/v1/live');
         app.setLiveQueue(liveRes.all || []);
         const aire = (liveRes.all || []).find((c) => c.slug === 'aire-96') || liveRes.hero;
-        if (aire) app.playLiveWithPreRoll(aire, { expandPlayer: true });
+        if (aire) app.playLive(aire, { expandPlayer: true });
       } catch (err) {
         app.toast(err.message);
       }
@@ -570,76 +560,6 @@ async function mountUserProfile({ root, app, signal, userId }) {
     if (err.name !== 'AbortError') root.innerHTML = `<div class="empty-box">${app.esc(err.message)}</div>`;
   }
   return { cleanup() {} };
-}
-
-function openOfferingModal(unit, app, d) {
-  let amount = 10;
-  let freq = 'one_time';
-  const dlg = app.openModal(
-    d.parishes.offeringModalTitle,
-    `
-    <div style="display:flex;flex-direction:column;gap:14px">
-      <div style="padding:12px 14px;border-radius:10px;background:var(--gold-soft);border:1px solid rgba(200,162,83,0.35)">
-        <strong>${app.esc(unit.name)}</strong>
-        <p class="t-footnote" style="margin-top:4px;color:var(--gold-text)">✓ ${app.esc(d.parishes.offeringGuarantee)}</p>
-      </div>
-      <div class="segmented" id="offerFreqSeg">
-        <button type="button" class="seg-btn is-active" data-freq="one_time">${app.esc(d.parishes.oneTime)}</button>
-        <button type="button" class="seg-btn" data-freq="monthly">${app.esc(d.parishes.monthly)}</button>
-      </div>
-      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px" id="offerAmts">
-        ${[5, 10, 25, 50].map((v) => `<button type="button" class="btn btn-sm ${v === 10 ? 'btn-gold' : 'btn-soft'}" data-amt="${v}">$${v}</button>`).join('')}
-      </div>
-      <div class="field">
-        <label for="offerNote">Intención opcional (Misa, acción de gracias…)</label>
-        <input type="text" id="offerNote" placeholder="Ej. Por la salud de mi familia" />
-      </div>
-      <button type="button" class="btn btn-gold btn-block" id="submitOfferBtn">${app.esc(d.parishes.confirmOffering)} · $${amount}</button>
-    </div>
-    `
-  );
-
-  const submitBtn = dlg.querySelector('#submitOfferBtn');
-  const syncLabel = () => {
-    submitBtn.textContent = `${d.parishes.confirmOffering} · $${amount}${freq === 'monthly' ? '/mes' : ''}`;
-  };
-
-  dlg.querySelector('#offerFreqSeg').onclick = (e) => {
-    const b = e.target.closest('[data-freq]');
-    if (!b) return;
-    freq = b.dataset.freq;
-    dlg.querySelectorAll('#offerFreqSeg .seg-btn').forEach((x) => x.classList.toggle('is-active', x === b));
-    syncLabel();
-  };
-
-  dlg.querySelector('#offerAmts').onclick = (e) => {
-    const b = e.target.closest('[data-amt]');
-    if (!b) return;
-    amount = Number(b.dataset.amt);
-    dlg.querySelectorAll('#offerAmts button').forEach((x) => {
-      x.classList.toggle('btn-gold', x === b);
-      x.classList.toggle('btn-soft', x !== b);
-    });
-    syncLabel();
-  };
-
-  submitBtn.onclick = async () => {
-    try {
-      await app.api('/api/v1/prayers/offerings', {
-        method: 'POST',
-        body: {
-          unit_id: unit.id,
-          amount_usd: amount,
-          frequency: freq,
-          intention_note: dlg.querySelector('#offerNote').value.trim(),
-        },
-      });
-      app.closeModal();
-      app.toast(d.parishes.offeringDone);
-    } catch (err) {
-      app.toast(err.message);
-    }
-  };
 }
 
 function openParishPicker(app, onPick) {

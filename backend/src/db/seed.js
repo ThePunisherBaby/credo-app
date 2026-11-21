@@ -787,7 +787,10 @@ async function seedIfEmpty() {
     color: '#222222',
   });
 
-  // 9. USUARIOS DE MUESTRA (Jerarquía completa + cuentas demo para probar Clero vs Laico)
+  console.log('[seed] Worldwide ecclesiastical hierarchy seeded successfully.');
+  return;
+
+  // Legacy sample seed disabled — purgeMockDataAndSyncReal keeps ONLY real hierarchy, CEO, radio & live feeds
   const demoPassHash = await bcrypt.hash('Credo2026!', 10);
   const userIds = {};
 
@@ -1914,13 +1917,14 @@ async function purgeMockDataAndSyncReal() {
     'don_marco_mi',
     'diac_lucas_ba',
     'maria_laica',
+    'maria_esperanza',
   ];
   await pool.query('DELETE FROM users WHERE username = ANY($1::text[])', [mockUsernames]);
 
-  // 2. Delete mock stories, mock conversations with no real messages, mock YouTube/placeholder posts, and mock prayers
+  // 2. Delete mock stories, mock conversations with no real messages, placeholder posts, and test/mock prayers
   await pool.query("DELETE FROM stories WHERE caption LIKE '%Aire 96 FM está EN VIVO%' OR caption LIKE '%Plaza de San Pedro%' OR caption LIKE '%Asamblea Sinodal%' OR caption LIKE '%Eucaristía matutina%' OR caption LIKE '%Vigilia Mariana%' OR caption LIKE '%Evening Vespers%' OR caption LIKE '%Ejercicios Espirituales%'");
-  await pool.query("DELETE FROM posts WHERE title = 'Bienvenidos a Credo · Aire 96 FM y Reflexionando la Palabra ahora en vivo' OR youtube_id IN ('dQw4w9WgXcQ','aqz-KE-bpKQ','M7lc1UVf-VE')");
-  await pool.query("DELETE FROM prayer_intentions WHERE author_display IN ('Carmen Delgado','Luis Fernando M.','Rosaura Peña','Familia Castellanos','Ana Sofía V.','Marcos & Lucía') OR (user_id IS NULL AND author_display = 'Fiel anónimo' AND prayers_count >= 50)");
+  await pool.query("DELETE FROM posts WHERE title = 'Bienvenidos a Credo · Aire 96 FM y Reflexionando la Palabra ahora en vivo' OR youtube_id IN ('dQw4w9WgXcQ','aqz-KE-bpKQ','M7lc1UVf-VE') OR image_url LIKE '%images.unsplash.com%'");
+  await pool.query("DELETE FROM prayer_intentions WHERE content ILIKE '%Hshegehwuudhdb%' OR author_display IN ('Carmen Delgado','Luis Fernando M.','Rosaura Peña','Familia Castellanos','Ana Sofía V.','Marcos & Lucía') OR (user_id IS NULL AND author_display = 'Fiel anónimo' AND prayers_count >= 50)");
   await pool.query('DELETE FROM conversations WHERE created_by IS NULL');
 
   // 3. Remove invented mock radio/TV channels — keep ONLY real Aire 96 FM & Reflexionando la Palabra

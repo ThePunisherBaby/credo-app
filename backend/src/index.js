@@ -9,7 +9,8 @@ const rateLimit = require('express-rate-limit');
 const { PORT, CLERGY_RANKS } = require('./config');
 const { pool, initDatabase } = require('./db/pool');
 const { seedIfEmpty, purgeMockDataAndSyncReal } = require('./db/seed');
-const { syncOfficialSources } = require('./utils/officialSync');
+const { syncOfficialSources, getLiveCatholicReels } = require('./utils/officialSync');
+const { optionalAuth } = require('./middleware/auth');
 
 const authRoutes = require('./routes/auth');
 const unitsRoutes = require('./routes/units');
@@ -57,9 +58,13 @@ app.use(
           "'self'",
           'data:',
           'blob:',
-          'https://images.unsplash.com',
           'https://aire96fm.com.do',
           'https://reflexionandolapalabra.com',
+          'https://i.ytimg.com',
+          'https://i1.ytimg.com',
+          'https://i2.ytimg.com',
+          'https://i3.ytimg.com',
+          'https://i4.ytimg.com',
         ],
         mediaSrc: ["'self'", 'blob:', 'https://paginas.moisespaulino.com'],
         frameSrc: ["'self'", 'https://www.youtube-nocookie.com', 'https://www.youtube.com'],
@@ -104,6 +109,63 @@ app.use('/api/v1/media', mediaRoutes);
 app.use('/api/v1/stories', storiesRoutes);
 app.use('/api/v1/live', liveRoutes);
 app.use('/api/v1/prayers', prayersRoutes);
+
+// Real Catholic Video Reels endpoint (merges user/clergy Credo reels + live Vatican News & EWTN feeds)
+app.get('/api/v1/reels', optionalAuth, async (req, res) => {
+  try {
+    const [dbRes, liveReels] = await Promise.all([
+      pool.query(
+        `SELECT p.id, p.title, p.content, p.image_url, p.youtube_id, p.video_duration,
+                p.channel_name, p.source_url, p.scripture_ref, p.created_at,
+                u.id AS author_id, u.full_name AS author_full_name, u.title_prefix AS author_title_prefix,
+                u.avatar_color AS author_avatar_color, u.avatar_url AS author_avatar_url, u.is_ceo AS author_is_ceo,
+                (SELECT COUNT(*)::int FROM post_reactions pr WHERE pr.post_id = p.id AND pr.reaction_type = 'amen') AS amen_count,
+                (SELECT COUNT(*)::int FROM post_comments pc WHERE pc.post_id = p.id) AS comments_count
+           FROM posts p
+           JOIN users u ON u.id = p.author_id
+          WHERE p.media_kind = 'video' OR (p.youtube_id IS NOT NULL AND p.youtube_id <> '')
+          ORDER BY p.created_at DESC
+          LIMIT 25`
+      ),
+      getLiveCatholicReels(),
+    ]);
+
+    const seenYt = new Set();
+    const internalReels = dbRes.rows.map((r) => {
+      if (r.youtube_id) seenYt.add(r.youtube_id);
+      return {
+        id: `post-${r.id}`,
+        post_id: r.id,
+        is_external: false,
+        youtube_id: r.youtube_id || '',
+        title: r.title || '',
+        description: r.content || '',
+        thumbnail_url: r.image_url || (r.youtube_id ? `https://i.ytimg.com/vi/${r.youtube_id}/hqdefault.jpg` : ''),
+        published_at: r.created_at,
+        source_url: r.source_url || '',
+        scripture_ref: r.scripture_ref || '',
+        channel_name: r.channel_name || `${r.author_title_prefix ? r.author_title_prefix + ' ' : ''}${r.author_full_name}`,
+        author_id: r.author_id,
+        author_is_ceo: Boolean(r.author_is_ceo),
+        avatar_url: r.author_avatar_url || '',
+        accent_color: r.author_avatar_color || '#0F1E36',
+        amen_count: r.amen_count || 0,
+        comments_count: r.comments_count || 0,
+      };
+    });
+
+    const merged = [
+      ...internalReels,
+      ...liveReels.filter((r) => !seenYt.has(r.youtube_id)),
+    ];
+
+    res.setHeader('Cache-Control', 'public, max-age=60, stale-while-revalidate=300');
+    return res.json({ reels: merged });
+  } catch (err) {
+    console.error('[reels/list]', err);
+    return res.status(500).json({ error: 'Failed to load reels' });
+  }
+});
 
 // Global statistics endpoint
 app.get('/api/v1/stats', async (_req, res) => {
