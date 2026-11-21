@@ -5,7 +5,6 @@ node_modules/
 local.properties
 .DS_Store
 backend/public/
-releases/
 android-app/.gradle/
 android-app/build/
 android-app/app/build/
