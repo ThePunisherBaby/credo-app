@@ -7,7 +7,6 @@ import { enhanceLiquidGlass } from '../glass.js';
 export async function mount({ root, app, signal }) {
   const d = app.dict();
   let filter = 'recent';
-  let gospelPx = Number(localStorage.getItem('credo-gospel-px') || 18);
   let liturgy = null;
   let intentions = [];
   let audioUnsub = null;
@@ -69,15 +68,9 @@ export async function mount({ root, app, signal }) {
       <article class="liturgy-card">
         <div class="liturgy-toolbar">
           <span class="rank-tag" style="padding:5px 11px">✦ ${app.esc(liturgy.liturgical_season)}</span>
-          <div style="display:flex;align-items:center;gap:8px">
-            <div class="font-stepper" role="group" aria-label="${app.esc(d.prayer.textSize)}">
-              <button type="button" id="gospelSmaller" aria-label="Reducir tamaño de letra">A−</button>
-              <button type="button" id="gospelLarger" aria-label="Aumentar tamaño de letra">A+</button>
-            </div>
-            <button type="button" class="btn btn-sm ${speaking ? 'btn-gold' : 'btn-soft'}" id="gospelSpeakBtn">
-              ${speaking ? '⏹ ' + app.esc(d.feed.stopAudio) : '🔊 ' + app.esc(d.feed.listenGospel)}
-            </button>
-          </div>
+          <button type="button" class="btn btn-sm ${speaking ? 'btn-gold' : 'btn-soft'}" id="gospelSpeakBtn">
+            ${speaking ? '⏹ ' + app.esc(d.feed.stopAudio) : '🔊 ' + app.esc(d.feed.listenGospel)}
+          </button>
         </div>
 
         <div>
@@ -86,7 +79,7 @@ export async function mount({ root, app, signal }) {
           <p class="post-scripture-pill" style="margin-top:4px">${app.esc(liturgy.gospel_ref)}</p>
         </div>
 
-        <p class="gospel-prose" id="gospelProse" style="--gospel-size:${gospelPx}px">${app.esc(liturgy.gospel_text)}</p>
+        <p class="gospel-prose" id="gospelProse">${app.esc(liturgy.gospel_text)}</p>
 
         ${liturgy.reflection ? `
         <div style="padding:14px;border-radius:16px;background:var(--surface-2)">
@@ -100,7 +93,7 @@ export async function mount({ root, app, signal }) {
             <span>${app.esc(d.prayer.firstReading)} · ${app.esc(liturgy.first_reading_ref)}</span>
             <span class="t-caption">▾</span>
           </summary>
-          <p class="gospel-prose" style="--gospel-size:${Math.max(15, gospelPx - 1)}px;margin-top:10px">${app.esc(liturgy.first_reading_text)}</p>
+          <p class="gospel-prose" style="margin-top:10px">${app.esc(liturgy.first_reading_text)}</p>
           <p class="t-footnote" style="margin-top:12px"><strong>${app.esc(liturgy.psalm_ref)}:</strong> ${app.esc(liturgy.psalm_response)}</p>
         </details>` : ''}
 
@@ -111,16 +104,6 @@ export async function mount({ root, app, signal }) {
       </article>
     `;
 
-    liturgyHost.querySelector('#gospelSmaller').onclick = () => {
-      gospelPx = Math.max(15, gospelPx - 2);
-      try { localStorage.setItem('credo-gospel-px', String(gospelPx)); } catch {}
-      liturgyHost.querySelector('#gospelProse').style.setProperty('--gospel-size', `${gospelPx}px`);
-    };
-    liturgyHost.querySelector('#gospelLarger').onclick = () => {
-      gospelPx = Math.min(28, gospelPx + 2);
-      try { localStorage.setItem('credo-gospel-px', String(gospelPx)); } catch {}
-      liturgyHost.querySelector('#gospelProse').style.setProperty('--gospel-size', `${gospelPx}px`);
-    };
     liturgyHost.querySelector('#gospelSpeakBtn').onclick = () => {
       audioEngine.toggleGospelSpeech(
         `${liturgy.gospel_ref}. ${liturgy.gospel_title}. ${liturgy.gospel_text}. ${liturgy.reflection}`,

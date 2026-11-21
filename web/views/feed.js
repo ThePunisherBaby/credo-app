@@ -1,7 +1,5 @@
-// views/feed.js — Pantalla 1: Inicio (Feed Curado Oficial)
+// views/feed.js — Pantalla 1: Inicio (Feed Curado Oficial estilo Instagram Edge-to-Edge)
 // Loaded on demand ONLY when on #/feed. Cleans up IntersectionObserver and aborts fetches on leave.
-
-import { audioEngine } from '../audio-engine.js';
 
 export async function mount({ root, app, signal }) {
   const d = app.dict();
@@ -16,28 +14,34 @@ export async function mount({ root, app, signal }) {
     posts: [],
     stories: [],
     liveStations: [],
-    liturgy: null,
     searchOpen: false,
   };
 
   let observer = null;
   let searchTimer = 0;
-  let audioUnsub = null;
+  let tapTimer = 0;
+  let lastTap = { id: 0, time: 0 };
 
-  const greetingKey = () => {
-    const h = new Date().getHours();
-    if (h < 12) return 'morning';
-    if (h < 19) return 'afternoon';
-    return 'evening';
-  };
+  const igSkeletonHTML = (count = 2) => Array.from({ length: count }, () => `
+    <div class="ig-post">
+      <div class="ig-post-head">
+        <div class="skeleton" style="width:40px;height:40px;border-radius:50%;flex-shrink:0"></div>
+        <div style="flex:1;display:flex;flex-direction:column;gap:6px">
+          <div class="skeleton" style="height:13px;width:44%;border-radius:7px"></div>
+          <div class="skeleton" style="height:10px;width:28%;border-radius:6px"></div>
+        </div>
+      </div>
+      <div class="ig-media"><div class="skeleton" style="width:100%;height:100%;border-radius:0"></div></div>
+    </div>
+  `).join('');
 
   root.innerHTML = `
-    <header class="page-head">
-      <div>
-        <p class="t-footnote">${app.esc(d.greetings[greetingKey()])}${app.user ? `, ${app.esc(app.user.full_name.split(' ')[0])}` : ''}</p>
-        <h1 class="t-large-title">${app.esc(d.appName)}</h1>
-      </div>
+    <header class="feed-topbar">
+      <h1 class="t-large-title" style="font-size:1.72rem;letter-spacing:-0.03em">${app.esc(d.appName)}</h1>
       <div class="page-head-actions">
+        <a href="#/parishes" class="icon-btn-44" aria-label="${app.esc(d.nav?.parishes || 'Parroquias y Jerarquía')}" title="${app.esc(d.nav?.parishes || 'Parroquias y Jerarquía')}">
+          <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v5"/><path d="M9.5 4.5h5"/><path d="M5 21V11l7-4 7 4v10"/><path d="M9 21v-5a3 3 0 0 1 6 0v5"/><path d="M3 21h18"/></svg>
+        </a>
         <button type="button" class="icon-btn-44" id="feedSearchToggle" aria-label="Buscar">
           <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
         </button>
@@ -47,7 +51,7 @@ export async function mount({ root, app, signal }) {
       </div>
     </header>
 
-    <div id="feedSearchWrap" hidden>
+    <div id="feedSearchWrap" hidden style="margin-bottom:10px">
       <div class="search-field">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
         <input type="search" id="feedSearchInput" placeholder="${app.esc(d.feed.searchPlaceholder)}" />
@@ -62,26 +66,15 @@ export async function mount({ root, app, signal }) {
         <div class="skeleton" style="width:66px;height:66px;border-radius:50%;flex-shrink:0"></div>
       </div>
     </section>
-
-    <section id="gospelMiniHost"></section>
-
-    <div class="chip-row" id="feedScopeChips" role="tablist" aria-label="Filtros del feed">
-      <button type="button" class="chip is-active" data-filter="global">${app.esc(d.feed.scopes.global)}</button>
-      <button type="button" class="chip" data-filter="video">${app.esc(d.feed.scopes.video)}</button>
-      <button type="button" class="chip" data-filter="article">${app.esc(d.feed.scopes.article)}</button>
-      <button type="button" class="chip" data-filter="following">${app.esc(d.feed.scopes.following)}</button>
-      <button type="button" class="chip" data-filter="my_diocese">${app.esc(d.feed.scopes.my_diocese)}</button>
-    </div>
+    <hr class="stories-divider" />
 
     <div class="feed-list" id="feedList" aria-live="polite">
-      <div class="card"><div class="skeleton" style="height:220px"></div></div>
-      <div class="card"><div class="skeleton" style="height:220px"></div></div>
+      ${igSkeletonHTML(2)}
     </div>
-    <div id="feedSentinel" style="height:48px;display:grid;place-items:center;color:var(--label-3);font-size:0.82rem;margin-top:12px;"></div>
+    <div id="feedSentinel" style="height:48px;display:grid;place-items:center;color:var(--label-3);font-size:0.82rem;margin-top:8px;"></div>
   `;
 
   const storiesStrip = root.querySelector('#storiesStrip');
-  const gospelHost = root.querySelector('#gospelMiniHost');
   const feedList = root.querySelector('#feedList');
   const sentinel = root.querySelector('#feedSentinel');
   const searchWrap = root.querySelector('#feedSearchWrap');
@@ -103,25 +96,6 @@ export async function mount({ root, app, signal }) {
       state.q = searchInput.value.trim();
       reloadFeed();
     }, 280);
-  });
-
-  root.querySelector('#feedScopeChips').addEventListener('click', (e) => {
-    const btn = e.target.closest('[data-filter]');
-    if (!btn) return;
-    const f = btn.dataset.filter;
-    if ((f === 'following' || f === 'my_diocese') && !app.user) {
-      app.openAuthModal();
-      return;
-    }
-    root.querySelectorAll('#feedScopeChips .chip').forEach((c) => c.classList.toggle('is-active', c === btn));
-    if (f === 'video' || f === 'article') {
-      state.scope = 'global';
-      state.mediaKind = f;
-    } else {
-      state.scope = f;
-      state.mediaKind = '';
-    }
-    reloadFeed();
   });
 
   function renderStories() {
@@ -176,37 +150,40 @@ export async function mount({ root, app, signal }) {
     };
   }
 
-  function renderGospelMini() {
-    if (!state.liturgy) return;
-    const speaking = audioEngine.getState().gospelSpeaking;
-    gospelHost.innerHTML = `
-      <article class="gospel-mini-card stagger-in" style="--stagger-i:1">
-        <div class="gospel-mini-eyebrow">
-          <span>✦</span>
-          <span>${app.esc(d.feed.gospelCardLabel)}</span>
-        </div>
-        <p class="gospel-mini-quote">${app.esc(state.liturgy.gospel_excerpt)}</p>
-        <div class="gospel-mini-foot">
-          <span class="gospel-mini-ref">${app.esc(state.liturgy.gospel_ref)}</span>
-          <div class="gospel-mini-btns">
-            <button type="button" class="btn btn-sm" id="miniGospelAudioBtn">
-              ${speaking ? app.esc(d.feed.stopAudio) : app.esc(d.feed.listenGospel)}
-            </button>
-            <a href="#/prayer" class="btn btn-sm is-primary">${app.esc(d.feed.readGospel)}</a>
-          </div>
-        </div>
-      </article>
-    `;
-    gospelHost.querySelector('#miniGospelAudioBtn').onclick = () => {
-      audioEngine.toggleGospelSpeech(
-        `${state.liturgy.gospel_ref}. ${state.liturgy.gospel_title}. ${state.liturgy.gospel_text}`,
-        app.locale
-      );
-    };
+  function triggerAmenBurst(cardEl) {
+    const burst = cardEl?.querySelector('.ig-heart-burst');
+    if (!burst) return;
+    burst.classList.remove('is-burst');
+    void burst.offsetWidth;
+    burst.classList.add('is-burst');
   }
 
-  function renderSponsorCard() {
-    return '';
+  async function toggleAmen(postId, reactBtn, { onlyAdd = false } = {}) {
+    if (!app.user) {
+      app.openAuthModal();
+      return;
+    }
+    const already = reactBtn?.classList.contains('is-active');
+    if (onlyAdd && already) return;
+    try {
+      const res = await app.api(`/api/v1/posts/${postId}/react`, {
+        method: 'POST',
+        body: { reaction_type: 'amen' },
+      });
+      const active = (res.my_reactions || []).includes('amen');
+      if (reactBtn) {
+        reactBtn.classList.toggle('is-active', active);
+        reactBtn.setAttribute('aria-pressed', String(active));
+        if (active) {
+          reactBtn.classList.add('is-pop');
+          setTimeout(() => reactBtn.classList.remove('is-pop'), 500);
+        }
+        const cntEl = reactBtn.querySelector(`[data-amen-count="${postId}"]`);
+        if (cntEl) cntEl.textContent = String(res.reactions?.amen || 0);
+      }
+    } catch (err) {
+      app.toast(err.message);
+    }
   }
 
   function postCardHTML(p, globalIndex) {
@@ -227,8 +204,8 @@ export async function mount({ root, app, signal }) {
     let mediaBlock = '';
     if (isVideo) {
       mediaBlock = `
-        <div class="post-media" data-video-box="${p.id}" data-yt="${app.esc(p.youtube_id)}">
-          <img src="${app.esc(p.image_url)}" alt="${app.esc(p.title || d.feed.officialChannel)}" ${imgAttrs} width="640" height="400" />
+        <div class="ig-media" data-video-box="${p.id}" data-yt="${app.esc(p.youtube_id)}">
+          <img src="${app.esc(p.image_url)}" alt="${app.esc(p.title || d.feed.officialChannel)}" ${imgAttrs} width="640" height="480" />
           ${p.video_duration ? `<span class="video-duration-pill">${app.esc(p.video_duration)}</span>` : ''}
           <button type="button" class="video-play-overlay" data-play-video="${p.id}" aria-label="${app.esc(d.feed.watchInline)}">
             <span class="video-play-circle">
@@ -239,21 +216,23 @@ export async function mount({ root, app, signal }) {
       `;
     } else if (p.image_url) {
       mediaBlock = `
-        <div class="post-media" data-open-post="${p.id}" style="cursor:pointer">
-          <img src="${app.esc(p.image_url)}" alt="${app.esc(p.title || author.full_name)}" ${imgAttrs} width="640" height="400" />
+        <div class="ig-media" data-dbltap="${p.id}" style="cursor:pointer">
+          <img src="${app.esc(p.image_url)}" alt="${app.esc(p.title || author.full_name)}" ${imgAttrs} width="640" height="480" />
+          <span class="ig-heart-burst" aria-hidden="true">🙏</span>
         </div>
       `;
     } else {
       mediaBlock = `
-        <div class="post-quote-canvas" data-open-post="${p.id}" style="cursor:pointer">
+        <div class="ig-quote-canvas" data-dbltap="${p.id}" style="cursor:pointer;position:relative">
           “${app.esc(p.content.slice(0, 220))}${p.content.length > 220 ? '…' : ''}”
+          <span class="ig-heart-burst" aria-hidden="true">🙏</span>
         </div>
       `;
     }
 
     return `
-      <article class="card post-card${deferClass}${staggerClass}"${staggerAttr} data-post-id="${p.id}">
-        <header class="post-head">
+      <article class="ig-post${deferClass}${staggerClass}"${staggerAttr} data-post-id="${p.id}">
+        <header class="ig-post-head">
           <a href="#/user/${author.id}" class="avatar" style="--av-bg:${app.esc(author.avatar_color || '#0F1E36')}" aria-label="${app.esc(author.full_name)}">
             ${avUrl ? `<img src="${app.esc(avUrl)}" alt="" loading="lazy" />` : app.initials(author.full_name)}
           </a>
@@ -274,11 +253,7 @@ export async function mount({ root, app, signal }) {
 
         ${mediaBlock}
 
-        ${p.title ? `<h2 class="post-title" data-open-post="${p.id}" style="cursor:pointer">${app.esc(p.title)}</h2>` : ''}
-        <p class="post-excerpt" data-open-post="${p.id}" style="cursor:pointer">${app.esc(p.content)}</p>
-        ${p.scripture_ref ? `<span class="post-scripture-pill">📖 ${app.esc(p.scripture_ref)}</span>` : ''}
-
-        <footer class="post-actions">
+        <footer class="ig-actions">
           <div class="post-act-group">
             <button type="button" class="act-btn${isAmen ? ' is-active' : ''}" data-react-post="${p.id}" aria-pressed="${isAmen}">
               <span>🙏</span>
@@ -299,6 +274,12 @@ export async function mount({ root, app, signal }) {
             </button>
           </div>
         </footer>
+
+        <div class="ig-caption">
+          ${p.title ? `<h2 class="post-title" data-open-post="${p.id}" style="cursor:pointer">${app.esc(p.title)}</h2>` : ''}
+          ${p.content ? `<p class="post-excerpt" data-open-post="${p.id}" style="cursor:pointer">${app.esc(p.content)}</p>` : ''}
+          ${p.scripture_ref ? `<span class="post-scripture-pill">📖 ${app.esc(p.scripture_ref)}</span>` : ''}
+        </div>
       </article>
     `;
   }
@@ -310,7 +291,7 @@ export async function mount({ root, app, signal }) {
       state.offset = 0;
       state.hasMore = true;
       state.posts = [];
-      feedList.innerHTML = `<div class="card"><div class="skeleton" style="height:220px"></div></div>`;
+      feedList.innerHTML = igSkeletonHTML(2);
     }
     sentinel.textContent = d.feed.loadMore;
 
@@ -328,16 +309,13 @@ export async function mount({ root, app, signal }) {
       if (reset) feedList.innerHTML = '';
 
       if (batch.length === 0 && state.posts.length === 0) {
-        feedList.innerHTML = `<div class="empty-box">${app.esc(d.feed.emptyFeed)}</div>`;
+        feedList.innerHTML = `<div class="empty-box" style="margin:20px">${app.esc(d.feed.emptyFeed)}</div>`;
       } else {
         const startIdx = state.posts.length;
         state.posts.push(...batch);
         let html = '';
         batch.forEach((p, i) => {
-          const idx = startIdx + i;
-          html += postCardHTML(p, idx);
-          // Insert respectful native sponsor card after post #2 for Free users only
-          if (idx === 2) html += renderSponsorCard();
+          html += postCardHTML(p, startIdx + i);
         });
         feedList.insertAdjacentHTML('beforeend', html);
       }
@@ -349,7 +327,7 @@ export async function mount({ root, app, signal }) {
       if (err.name !== 'AbortError') {
         sentinel.textContent = '';
         if (state.posts.length === 0) {
-          feedList.innerHTML = `<div class="empty-box">${app.esc(err.message)}</div>`;
+          feedList.innerHTML = `<div class="empty-box" style="margin:20px">${app.esc(err.message)}</div>`;
         }
       }
     } finally {
@@ -381,27 +359,28 @@ export async function mount({ root, app, signal }) {
 
     const reactBtn = e.target.closest('[data-react-post]');
     if (reactBtn) {
-      const postId = Number(reactBtn.dataset.reactPost);
-      if (!app.user) {
-        app.openAuthModal();
-        return;
-      }
-      try {
-        const res = await app.api(`/api/v1/posts/${postId}/react`, {
-          method: 'POST',
-          body: { reaction_type: 'amen' },
-        });
-        const active = (res.my_reactions || []).includes('amen');
-        reactBtn.classList.toggle('is-active', active);
-        reactBtn.setAttribute('aria-pressed', String(active));
-        if (active) {
-          reactBtn.classList.add('is-pop');
-          setTimeout(() => reactBtn.classList.remove('is-pop'), 500);
-        }
-        const cntEl = reactBtn.querySelector(`[data-amen-count="${postId}"]`);
-        if (cntEl) cntEl.textContent = String(res.reactions?.amen || 0);
-      } catch (err) {
-        app.toast(err.message);
+      await toggleAmen(Number(reactBtn.dataset.reactPost), reactBtn);
+      return;
+    }
+
+    const dblEl = e.target.closest('[data-dbltap]');
+    if (dblEl) {
+      const postId = Number(dblEl.dataset.dbltap);
+      const now = Date.now();
+      if (lastTap.id === postId && now - lastTap.time < 280) {
+        clearTimeout(tapTimer);
+        lastTap = { id: 0, time: 0 };
+        const card = dblEl.closest('.ig-post');
+        triggerAmenBurst(card);
+        const btn = card?.querySelector(`[data-react-post="${postId}"]`);
+        await toggleAmen(postId, btn, { onlyAdd: true });
+      } else {
+        lastTap = { id: postId, time: now };
+        clearTimeout(tapTimer);
+        tapTimer = setTimeout(() => {
+          const post = state.posts.find((p) => p.id === postId);
+          if (post) openPostDetailModal(post, app, d);
+        }, 250);
       }
       return;
     }
@@ -456,29 +435,24 @@ export async function mount({ root, app, signal }) {
   );
   observer.observe(sentinel);
 
-  audioUnsub = audioEngine.subscribe(() => renderGospelMini());
-
   // Parallel lightweight initial fetch ONLY for this view
-  const [storiesRes, liveRes, liturgyRes] = await Promise.allSettled([
+  const [storiesRes, liveRes] = await Promise.allSettled([
     app.api('/api/v1/stories', { signal }),
     app.api('/api/v1/live', { signal }),
-    app.api(`/api/v1/prayers/liturgy?lang=${app.locale}`, { signal }),
     loadPage(true),
   ]);
 
   if (!signal.aborted) {
     if (storiesRes.status === 'fulfilled') state.stories = storiesRes.value.stories || [];
     if (liveRes.status === 'fulfilled') state.liveStations = liveRes.value.all || [];
-    if (liturgyRes.status === 'fulfilled') state.liturgy = liturgyRes.value.liturgy || null;
     renderStories();
-    renderGospelMini();
   }
 
   return {
     cleanup() {
       clearTimeout(searchTimer);
+      clearTimeout(tapTimer);
       if (observer) observer.disconnect();
-      if (audioUnsub) audioUnsub();
     },
   };
 }

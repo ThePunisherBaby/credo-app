@@ -14,15 +14,6 @@ export async function mount({ root, app, signal }) {
       return 'system';
     }
   };
-  const currentGlass = () => {
-    try {
-      const v = localStorage.getItem('credo-glass-opacity');
-      return v !== null ? Number(v) : 0.45;
-    } catch {
-      return 0.45;
-    }
-  };
-  const currentScale = () => document.documentElement.dataset.fontScale || 'normal';
 
   function renderShell() {
     const u = app.user;
@@ -62,6 +53,19 @@ export async function mount({ root, app, signal }) {
             <a href="#/user/${u.id}" class="btn btn-sm btn-soft" style="margin-left:auto">Ver perfil público</a>
           </div>` : (u ? `<div style="display:flex;justify-content:flex-end"><a href="#/user/${u.id}" class="btn btn-sm btn-soft">Ver perfil público</a></div>` : '')}
       </article>
+
+      <a href="#/parishes" class="card" style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;padding:14px 16px;text-decoration:none;color:inherit">
+        <div style="display:flex;align-items:center;gap:12px;min-width:0">
+          <span style="width:40px;height:40px;border-radius:12px;background:var(--gold-soft);color:var(--gold-text);display:grid;place-items:center;flex-shrink:0">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v5"/><path d="M9.5 4.5h5"/><path d="M5 21V11l7-4 7 4v10"/><path d="M9 21v-5a3 3 0 0 1 6 0v5"/><path d="M3 21h18"/></svg>
+          </span>
+          <div style="min-width:0">
+            <strong style="display:block;font-size:0.95rem">Parroquias y Jerarquía</strong>
+            <span class="t-footnote">Diócesis, conferencias episcopales y comunidad</span>
+          </div>
+        </div>
+        <span style="color:var(--label-3);font-weight:700;font-size:1.1rem" aria-hidden="true">›</span>
+      </a>
 
       <div class="segmented" id="profTabs" role="tablist" style="margin-bottom:16px">
         <button type="button" class="seg-btn${subTab === 'plus' ? ' is-active' : ''}" data-tab="plus">✦ ${app.esc(d.profile.tabs.plus)}</button>
@@ -151,8 +155,6 @@ export async function mount({ root, app, signal }) {
 
     if (subTab === 'settings') {
       const scheme = currentScheme();
-      const glassVal = currentGlass();
-      const scale = currentScale();
 
       host.innerHTML = `
         <div class="card settings-group">
@@ -164,27 +166,6 @@ export async function mount({ root, app, signal }) {
               <button type="button" class="seg-btn${scheme === 'system' ? ' is-active' : ''}" data-scheme="system">${app.esc(d.profile.themeSystem)}</button>
               <button type="button" class="seg-btn${scheme === 'light' ? ' is-active' : ''}" data-scheme="light">${app.esc(d.profile.themeLight)}</button>
               <button type="button" class="seg-btn${scheme === 'dark' ? ' is-active' : ''}" data-scheme="dark">${app.esc(d.profile.themeDark)}</button>
-            </div>
-          </div>
-
-          <div class="setting-row">
-            <div class="setting-row-inline">
-              <label for="glassSlider" class="t-footnote">${app.esc(d.profile.glassOpacityLabel)}</label>
-              <span class="t-caption" id="glassPct">${Math.round(glassVal * 100)}%</span>
-            </div>
-            <input id="glassSlider" class="range-slider" type="range" min="0" max="1" step="0.05" value="${glassVal}" />
-            <div class="setting-row-inline t-caption">
-              <span>${app.esc(d.profile.glassClear)}</span>
-              <span>${app.esc(d.profile.glassTinted)}</span>
-            </div>
-          </div>
-
-          <div class="setting-row">
-            <label class="t-footnote">${app.esc(d.profile.fontScaleLabel)}</label>
-            <div class="segmented" id="scaleSeg">
-              <button type="button" class="seg-btn${scale === 'normal' ? ' is-active' : ''}" data-scale="normal">${app.esc(d.profile.fontNormal)}</button>
-              <button type="button" class="seg-btn${scale === 'large' ? ' is-active' : ''}" data-scale="large">${app.esc(d.profile.fontLarge)}</button>
-              <button type="button" class="seg-btn${scale === 'xl' ? ' is-active' : ''}" data-scale="xl">${app.esc(d.profile.fontXL)}</button>
             </div>
           </div>
 
@@ -235,23 +216,6 @@ export async function mount({ root, app, signal }) {
         if (!b) return;
         app.setColorScheme(b.dataset.scheme);
         host.querySelectorAll('#themeSeg .seg-btn').forEach((x) => x.classList.toggle('is-active', x === b));
-      };
-
-      const slider = host.querySelector('#glassSlider');
-      slider.addEventListener('input', () => {
-        const val = slider.value;
-        document.documentElement.style.setProperty('--glass-user-opacity', val);
-        host.querySelector('#glassPct').textContent = `${Math.round(Number(val) * 100)}%`;
-        try { localStorage.setItem('credo-glass-opacity', val); } catch {}
-      });
-
-      host.querySelector('#scaleSeg').onclick = (e) => {
-        const b = e.target.closest('[data-scale]');
-        if (!b) return;
-        const sc = b.dataset.scale;
-        document.documentElement.dataset.fontScale = sc;
-        try { localStorage.setItem('credo-font-scale', sc); } catch {}
-        host.querySelectorAll('#scaleSeg .seg-btn').forEach((x) => x.classList.toggle('is-active', x === b));
       };
 
       host.querySelector('#langSelect').addEventListener('change', (e) => {

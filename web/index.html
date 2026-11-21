@@ -10,14 +10,6 @@
       if (savedScheme === 'dark' || savedScheme === 'light') {
         document.querySelector('meta[name="color-scheme"]').content = savedScheme;
       }
-      var savedGlass = localStorage.getItem('credo-glass-opacity');
-      if (savedGlass !== null) {
-        document.documentElement.style.setProperty('--glass-user-opacity', savedGlass);
-      }
-      var savedScale = localStorage.getItem('credo-font-scale');
-      if (savedScale) {
-        document.documentElement.dataset.fontScale = savedScale;
-      }
     } catch (e) {}
   </script>
   <title>Credo — Fe, Comunión y Radio en Vivo</title>
@@ -28,7 +20,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,500;0,600;1,500&family=Nunito:wght@500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/styles.css?v=6" />
+  <link rel="stylesheet" href="/styles.css?v=7" />
 </head>
 <body>
   <!-- Soft progressive top scroll edge blur (functional layer) -->
@@ -180,6 +172,6 @@
   <!-- Live Toast Feedback -->
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-  <script type="module" src="/app.js?v=6"></script>
+  <script type="module" src="/app.js?v=7"></script>
 </body>
 </html>
