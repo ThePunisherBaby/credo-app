@@ -104,7 +104,7 @@ export async function mount({ root, app, signal, route, params }) {
               ${notices
                 .map(
                   (n) => `
-                <div style="padding:10px 12px;border-radius:12px;background:var(--surface-2)">
+                <div style="padding:10px 12px;border-radius:8px;background:var(--surface-2)">
                   <div style="display:flex;justify-content:space-between;gap:8px;font-size:0.84rem">
                     <strong>${app.esc(n.title)}</strong>
                     <span class="t-caption">${app.esc(n.date || '')}</span>
@@ -488,7 +488,7 @@ async function mountUserProfile({ root, app, signal, userId }) {
         ${hasAireRadio ? `
           <div class="offering-banner" style="background:linear-gradient(135deg,rgba(15,30,54,0.92),rgba(42,30,12,0.92));color:#fff;border-color:rgba(212,175,55,0.45)">
             <div style="display:flex;align-items:center;gap:12px">
-              <img src="https://aire96fm.com.do/wp-content/themes/aire96-liquid/assets/img/aire96-logo-256.png" alt="Aire 96 FM" width="46" height="46" style="border-radius:12px;object-fit:cover" />
+              <img src="https://aire96fm.com.do/wp-content/themes/aire96-liquid/assets/img/aire96-logo-256.png" alt="Aire 96 FM" width="46" height="46" style="border-radius:8px;object-fit:cover" />
               <div>
                 <div style="display:flex;align-items:center;gap:6px;font-size:0.72rem;font-weight:800;color:#FF6961">
                   <span class="live-dot"></span> RADIO EN VIVO · 96.5 FM
@@ -528,11 +528,13 @@ async function mountUserProfile({ root, app, signal, userId }) {
 
       <div class="section-bar"><h2 class="t-title-3">Publicaciones Oficiales (${posts.length})</h2></div>
       <div class="feed-list">
-        ${posts.length === 0 ? `<div class="empty-box">Sin publicaciones todavía.</div>` : posts.map((p) => `
-          <article class="card post-card">
-            ${p.image_url ? `<div class="post-media"><img src="${app.esc(p.image_url)}" alt="" loading="lazy" /></div>` : ''}
-            ${p.title ? `<h3 class="post-title">${app.esc(p.title)}</h3>` : ''}
-            <p class="post-excerpt">${app.esc(p.content)}</p>
+        ${posts.length === 0 ? `<div class="empty-box" style="margin:0 20px">Sin publicaciones todavía.</div>` : posts.map((p) => `
+          <article class="ig-post">
+            ${p.image_url ? `<div class="ig-media"><img src="${app.esc(p.image_url)}" alt="" loading="lazy" /></div>` : ''}
+            <div class="ig-caption" style="padding-top:10px">
+              ${p.title ? `<h3 class="post-title">${app.esc(p.title)}</h3>` : ''}
+              <p class="post-excerpt">${app.esc(p.content)}</p>
+            </div>
           </article>`).join('')}
       </div>
     `;
@@ -577,7 +579,7 @@ function openOfferingModal(unit, app, d) {
     d.parishes.offeringModalTitle,
     `
     <div style="display:flex;flex-direction:column;gap:14px">
-      <div style="padding:12px 14px;border-radius:16px;background:var(--gold-soft);border:1px solid rgba(200,162,83,0.35)">
+      <div style="padding:12px 14px;border-radius:10px;background:var(--gold-soft);border:1px solid rgba(200,162,83,0.35)">
         <strong>${app.esc(unit.name)}</strong>
         <p class="t-footnote" style="margin-top:4px;color:var(--gold-text)">✓ ${app.esc(d.parishes.offeringGuarantee)}</p>
       </div>

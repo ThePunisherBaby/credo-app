@@ -82,7 +82,7 @@ export async function mount({ root, app, signal }) {
         <p class="gospel-prose" id="gospelProse">${app.esc(liturgy.gospel_text)}</p>
 
         ${liturgy.reflection ? `
-        <div style="padding:14px;border-radius:16px;background:var(--surface-2)">
+        <div style="padding:14px;border-radius:10px;background:var(--surface-2)">
           <strong class="t-footnote" style="text-transform:uppercase;letter-spacing:0.06em;color:var(--gold-text)">${app.esc(d.prayer.reflection)}</strong>
           <p style="margin:6px 0 0;font-size:0.93rem;line-height:1.55">${app.esc(liturgy.reflection)}</p>
         </div>` : ''}

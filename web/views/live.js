@@ -20,7 +20,7 @@ export async function mount({ root, app, signal }) {
     </header>
 
     <section id="liveHeroHost">
-      <div class="skeleton" style="height:230px;border-radius:26px;margin-bottom:24px"></div>
+      <div class="skeleton" style="height:230px;border-radius:12px;margin-bottom:24px"></div>
     </section>
 
     <div class="section-bar">
@@ -28,8 +28,8 @@ export async function mount({ root, app, signal }) {
       <span class="t-footnote" id="radiosCount"></span>
     </div>
     <section class="radio-grid" id="radioGrid">
-      <div class="skeleton" style="height:190px;border-radius:22px"></div>
-      <div class="skeleton" style="height:190px;border-radius:22px"></div>
+      <div class="skeleton" style="height:190px;border-radius:10px"></div>
+      <div class="skeleton" style="height:190px;border-radius:10px"></div>
     </section>
 
     <div class="section-bar" id="tvSectionBar" hidden>

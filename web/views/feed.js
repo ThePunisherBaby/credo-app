@@ -106,8 +106,10 @@ export async function mount({ root, app, signal }) {
       parts.push(`
         <button type="button" class="story-item stagger-in" style="--stagger-i:${idx}" data-live-slug="${app.esc(ch.slug)}">
           <span class="story-ring is-live">
-            <span class="story-ring-inner">
-              <img src="${app.esc(imgUrl || ch.cover_url)}" alt="${app.esc(ch.name)}" width="62" height="62" />
+            <span class="story-ring-inner" style="background:${app.esc(ch.accent_color || '#0F1E36')}">
+              ${imgUrl
+                ? `<img src="${app.esc(imgUrl)}" alt="${app.esc(ch.name)}" width="62" height="62" />`
+                : `<span style="color:#fff;font-weight:800">${app.initials(ch.name)}</span>`}
             </span>
           </span>
           <span class="story-name">
@@ -471,7 +473,7 @@ async function openPostDetailModal(post, app, d) {
           <span class="t-footnote">${app.esc(post.scope_unit?.name || '')} · ${app.relTime(post.created_at)}</span>
         </div>
       </div>
-      ${post.image_url ? `<img src="${app.esc(post.image_url)}" alt="" style="width:100%;border-radius:16px;aspect-ratio:16/10;object-fit:cover" />` : ''}
+      ${post.image_url ? `<img src="${app.esc(post.image_url)}" alt="" style="width:100%;border-radius:8px;aspect-ratio:16/10;object-fit:cover" />` : ''}
       ${post.title ? `<h3 class="t-serif" style="margin:0;font-size:1.3rem;line-height:1.3">${app.esc(post.title)}</h3>` : ''}
       ${post.scripture_ref ? `<span class="post-scripture-pill">📖 ${app.esc(post.scripture_ref)}</span>` : ''}
       <p style="margin:0;line-height:1.65;white-space:pre-line">${app.esc(post.content)}</p>
@@ -482,7 +484,7 @@ async function openPostDetailModal(post, app, d) {
         <div class="skeleton" style="height:44px"></div>
       </div>
       <form id="modalCommentForm" style="display:flex;gap:8px;margin-top:4px">
-        <input type="text" name="content" placeholder="${app.esc(d.feed.commentPlaceholder)}" style="flex:1;min-height:44px;padding:0 14px;border-radius:999px;border:1px solid var(--sep-strong);background:var(--surface-2)" required />
+        <input type="text" name="content" placeholder="${app.esc(d.feed.commentPlaceholder)}" style="flex:1;min-height:44px;padding:0 14px;border-radius:8px;border:1px solid var(--sep-strong);background:var(--surface-2)" required />
         <button type="submit" class="btn btn-gold btn-sm">${app.esc(d.feed.send)}</button>
       </form>
     </article>
@@ -502,7 +504,7 @@ async function openPostDetailModal(post, app, d) {
         listEl.innerHTML = items
           .map(
             (c) => `
-          <div style="padding:10px 12px;border-radius:14px;background:var(--surface-2)">
+          <div style="padding:10px 12px;border-radius:8px;background:var(--surface-2)">
             <div style="display:flex;justify-content:space-between;gap:8px;font-size:0.8rem">
               <strong>${app.esc(c.author?.full_name || 'Fiel')}</strong>
               <span class="t-caption">${app.relTime(c.created_at)}</span>

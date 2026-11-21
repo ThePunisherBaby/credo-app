@@ -56,7 +56,7 @@ export async function mount({ root, app, signal }) {
 
       <a href="#/parishes" class="card" style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;padding:14px 16px;text-decoration:none;color:inherit">
         <div style="display:flex;align-items:center;gap:12px;min-width:0">
-          <span style="width:40px;height:40px;border-radius:12px;background:var(--gold-soft);color:var(--gold-text);display:grid;place-items:center;flex-shrink:0">
+          <span style="width:40px;height:40px;border-radius:8px;background:var(--gold-soft);color:var(--gold-text);display:grid;place-items:center;flex-shrink:0">
             <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v5"/><path d="M9.5 4.5h5"/><path d="M5 21V11l7-4 7 4v10"/><path d="M9 21v-5a3 3 0 0 1 6 0v5"/><path d="M3 21h18"/></svg>
           </span>
           <div style="min-width:0">
@@ -171,7 +171,7 @@ export async function mount({ root, app, signal }) {
 
           <div class="setting-row">
             <label for="langSelect" class="t-footnote">${app.esc(d.profile.languageLabel)}</label>
-            <select id="langSelect" style="min-height:44px;border-radius:14px;border:1px solid var(--sep-strong);background:var(--surface-2);padding:0 12px">
+            <select id="langSelect" style="min-height:44px;border-radius:8px;border:1px solid var(--sep-strong);background:var(--surface-2);padding:0 12px">
               <option value="es"${app.locale === 'es' ? ' selected' : ''}>Español</option>
               <option value="en"${app.locale === 'en' ? ' selected' : ''}>English</option>
               <option value="it"${app.locale === 'it' ? ' selected' : ''}>Italiano</option>

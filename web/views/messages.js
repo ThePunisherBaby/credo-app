@@ -83,7 +83,7 @@ export async function mount({ root, app, signal, params }) {
       <div class="card" style="display:flex;flex-direction:column;gap:12px;min-height:420px">
         <div id="chatMsgs" style="flex:1;display:flex;flex-direction:column;gap:8px;max-height:55dvh;overflow-y:auto"></div>
         <form id="chatForm" style="display:flex;gap:8px">
-          <input type="text" name="content" placeholder="Escribe un mensaje…" required style="flex:1;min-height:44px;border-radius:999px;border:1px solid var(--sep-strong);background:var(--surface-2);padding:0 14px" />
+          <input type="text" name="content" placeholder="Escribe un mensaje…" required style="flex:1;min-height:44px;border-radius:8px;border:1px solid var(--sep-strong);background:var(--surface-2);padding:0 14px" />
           <button type="submit" class="btn btn-gold btn-sm">Enviar</button>
         </form>
       </div>
