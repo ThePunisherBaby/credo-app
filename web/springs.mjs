@@ -112,29 +112,26 @@ export const MOTION = {
   micro: fromDurationBounce(0.28, 0),
   microSnappy: fromDurationBounce(0.3, 0.18),
   large: fromDurationBounce(0.56, 0),
-  island: fromDurationBounce(0.44, 0.2),
+  island: fromDurationBounce(0.36, 0.12),
 };
 
 /**
- * Apple Dynamic Island Liquid Glass Sliding Pill Indicator.
- * Glides on GPU compositor (translate3d + subtle velocity-based elastic stretch)
- * with 100% interruptible velocity-preserving spring retargeting.
+ * Apple Dynamic Island Sliding Pill Indicator.
+ * Glides smoothly on GPU compositor (translate3d + width) without scale distortion.
  */
 export function createSpringPill(containerEl, indicatorEl) {
   const reduceMQ = window.matchMedia('(prefers-reduced-motion: reduce)');
   const sx = new SpringValue(0, MOTION.island);
-  const sw = new SpringValue(0, MOTION.snappy);
+  const sw = new SpringValue(0, MOTION.island);
   let initialized = false;
+  let lastTargetX = null;
+  let lastTargetW = null;
   let raf = 0;
 
-  const paint = (x, w, vx = 0) => {
+  const paint = (x, w) => {
     if (w <= 0) return;
-    const speed = Math.abs(vx);
-    // Subtle Apple motion-stretching (area-conserving) while flying between tabs
-    const stretch = reduceMQ.matches ? 1 : 1 + 0.065 * Math.min(speed / 1500, 1);
-    const squash = 1 / stretch;
     indicatorEl.style.width = `${w.toFixed(1)}px`;
-    indicatorEl.style.transform = `translate3d(${x.toFixed(2)}px, 0, 0) scale(${stretch.toFixed(4)}, ${squash.toFixed(4)})`;
+    indicatorEl.style.transform = `translate3d(${x.toFixed(2)}px, 0, 0)`;
     indicatorEl.style.opacity = '1';
   };
 
@@ -142,12 +139,12 @@ export function createSpringPill(containerEl, indicatorEl) {
     const now = ms / 1000;
     const xS = sx.sample(now);
     const wS = sw.sample(now);
-    if (sx.isSettled(now, 0.25, 3) && sw.isSettled(now, 0.25, 3)) {
-      paint(sx.target, sw.target, 0);
+    if (sx.isSettled(now, 0.08, 0.5) && sw.isSettled(now, 0.08, 0.5)) {
+      paint(sx.target, sw.target);
       raf = 0;
       return;
     }
-    paint(xS.value, wS.value, xS.velocity);
+    paint(xS.value, wS.value);
     raf = requestAnimationFrame(tick);
   };
 
@@ -161,18 +158,30 @@ export function createSpringPill(containerEl, indicatorEl) {
       const targetW = tRect.width;
       const now = performance.now() / 1000;
 
+      if (
+        initialized &&
+        !immediate &&
+        lastTargetX !== null &&
+        Math.abs(targetX - lastTargetX) < 0.5 &&
+        Math.abs(targetW - lastTargetW) < 0.5
+      ) {
+        return;
+      }
+      lastTargetX = targetX;
+      lastTargetW = targetW;
+
       if (!initialized || immediate || reduceMQ.matches) {
         initialized = true;
         cancelAnimationFrame(raf);
         raf = 0;
         sx.set(targetX, now);
         sw.set(targetW, now);
-        paint(targetX, targetW, 0);
+        paint(targetX, targetW);
         return;
       }
 
       sx.retarget(targetX, now, MOTION.island);
-      sw.retarget(targetW, now, MOTION.snappy);
+      sw.retarget(targetW, now, MOTION.island);
       if (!raf) raf = requestAnimationFrame(tick);
     },
     destroy() {

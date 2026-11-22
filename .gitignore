@@ -13,3 +13,4 @@ app/.dart_tool/
 app/android/.gradle/
 app/android/build/
 app/android/app/build/
+tmp/

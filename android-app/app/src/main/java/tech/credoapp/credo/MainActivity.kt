@@ -206,13 +206,20 @@ class MainActivity : AppCompatActivity() {
             ?: BuildConfig.CREDO_URL
         webView.loadUrl(startUrl)
 
-        // Check GitHub Releases automatically on launch (silent if already up to date)
+        // Check GitHub Releases automatically on launch (silent autonomous background download)
         updateEngine.checkForUpdate(silent = true)
     }
+
+    private var lastAutoUpdateCheckMs = System.currentTimeMillis()
 
     override fun onResume() {
         super.onResume()
         updateEngine.resumePendingInstallIfPermitted()
+        val now = System.currentTimeMillis()
+        if (now - lastAutoUpdateCheckMs > 15 * 60 * 1000L) {
+            lastAutoUpdateCheckMs = now
+            updateEngine.checkForUpdate(silent = true)
+        }
     }
 
     override fun onDestroy() {

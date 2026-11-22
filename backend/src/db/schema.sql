@@ -308,3 +308,13 @@ CREATE TABLE IF NOT EXISTS parish_offerings (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS rosary_audio_tracks (
+  id SERIAL PRIMARY KEY,
+  uploader_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  slot_type TEXT NOT NULL CHECK (slot_type IN ('joyful', 'sorrowful', 'glorious', 'luminous', 'promo', 'interlude')),
+  title TEXT NOT NULL,
+  mime_type TEXT NOT NULL DEFAULT 'audio/mpeg',
+  data BYTEA NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_rosary_tracks_slot ON rosary_audio_tracks(slot_type, created_at DESC);

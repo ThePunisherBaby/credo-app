@@ -37,7 +37,10 @@ export async function mount({ root, app, signal }) {
 
   root.innerHTML = `
     <header class="feed-topbar">
-      <h1 class="t-large-title" style="font-size:1.72rem;letter-spacing:-0.03em">${app.esc(d.appName)}</h1>
+      <div style="display:flex;align-items:center;gap:10px">
+        <img class="brand-logo" src="/icons/credo-192.png" alt="Credo" width="34" height="34" />
+        <h1 class="t-large-title" style="font-size:1.72rem;letter-spacing:-0.03em;margin:0">${app.esc(d.appName)}</h1>
+      </div>
       <div class="page-head-actions">
         <a href="#/parishes" class="icon-btn-44" aria-label="${app.esc(d.nav?.parishes || 'Parroquias y Jerarquía')}" title="${app.esc(d.nav?.parishes || 'Parroquias y Jerarquía')}">
           <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v5"/><path d="M9.5 4.5h5"/><path d="M5 21V11l7-4 7 4v10"/><path d="M9 21v-5a3 3 0 0 1 6 0v5"/><path d="M3 21h18"/></svg>

@@ -1,11 +1,20 @@
-// views/live.js — Pantalla 2: En Vivo (Hub de Radio y TV Católica)
-// Loaded on demand ONLY when on #/live. Connects to persistent Mini-Player & Full-Screen Player.
+// views/live.js — En Vivo: Radios · Canales TV · Misas en Vivo
 
 import { audioEngine } from '../audio-engine.js';
 
+function proxyImg(url) {
+  if (!url) return '';
+  if (url.includes('aire96fm.com.do') || url.includes('reflexionandolapalabra.com')) {
+    return `/api/v1/media/proxy?url=${encodeURIComponent(url)}`;
+  }
+  return url;
+}
+
 export async function mount({ root, app, signal }) {
   const d = app.dict();
-  let channelsData = { hero: null, radios: [], tv_channels: [], all: [] };
+  let data = null;
+  let activeSubTab = 'radios';
+  let activeVideoSlug = '';
   let audioUnsub = null;
 
   root.innerHTML = `
@@ -16,186 +25,206 @@ export async function mount({ root, app, signal }) {
       </div>
     </header>
 
-    <section id="liveHeroHost">
-      <div class="skeleton" style="height:230px;border-radius:12px;margin-bottom:24px"></div>
-    </section>
-
-    <div class="section-bar">
-      <h2 class="t-title-2">${app.esc(d.live.radiosTitle)}</h2>
-      <span class="t-footnote" id="radiosCount"></span>
+    <div class="seg-tabs" id="liveSubTabs" role="tablist">
+      <button type="button" class="seg-tab is-active" data-ltab="radios" role="tab" aria-selected="true">Radios</button>
+      <button type="button" class="seg-tab" data-ltab="tv" role="tab" aria-selected="false">Canales TV</button>
+      <button type="button" class="seg-tab" data-ltab="masses" role="tab" aria-selected="false">Misas en Vivo</button>
     </div>
-    <section class="radio-grid" id="radioGrid">
-      <div class="skeleton" style="height:190px;border-radius:10px"></div>
-      <div class="skeleton" style="height:190px;border-radius:10px"></div>
-    </section>
 
-    <div class="section-bar" id="tvSectionBar" hidden>
-      <h2 class="t-title-2">${app.esc(d.live.tvTitle)}</h2>
-      <span class="t-footnote" id="tvCount"></span>
+    <div id="liveBody">
+      <div class="hero-live-card" style="min-height:200px"><div class="skeleton" style="height:160px"></div></div>
     </div>
-    <section class="tv-list" id="tvList" hidden></section>
   `;
 
-  const heroHost = root.querySelector('#liveHeroHost');
-  const radioGrid = root.querySelector('#radioGrid');
-  const tvSectionBar = root.querySelector('#tvSectionBar');
-  const tvList = root.querySelector('#tvList');
+  const bodyEl = root.querySelector('#liveBody');
 
-  const proxyImg = (url) =>
-    url && (url.includes('aire96fm.com.do') || url.includes('reflexionandolapalabra.com'))
-      ? `/api/v1/media/proxy?url=${encodeURIComponent(url)}`
-      : url;
+  function renderVideoList(items, emptyText) {
+    if (!items || items.length === 0) {
+      return `<div class="empty-box">${app.esc(emptyText)}</div>`;
+    }
+    return `
+      <div class="tv-list">
+        ${items.map((ch) => {
+          const isPlayingVid = activeVideoSlug === ch.slug;
+          const thumb = proxyImg(ch.cover_url) || (ch.youtube_live_id ? `https://i.ytimg.com/vi/${app.esc(ch.youtube_live_id)}/hqdefault.jpg` : '');
+          return `
+            <article class="tv-card">
+              <div class="tv-thumb" style="background:#000">
+                ${isPlayingVid && ch.youtube_live_id
+                  ? `<iframe src="https://www.youtube.com/embed/${app.esc(ch.youtube_live_id)}?autoplay=1&playsinline=1&rel=0" style="width:100%;height:100%;border:0" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe>`
+                  : `
+                    ${thumb ? `<img src="${app.esc(thumb)}" alt="${app.esc(ch.name)}" loading="lazy" />` : ''}
+                    <button type="button" class="video-play-overlay" data-play-vid="${app.esc(ch.slug)}" aria-label="Reproducir ${app.esc(ch.name)}">
+                      <span class="video-play-circle">
+                        <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor" style="margin-left:2px"><path d="M8 5v14l11-7z"/></svg>
+                      </span>
+                    </button>
+                    <span class="station-freq-badge" style="display:inline-flex;align-items:center;gap:5px"><span class="live-dot" style="width:6px;height:6px"></span>${app.esc(ch.frequency || 'VIDEO')}</span>
+                  `}
+              </div>
+              <div class="tv-card-body">
+                <div style="min-width:0;flex:1">
+                  <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">
+                    <span class="t-caption" style="color:var(--gold-text);font-weight:700">${app.esc(ch.tagline || ch.current_program || '')}</span>
+                  </div>
+                  <strong style="font-size:0.95rem;display:block;line-height:1.3">${app.esc(ch.name)}</strong>
+                </div>
+                <div style="display:flex;gap:6px;flex-shrink:0">
+                  <button type="button" class="btn btn-sm ${isPlayingVid ? 'btn-soft' : 'btn-gold'}" data-play-vid="${app.esc(ch.slug)}">
+                    ${isPlayingVid ? 'Cerrar' : 'Ver'}
+                  </button>
+                  ${ch.source_url ? `<a href="${app.esc(ch.source_url)}" target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-soft" aria-label="Abrir fuente original">↗</a>` : ''}
+                </div>
+              </div>
+            </article>
+          `;
+        }).join('')}
+      </div>
+    `;
+  }
 
-  function renderAll() {
-    const active = audioEngine.getState();
-    const curId = active.channel?.id;
+  function render() {
+    if (!data) return;
+    const st = audioEngine.getState();
 
-    // Hero Stream — Apple Music Radio Card Aesthetic
-    const hero = channelsData.hero;
-    if (hero) {
-      const isPlaying = curId === hero.id && active.playing;
-      const heroImg = proxyImg(hero.cover_url);
-      heroHost.innerHTML = `
-        <article class="hero-live-card stagger-in" style="--stagger-i:0">
-          <img class="hero-live-bg" src="${app.esc(heroImg)}" alt="" aria-hidden="true" />
+    if (activeSubTab === 'tv') {
+      bodyEl.innerHTML = renderVideoList(data.tv_channels || [], 'No hay señales de TV disponibles en este momento.');
+      bindHandlers();
+      return;
+    }
+
+    if (activeSubTab === 'masses') {
+      bodyEl.innerHTML = renderVideoList(data.live_masses || [], 'No hay Misas transmitiéndose en este momento.');
+      bindHandlers();
+      return;
+    }
+
+    const hero = data.hero;
+    const radios = data.radios || [];
+    const heroArt = proxyImg(hero?.cover_url);
+    const heroIsPlaying = st.playing && st.channel?.id === hero?.id;
+
+    bodyEl.innerHTML = `
+      ${hero ? `
+        <article class="hero-live-card" data-channel-id="${hero.id}">
+          ${heroArt ? `<img class="hero-live-bg" src="${app.esc(heroArt)}" alt="" aria-hidden="true" />` : ''}
           <div class="hero-live-scrim" aria-hidden="true"></div>
           <div class="hero-live-content">
-            <div class="hero-live-top">
-              <span class="live-badge-pill"><span class="live-dot" style="background:#fff"></span>${app.esc(d.live.liveBadge)}</span>
-              ${hero.frequency ? `<span class="listeners-pill">${app.esc(hero.frequency)}</span>` : ''}
-            </div>
-            <div class="hero-live-row">
-              <img class="hero-live-art" src="${app.esc(heroImg)}" alt="${app.esc(hero.name)}" fetchpriority="high" width="82" height="82" />
-              <div style="min-width:0">
-                <h2 class="t-title-2" style="color:#fff">${app.esc(hero.name)}</h2>
-                <p style="margin:4px 0 0;font-size:0.88rem;color:rgba(255,255,255,0.78);font-weight:600">${app.esc(hero.current_program)}</p>
+            <div class="hero-top-row">
+              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                <span class="live-pill-lg"><span class="live-dot" aria-hidden="true"></span>${app.esc(d.live.onAir)}</span>
+                <span class="t-caption" style="color:rgba(255,255,255,0.8)">${app.esc(hero.frequency || 'RADIO')}</span>
               </div>
             </div>
+
+            <div class="hero-main-row">
+              <div class="hero-cover">
+                ${heroArt ? `<img src="${app.esc(heroArt)}" alt="${app.esc(hero.name)}" fetchpriority="high" />` : ''}
+              </div>
+              <div style="flex:1;min-width:0">
+                <p style="margin:0;font-size:0.74rem;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#66B2FF">${app.esc(hero.tagline)}</p>
+                <h2 class="t-title-2" style="color:#fff;margin-top:4px">${app.esc(hero.name)}</h2>
+                <p style="margin:4px 0 0;font-size:0.86rem;color:rgba(255,255,255,0.85)">${app.esc(hero.current_program || '')}</p>
+                ${hero.city ? `<p style="margin:3px 0 0;font-size:0.74rem;color:rgba(255,255,255,0.65)">${app.esc(hero.city)}</p>` : ''}
+              </div>
+            </div>
+
             <div style="display:flex;gap:10px;flex-wrap:wrap">
-              <button type="button" class="btn btn-gold" data-play-channel="${hero.id}">
-                <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="${isPlaying ? 'M6 5h4v14H6zm8 0h4v14h-4z' : 'M8 5v14l11-7z'}"/></svg>
-                <span>${isPlaying ? app.esc(d.live.playingNow) : app.esc(hero.kind === 'radio' ? d.live.listenNow : d.live.watchNow)}</span>
+              <button type="button" class="btn btn-gold btn-sm" id="heroListenBtn">
+                ${heroIsPlaying ? '⏸ ' + app.esc(d.live.pauseNow) : '▶ ' + app.esc(d.live.listenNow)}
               </button>
-              <button type="button" class="btn btn-sm" style="background:rgba(255,255,255,0.14);color:#fff" data-expand-channel="${hero.id}">
+              <button type="button" class="btn btn-sm" style="background:rgba(255,255,255,0.14);color:#fff" id="heroOpenSheetBtn">
                 Reproductor
               </button>
             </div>
           </div>
         </article>
-      `;
-    }
+      ` : ''}
 
-    // Radios Grid — Eager-loaded proxied official logos so cards never flash blank
-    root.querySelector('#radiosCount').textContent = `${channelsData.radios.length} en directo`;
-    radioGrid.innerHTML = channelsData.radios
-      .map((st, idx) => {
-        const isPlaying = curId === st.id && active.playing;
-        const stImg = proxyImg(st.cover_url);
-        return `
-          <button type="button" class="station-card stagger-in${isPlaying ? ' is-playing' : ''}" style="--stagger-i:${idx + 1}" data-play-channel="${st.id}">
-            <div class="station-art-wrap" style="--st-accent:${app.esc(st.accent_color)}">
-              <img src="${app.esc(stImg)}" alt="${app.esc(st.name)}" width="240" height="240" />
-              <div class="station-art-scrim" aria-hidden="true"></div>
-              <span class="station-freq-badge">${app.esc(st.frequency)}</span>
-              <span class="station-play-fab" aria-hidden="true">
-                <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
-                  <path d="${isPlaying ? 'M6 5h4v14H6zm8 0h4v14h-4z' : 'M8 5v14l11-7z'}"/>
-                </svg>
-              </span>
-            </div>
-            <div>
-              <div class="station-name">${app.esc(st.name)}</div>
-              <div class="station-prog">${app.esc(st.current_program)}</div>
-              <div class="t-caption" style="margin-top:5px;display:flex;align-items:center;gap:5px">
-                <span class="live-dot"></span>
-                <span>${app.esc(d.live.liveBadge)}</span>
-              </div>
-            </div>
-          </button>
-        `;
-      })
-      .join('');
-
-    // TV Channels 16:9 (only show if real TV channels exist)
-    const hasTv = channelsData.tv_channels && channelsData.tv_channels.length > 0;
-    tvSectionBar.hidden = !hasTv;
-    tvList.hidden = !hasTv;
-    if (hasTv) {
-      root.querySelector('#tvCount').textContent = `${channelsData.tv_channels.length} HD`;
-      tvList.innerHTML = channelsData.tv_channels
-        .map((tv) => {
-          const isPlaying = curId === tv.id && active.playing;
+      <div class="section-bar">
+        <h2 class="t-title-2">Emisoras Católicas</h2>
+        <span class="t-footnote">${radios.length} en vivo</span>
+      </div>
+      <div class="stations-grid">
+        ${radios.map((ch) => {
+          const isCur = st.channel?.id === ch.id;
+          const active = isCur && st.playing;
+          const art = proxyImg(ch.cover_url);
           return `
-            <article class="tv-card deferred-card">
-              <div class="tv-thumb" data-tv-embed="${tv.id}">
-                <img src="${app.esc(tv.cover_url)}" alt="${app.esc(tv.name)}" loading="lazy" />
-                <span class="post-media-badge" style="background:var(--live-red)">● ${app.esc(d.live.liveBadge)} · ${app.esc(tv.frequency)}</span>
-                <button type="button" class="video-play-overlay" data-play-tv="${tv.id}" aria-label="${app.esc(d.live.watchNow)} ${app.esc(tv.name)}">
-                  <span class="video-play-circle">
-                    <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor" style="margin-left:2px"><path d="M8 5v14l11-7z"/></svg>
-                  </span>
-                </button>
+            <button type="button" class="station-card${isCur ? ' is-playing' : ''}" data-play-ch="${ch.id}">
+              <div class="station-art" style="background:${app.esc(ch.accent_color || '#0A84FF')}">
+                ${art ? `<img src="${app.esc(art)}" alt="${app.esc(ch.name)}" loading="lazy" />` : ''}
+                <div class="station-art-scrim"></div>
+                <span class="station-freq-badge">${app.esc(ch.frequency || 'EN VIVO')}</span>
+                <span class="station-play-fab" aria-hidden="true">${active ? '⏸' : '▶'}</span>
               </div>
-              <div class="tv-card-body">
-                <div>
-                  <strong style="display:block">${app.esc(tv.name)}</strong>
-                  <span class="t-footnote">${app.esc(tv.current_program)}</span>
-                </div>
-                <button type="button" class="btn btn-sm ${isPlaying ? 'btn-gold' : 'btn-soft'}" data-play-channel="${tv.id}">
-                  ${isPlaying ? app.esc(d.live.playingNow) : 'Audio'}
-                </button>
-              </div>
-            </article>
+              <strong class="station-name">${app.esc(ch.name)}</strong>
+              <span class="station-prog">${app.esc(ch.current_program || ch.tagline || '')}</span>
+            </button>
           `;
-        })
-        .join('');
-    }
+        }).join('')}
+      </div>
+    `;
+    bindHandlers();
   }
 
-  root.addEventListener('click', (e) => {
-    const playBtn = e.target.closest('[data-play-channel]');
-    if (playBtn) {
-      const ch = channelsData.all.find((c) => c.id === Number(playBtn.dataset.playChannel));
-      if (!ch) return;
-      app.setLiveQueue(channelsData.all);
-      const cur = audioEngine.getState();
-      if (cur.channel?.id === ch.id) {
-        audioEngine.togglePlay();
-      } else {
-        app.playLive(ch);
+  function bindHandlers() {
+    root.querySelector('#heroListenBtn')?.addEventListener('click', () => {
+      if (data?.hero) app.playLive(data.hero, { expandPlayer: false });
+    });
+
+    root.querySelector('#heroOpenSheetBtn')?.addEventListener('click', () => {
+      if (data?.hero) {
+        if (audioEngine.getState().channel?.id !== data.hero.id) {
+          app.playLive(data.hero, { expandPlayer: true });
+        } else {
+          app.openFullPlayer();
+        }
       }
-      return;
-    }
+    });
 
-    const expandBtn = e.target.closest('[data-expand-channel]');
-    if (expandBtn) {
-      const ch = channelsData.all.find((c) => c.id === Number(expandBtn.dataset.expandChannel));
-      if (!ch) return;
-      app.setLiveQueue(channelsData.all);
-      app.playLive(ch, { expandPlayer: true });
-      return;
-    }
+    root.querySelectorAll('[data-play-ch]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const ch = (data?.radios || []).find((c) => Number(c.id) === Number(btn.dataset.playCh));
+        if (ch) app.playLive(ch, { expandPlayer: true });
+      });
+    });
 
-    const tvBtn = e.target.closest('[data-play-tv]');
-    if (tvBtn) {
-      const tv = channelsData.tv_channels.find((c) => c.id === Number(tvBtn.dataset.playTv));
-      if (!tv) return;
-      app.setLiveQueue(channelsData.all);
-      app.playLive(tv, { expandPlayer: true });
-    }
+    root.querySelectorAll('[data-play-vid]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const slug = btn.dataset.playVid;
+        activeVideoSlug = activeVideoSlug === slug ? '' : slug;
+        render();
+      });
+    });
+  }
+
+  root.querySelectorAll('#liveSubTabs .seg-tab').forEach((tab) => {
+    tab.addEventListener('click', () => {
+      activeSubTab = tab.dataset.ltab;
+      activeVideoSlug = '';
+      root.querySelectorAll('#liveSubTabs .seg-tab').forEach((t) => {
+        const on = t === tab;
+        t.classList.toggle('is-active', on);
+        t.setAttribute('aria-selected', String(on));
+      });
+      render();
+    });
   });
 
-  audioUnsub = audioEngine.subscribe(() => renderAll());
+  audioUnsub = audioEngine.subscribe(() => {
+    if (activeSubTab === 'radios') render();
+  });
 
   try {
-    channelsData = await app.api('/api/v1/live', { signal });
+    data = await app.api('/api/v1/live', { signal });
     if (!signal.aborted) {
-      app.setLiveQueue(channelsData.all || []);
-      renderAll();
+      app.setLiveQueue(data.radios || data.all || []);
+      render();
     }
   } catch (err) {
     if (err.name !== 'AbortError') {
-      heroHost.innerHTML = `<div class="empty-box">${app.esc(err.message)}</div>`;
+      bodyEl.innerHTML = `<div class="empty-box">${app.esc(err.message)}</div>`;
     }
   }
 

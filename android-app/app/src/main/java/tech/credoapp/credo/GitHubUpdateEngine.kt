@@ -42,6 +42,7 @@ class GitHubUpdateEngine(private val activity: Activity) {
     private val executor = Executors.newSingleThreadExecutor()
     private val mainHandler = Handler(Looper.getMainLooper())
     private var pendingApkFile: File? = null
+    @Volatile private var isDownloading = false
 
     fun checkForUpdate(silent: Boolean = true) {
         executor.execute {
@@ -105,7 +106,11 @@ class GitHubUpdateEngine(private val activity: Activity) {
                         apkName = apkName,
                         sizeBytes = apkSize
                     )
-                    mainHandler.post { showUpdateDialog(info) }
+                    if (silent) {
+                        downloadApkInBackground(info)
+                    } else {
+                        mainHandler.post { showUpdateDialog(info) }
+                    }
                 } else if (!silent) {
                     postToast("Credo v${BuildConfig.VERSION_NAME} está actualizado")
                 }
@@ -114,6 +119,46 @@ class GitHubUpdateEngine(private val activity: Activity) {
                     postToast("Error al buscar actualizaciones: ${e.localizedMessage ?: "sin conexión"}")
                 }
             }
+        }
+    }
+
+    // Autonomous OTA: downloads the new APK silently in background and opens Android's installer automatically.
+    private fun downloadApkInBackground(info: ReleaseInfo) {
+        if (isDownloading) return
+        isDownloading = true
+        try {
+            val dir = activity.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: activity.cacheDir
+            val outFile = File(dir, "credo-update-${info.version}.apk")
+            val alreadyComplete = outFile.exists() && info.sizeBytes > 0 && outFile.length() == info.sizeBytes
+            if (!alreadyComplete) {
+                if (outFile.exists()) outFile.delete()
+                val tmpFile = File(dir, "credo-update-${info.version}.apk.part")
+                if (tmpFile.exists()) tmpFile.delete()
+                val conn = openFollowingRedirects(info.apkUrl)
+                conn.inputStream.use { input ->
+                    FileOutputStream(tmpFile).use { output ->
+                        val buf = ByteArray(16 * 1024)
+                        while (true) {
+                            val n = input.read(buf)
+                            if (n <= 0) break
+                            output.write(buf, 0, n)
+                        }
+                        output.flush()
+                    }
+                }
+                conn.disconnect()
+                if (!tmpFile.renameTo(outFile)) throw IllegalStateException("No se pudo preparar el APK")
+            }
+            mainHandler.post {
+                if (!activity.isFinishing && !activity.isDestroyed) {
+                    pendingApkFile = outFile
+                    triggerApkInstall(outFile)
+                }
+            }
+        } catch (_: Exception) {
+            // Silent: retried on next resume/launch
+        } finally {
+            isDownloading = false
         }
     }
 

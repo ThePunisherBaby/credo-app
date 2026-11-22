@@ -16,9 +16,9 @@ const NAV_TABS = [
     icon: '<svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="m3 10.5 9-7.5 9 7.5V20a1 1 0 0 1-1 1h-5.5v-6.5h-5V21H4a1 1 0 0 1-1-1z"/></svg>',
   },
   {
-    id: 'reels',
-    hash: '#/reels',
-    icon: '<svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M3 8.5h18"/><path d="m10 3 2.5 5.5"/><path d="m15.5 3 2 5.5"/><path d="m10.2 12.2 5 2.8-5 2.8z" fill="currentColor" stroke="none"/></svg>',
+    id: 'vids',
+    hash: '#/vids',
+    icon: '<svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="m10 8.5 6 3.5-6 3.5z" fill="currentColor" stroke="none"/></svg>',
   },
   {
     id: 'live',
@@ -361,17 +361,16 @@ class CredoApp {
         ? `/api/v1/media/proxy?url=${encodeURIComponent(u.avatar_url)}`
         : u?.avatar_url;
       accBtn.innerHTML = `
-        <span class="avatar" style="--av-sz:36px;--av-bg:${this.esc(u?.avatar_color || '#0F1E36')}">
+        <span class="avatar" style="--av-sz:36px;--av-bg:${this.esc(u?.avatar_color || '#0A84FF')}">
           ${avUrl ? `<img src="${this.esc(avUrl)}" alt="" />` : (u ? this.initials(u.full_name) : '✝')}
         </span>
         <span style="flex:1;min-width:0;display:flex;flex-direction:column">
           <strong style="font-size:0.86rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${this.esc(u ? u.full_name : d.profile.signIn)}</strong>
-          <small class="t-caption" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${this.esc(u ? (u.is_ceo ? 'CEO · Credo' : d.ranks[u.ecclesiastical_rank] || '') : 'Invitado')}</small>
+          <small class="t-caption" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${this.esc(u ? (u.is_ceo ? 'CEO · Credo' : d.ranks[u.ecclesiastical_rank] || 'Fiel') : 'Entrar a Credo')}</small>
         </span>
       `;
       accBtn.onclick = () => {
-        if (this.user) location.hash = '#/profile';
-        else this.openAuthModal();
+        location.hash = '#/profile';
       };
     }
   }
@@ -379,13 +378,13 @@ class CredoApp {
   parseRoute() {
     const raw = (location.hash || '#/feed').replace(/^#\/?/, '');
     const [seg, arg] = raw.split('/');
-    if (seg === 'reels') return { route: 'reels', tab: 'reels', params: {} };
+    if (seg === 'vids' || seg === 'reels') return { route: 'vids', tab: 'vids', params: {} };
     if (seg === 'live') return { route: 'live', tab: 'live', params: {} };
     if (seg === 'prayer') return { route: 'prayer', tab: 'prayer', params: {} };
     if (seg === 'parishes') return { route: 'parishes', tab: 'parishes', params: {} };
     if (seg === 'unit' && arg) return { route: 'unit', tab: 'parishes', params: { id: arg } };
     if (seg === 'user' && arg) return { route: 'user', tab: 'parishes', params: { id: arg } };
-    if (seg === 'messages') return { route: 'messages', tab: 'profile', params: { id: arg || null } };
+    if (seg === 'settings') return { route: 'settings', tab: 'profile', params: {} };
     if (seg === 'profile') return { route: 'profile', tab: 'profile', params: {} };
     return { route: 'feed', tab: 'feed', params: {} };
   }
@@ -405,6 +404,7 @@ class CredoApp {
     }
 
     const { route, tab, params } = this.parseRoute();
+    document.body.classList.toggle('is-vids-mode', route === 'vids');
     this.renderChrome();
 
     const root = document.getElementById('appView');
@@ -420,11 +420,11 @@ class CredoApp {
     let mod;
     try {
       if (route === 'feed') mod = await import('./views/feed.js');
-      else if (route === 'reels') mod = await import('./views/reels.js');
+      else if (route === 'vids') mod = await import('./views/vids.js');
       else if (route === 'live') mod = await import('./views/live.js');
       else if (route === 'prayer') mod = await import('./views/prayer.js');
       else if (route === 'parishes' || route === 'unit' || route === 'user') mod = await import('./views/parishes.js');
-      else if (route === 'messages') mod = await import('./views/messages.js');
+      else if (route === 'settings') mod = await import('./views/settings.js');
       else if (route === 'profile') mod = await import('./views/profile.js');
       else mod = await import('./views/feed.js');
     } catch (err) {
@@ -500,13 +500,13 @@ class CredoApp {
       const artSrc = ch.cover_url && (ch.cover_url.includes('aire96fm.com.do') || ch.cover_url.includes('reflexionandolapalabra.com'))
         ? `/api/v1/media/proxy?url=${encodeURIComponent(ch.cover_url)}`
         : (ch.cover_url || '');
-      miniGlass.style.setProperty('--mini-accent', ch.accent_color || '#C9A34E');
+      miniGlass.style.setProperty('--mini-accent', ch.accent_color || '#007AFF');
       miniArt.src = artSrc;
       miniStation.textContent = ch.name;
       miniProg.textContent = ch.current_program || ch.tagline || 'En vivo';
       miniPlayBtn.innerHTML = st.playing ? ICON_PAUSE : ICON_PLAY;
 
-      fpBgGlow.style.setProperty('--fp-accent', ch.accent_color || '#C9A34E');
+      fpBgGlow.style.setProperty('--fp-accent', ch.accent_color || '#007AFF');
       fpArt.src = artSrc;
       fpArtFrame.classList.toggle('is-playing', st.playing);
       fpVis.classList.toggle('is-playing', st.playing);
@@ -645,7 +645,7 @@ class CredoApp {
             <div id="stNext"></div>
           </div>
           <div class="story-bottom">
-            ${st.scripture_ref ? `<span style="color:#FFE07D;font-family:var(--font-serif);font-style:italic">📖 ${this.esc(st.scripture_ref)}</span>` : ''}
+            ${st.scripture_ref ? `<span style="color:#66B2FF;font-family:var(--font-serif);font-style:italic">📖 ${this.esc(st.scripture_ref)}</span>` : ''}
             <p style="margin:0;font-size:1rem;line-height:1.45">${this.esc(st.caption || '')}</p>
           </div>
         </div>
@@ -884,7 +884,7 @@ class CredoApp {
         this.closeModal();
         this.toast('Publicación oficial enviada');
         const curRoute = this.parseRoute().route;
-        if (curRoute === 'feed' || curRoute === 'reels') this.navigate();
+        if (curRoute === 'feed' || curRoute === 'vids') this.navigate();
       } catch (err) {
         this.toast(err.message);
       }
@@ -903,7 +903,7 @@ class CredoApp {
         'Bienvenido a Credo',
         `
         <div style="display:flex;flex-direction:column;gap:14px;text-align:center;padding:6px 4px">
-          <div style="width:60px;height:60px;border-radius:18px;margin:0 auto;background:linear-gradient(145deg,#0F1E36,#1E355C);color:#D4AF37;display:grid;place-items:center;border:1px solid rgba(212,175,55,0.4);font-size:1.6rem">✝</div>
+          <img src="/icons/credo-192.png" alt="Credo" width="68" height="68" style="display:block;margin:0 auto" />
           <span class="t-caption" style="letter-spacing:0.1em;font-weight:700;color:var(--gold-text)">${this.esc(s.eyebrow)}</span>
           <h3 class="t-serif" style="margin:0;font-size:1.38rem;line-height:1.25">${this.esc(s.title)}</h3>
           <p class="t-subhead">${this.esc(s.body)}</p>

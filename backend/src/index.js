@@ -10,17 +10,18 @@ const { PORT, CLERGY_RANKS } = require('./config');
 const { pool, initDatabase } = require('./db/pool');
 const { seedIfEmpty, purgeMockDataAndSyncReal } = require('./db/seed');
 const { syncOfficialSources, getLiveCatholicReels } = require('./utils/officialSync');
+const { warmUpRosaryCache } = require('./services/rosaryRadio');
 const { optionalAuth } = require('./middleware/auth');
 
 const authRoutes = require('./routes/auth');
 const unitsRoutes = require('./routes/units');
 const usersRoutes = require('./routes/users');
 const postsRoutes = require('./routes/posts');
-const messagesRoutes = require('./routes/messages');
 const mediaRoutes = require('./routes/media');
 const storiesRoutes = require('./routes/stories');
 const liveRoutes = require('./routes/live');
 const prayersRoutes = require('./routes/prayers');
+const rosaryRoutes = require('./routes/rosary');
 
 const app = express();
 app.set('trust proxy', 1);
@@ -52,8 +53,8 @@ app.use(
       directives: {
         defaultSrc: ["'self'"],
         scriptSrc: ["'self'", "'unsafe-inline'"],
-        styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
-        fontSrc: ["'self'", 'https://fonts.gstatic.com', 'data:'],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        fontSrc: ["'self'", 'data:'],
         imgSrc: [
           "'self'",
           'data:',
@@ -80,7 +81,7 @@ app.use((_req, res, next) => {
 });
 app.use(cors());
 app.use(compression());
-app.use(express.json({ limit: '5mb' }));
+app.use(express.json({ limit: '22mb' }));
 
 // Health check for Hostinger VPS / Coolify
 app.get('/health', async (_req, res) => {
@@ -104,14 +105,14 @@ app.use('/api/v1/auth', authLimiter, authRoutes);
 app.use('/api/v1/units', unitsRoutes);
 app.use('/api/v1/users', usersRoutes);
 app.use('/api/v1/posts', postsRoutes);
-app.use('/api/v1/conversations', messagesRoutes);
 app.use('/api/v1/media', mediaRoutes);
 app.use('/api/v1/stories', storiesRoutes);
 app.use('/api/v1/live', liveRoutes);
 app.use('/api/v1/prayers', prayersRoutes);
+app.use('/api/v1/rosary', rosaryRoutes);
 
 // Real Catholic Video Reels endpoint (merges user/clergy Credo reels + live Vatican News & EWTN feeds)
-app.get('/api/v1/reels', optionalAuth, async (req, res) => {
+app.get(['/api/v1/vids', '/api/v1/reels'], optionalAuth, async (req, res) => {
   try {
     const [dbRes, liveReels] = await Promise.all([
       pool.query(
@@ -255,6 +256,7 @@ async function start() {
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`[credo] Server listening on http://0.0.0.0:${PORT}`);
+    warmUpRosaryCache();
   });
 }
 

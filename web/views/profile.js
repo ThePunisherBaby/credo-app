@@ -1,213 +1,326 @@
-// views/profile.js — Pantalla 5: Perfil, Parroquias, Mensajes, Guardados y Ajustes
-// Loaded on demand ONLY when on #/profile.
+// views/profile.js — Instagram-Style Profile + In-View Auth Gate (Three-dots -> #/settings)
 
-export async function mount({ root, app, signal }) {
-  const d = app.dict();
-  let subTab = 'settings';
+function proxySrc(url) {
+  if (!url) return '';
+  if (url.includes('aire96fm.com.do') || url.includes('reflexionandolapalabra.com')) {
+    return `/api/v1/media/proxy?url=${encodeURIComponent(url)}`;
+  }
+  return url;
+}
 
-  const currentScheme = () => {
-    try {
-      const v = localStorage.getItem('credo-color-scheme');
-      return v === 'dark' || v === 'light' ? v : 'system';
-    } catch {
-      return 'system';
-    }
-  };
-
-  function renderShell() {
-    const u = app.user;
-
+function renderAuthGate({ root, app, signal }) {
+  let mode = 'login';
+  const render = () => {
+    const isReg = mode === 'register';
     root.innerHTML = `
-      <header class="page-head">
-        <div>
-          <p class="t-footnote">${u ? app.esc(d.ranks[u.ecclesiastical_rank] || u.ecclesiastical_rank) : app.esc(d.profile.guestName)}</p>
-          <h1 class="t-large-title">${app.esc(d.profile.title)}</h1>
+      <div class="ig-prof-top">
+        <div class="ig-prof-username">
+          <img class="brand-logo" src="/icons/credo-192.png" alt="" width="30" height="30" />
+          <span>Credo</span>
         </div>
-        ${u
-          ? `<button type="button" class="btn btn-sm btn-soft" id="profLogoutBtn">${app.esc(d.profile.signOut)}</button>`
-          : `<button type="button" class="btn btn-sm btn-gold" id="profLoginBtn">${app.esc(d.profile.signIn)}</button>`}
-      </header>
-
-      <article class="card" style="display:flex;flex-direction:column;gap:12px;margin-bottom:14px">
-        <div style="display:flex;align-items:center;gap:14px">
-          <span class="avatar" style="--av-sz:60px;--av-bg:${app.esc(u?.avatar_color || '#0F1E36')}">
-            ${u?.avatar_url ? `<img src="${app.esc(u.avatar_url)}" alt="${app.esc(u.full_name)}" />` : (u ? app.initials(u.full_name) : '✝')}
-          </span>
-          <div style="flex:1;min-width:0">
-            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-              <strong style="font-size:1.05rem">${app.esc(u ? (u.title_prefix ? `${u.title_prefix} ` : '') + u.full_name : d.profile.guestName)}</strong>
-              ${u?.can_publish ? '<span class="verified-check">✓</span>' : ''}
-              ${u?.is_ceo ? '<span class="rank-tag" style="background:linear-gradient(135deg,#D9B75A,#B98E34);color:#0B1220;font-weight:800">CEO · Credo</span>' : ''}
-            </div>
-            <p class="t-footnote" style="margin-top:3px">
-              ${u ? `${app.esc(u.current_office_title || d.ranks[u.ecclesiastical_rank] || u.ecclesiastical_rank)}${u.lineage?.length ? ` · ${app.esc(u.lineage[u.lineage.length - 1].name)}` : ''}` : app.esc(d.profile.guestHint)}
-            </p>
-          </div>
+        <div class="ig-prof-actions">
+          <a href="#/settings" class="ig-icon-btn" aria-label="Configuración">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>
+          </a>
         </div>
-        ${u && Array.isArray(u.website_links) && u.website_links.length > 0 ? `
-          <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
-            ${u.website_links.map((lk) => `<a href="${app.esc(lk.url)}" target="_blank" rel="noopener noreferrer" class="lineage-pill" style="color:var(--gold-text)">🌐 ${app.esc(lk.label)} ↗</a>`).join('')}
-            <a href="#/user/${u.id}" class="btn btn-sm btn-soft" style="margin-left:auto">Ver perfil público</a>
-          </div>` : (u ? `<div style="display:flex;justify-content:flex-end"><a href="#/user/${u.id}" class="btn btn-sm btn-soft">Ver perfil público</a></div>` : '')}
-      </article>
-
-      <div style="display:grid;gap:10px;margin-bottom:14px">
-        <a href="#/parishes" class="card" style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px 16px;text-decoration:none;color:inherit">
-          <div style="display:flex;align-items:center;gap:12px;min-width:0">
-            <span style="width:40px;height:40px;border-radius:8px;background:var(--gold-soft);color:var(--gold-text);display:grid;place-items:center;flex-shrink:0">
-              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v5"/><path d="M9.5 4.5h5"/><path d="M5 21V11l7-4 7 4v10"/><path d="M9 21v-5a3 3 0 0 1 6 0v5"/><path d="M3 21h18"/></svg>
-            </span>
-            <div style="min-width:0">
-              <strong style="display:block;font-size:0.95rem">Parroquias y Jerarquía</strong>
-              <span class="t-footnote">Diócesis, conferencias episcopales y comunidad</span>
-            </div>
-          </div>
-          <span style="color:var(--label-3);font-weight:700;font-size:1.1rem" aria-hidden="true">›</span>
-        </a>
-
-        <a href="#/messages" class="card" style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px 16px;text-decoration:none;color:inherit">
-          <div style="display:flex;align-items:center;gap:12px;min-width:0">
-            <span style="width:40px;height:40px;border-radius:8px;background:var(--surface-2);color:var(--label);display:grid;place-items:center;flex-shrink:0">
-              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-            </span>
-            <div style="min-width:0">
-              <strong style="display:block;font-size:0.95rem">Mensajes Directos</strong>
-              <span class="t-footnote">Conversaciones privadas y canales parroquiales</span>
-            </div>
-          </div>
-          <span style="color:var(--label-3);font-weight:700;font-size:1.1rem" aria-hidden="true">›</span>
-        </a>
       </div>
 
-      <div class="segmented" id="profTabs" role="tablist" style="margin-bottom:16px">
-        <button type="button" class="seg-btn${subTab === 'settings' ? ' is-active' : ''}" data-tab="settings">${app.esc(d.profile.tabs.settings)}</button>
-        <button type="button" class="seg-btn${subTab === 'saved' ? ' is-active' : ''}" data-tab="saved">${app.esc(d.profile.tabs.saved)}</button>
-      </div>
+      <div class="ig-auth-gate">
+        <div class="ig-auth-card">
+          <div style="text-align:center;margin-bottom:4px">
+            <img src="/icons/credo-192.png" alt="Credo" width="64" height="64" style="display:block;margin:0 auto 10px" />
+            <h1 class="t-title-2" style="margin:0">${isReg ? 'Crear cuenta en Credo' : 'Inicia sesión en Credo'}</h1>
+            <p class="t-footnote" style="margin:4px 0 0">Tu comunidad católica, tus publicaciones y tu parroquia cercana</p>
+          </div>
 
-      <section id="profTabBody"></section>
+          <div class="seg-tabs" style="margin-bottom:4px">
+            <button type="button" class="seg-tab${!isReg ? ' is-active' : ''}" data-auth-mode="login">Iniciar sesión</button>
+            <button type="button" class="seg-tab${isReg ? ' is-active' : ''}" data-auth-mode="register">Crear cuenta</button>
+          </div>
+
+          <form id="igAuthForm" style="display:flex;flex-direction:column;gap:12px">
+            ${isReg ? `
+              <div class="field">
+                <label for="authName">Nombre completo</label>
+                <input id="authName" name="full_name" required placeholder="Ej. María Pérez" />
+              </div>
+              <div class="field">
+                <label for="authUser">Usuario</label>
+                <input id="authUser" name="username" placeholder="Ej. maria_perez" autocomplete="username" />
+              </div>
+              <div class="field">
+                <label for="authCountry">País (para conectar con tu parroquia)</label>
+                <select id="authCountry" name="country_code">
+                  <option value="DO" selected>República Dominicana</option>
+                  <option value="ES">España</option>
+                  <option value="MX">México</option>
+                  <option value="CO">Colombia</option>
+                  <option value="US">Estados Unidos</option>
+                  <option value="AR">Argentina</option>
+                  <option value="PE">Perú</option>
+                  <option value="VA">Ciudad del Vaticano / Universal</option>
+                </select>
+              </div>` : ''}
+            <div class="field">
+              <label for="authEmail">Correo electrónico</label>
+              <input id="authEmail" name="email" type="email" required placeholder="tu@correo.com" autocomplete="email" />
+            </div>
+            <div class="field">
+              <label for="authPass">Contraseña</label>
+              <input id="authPass" name="password" type="password" required minlength="6" placeholder="Mínimo 6 caracteres" autocomplete="${isReg ? 'new-password' : 'current-password'}" />
+            </div>
+            <div id="igAuthError" style="color:var(--live-red);font-size:0.82rem;font-weight:700;display:none"></div>
+            <button type="submit" class="btn btn-gold btn-block" id="igAuthSubmit">
+              ${isReg ? 'Crear cuenta' : 'Entrar'}
+            </button>
+          </form>
+        </div>
+      </div>
     `;
 
-    root.querySelector('#profLoginBtn')?.addEventListener('click', () => app.openAuthModal());
-    root.querySelector('#profLogoutBtn')?.addEventListener('click', () => {
-      app.logout();
-      renderShell();
+    root.querySelectorAll('[data-auth-mode]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        mode = btn.dataset.authMode;
+        render();
+      });
     });
 
-    root.querySelector('#profTabs').addEventListener('click', (e) => {
-      const b = e.target.closest('[data-tab]');
-      if (!b) return;
-      subTab = b.dataset.tab;
-      root.querySelectorAll('#profTabs .seg-btn').forEach((x) => x.classList.toggle('is-active', x === b));
-      renderSubTab();
+    root.querySelector('#igAuthForm').addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const fd = new FormData(ev.currentTarget);
+      const errBox = root.querySelector('#igAuthError');
+      const submitBtn = root.querySelector('#igAuthSubmit');
+      errBox.style.display = 'none';
+      submitBtn.disabled = true;
+      submitBtn.textContent = isReg ? 'Creando cuenta...' : 'Entrando...';
+
+      try {
+        const endpoint = isReg ? '/api/v1/auth/register' : '/api/v1/auth/login';
+        const payload = Object.fromEntries(fd.entries());
+        const res = await app.api(endpoint, { method: 'POST', body: payload });
+        app.setAuth(res.token, res.user);
+        app.toast(`Bienvenido, ${res.user.full_name}`);
+        await mount({ root, app, signal });
+      } catch (err) {
+        errBox.textContent = err.message || 'No se pudo completar el acceso';
+        errBox.style.display = 'block';
+        submitBtn.disabled = false;
+        submitBtn.textContent = isReg ? 'Crear cuenta' : 'Entrar';
+      }
+    });
+  };
+
+  render();
+  return { cleanup() {} };
+}
+
+function renderTilePreview(p, app) {
+  if (p.image_url) {
+    return `<img src="${app.esc(proxySrc(p.image_url))}" alt="${app.esc(p.title || '')}" loading="lazy" />`;
+  }
+  if (p.youtube_id) {
+    return `
+      <img src="https://i.ytimg.com/vi/${app.esc(p.youtube_id)}/hqdefault.jpg" alt="${app.esc(p.title || '')}" loading="lazy" />
+      <span style="position:absolute;top:6px;right:6px;background:rgba(0,0,0,0.62);color:#fff;width:22px;height:22px;border-radius:6px;display:grid;place-items:center">
+        <svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+      </span>`;
+  }
+  return `<div class="ig-tile-text">${app.esc(p.title || p.content || '')}</div>`;
+}
+
+export async function mount({ root, app, signal }) {
+  if (!app.user) {
+    return renderAuthGate({ root, app, signal });
+  }
+
+  const d = app.dict();
+  const u = app.user;
+  root.innerHTML = `<div class="skeleton" style="height:260px"></div>`;
+
+  try {
+    const [profRes, postsRes, savedRes] = await Promise.all([
+      app.api(`/api/v1/users/${u.id}`, { signal }).catch(() => ({ user: u })),
+      app.api(`/api/v1/posts?author_id=${u.id}&limit=36`, { signal }).catch(() => ({ posts: [] })),
+      app.api('/api/v1/posts?scope=saved&limit=36', { signal }).catch(() => ({ posts: [] })),
+    ]);
+
+    const profile = profRes.user || u;
+    const myPosts = postsRes.posts || [];
+    const myVids = myPosts.filter((p) => p.media_kind === 'video' || Boolean(p.youtube_id));
+    const savedPosts = savedRes.posts || [];
+    const avUrl = proxySrc(profile.avatar_url);
+    let activeTab = 'posts';
+
+    const openEditModal = () => {
+      const dlg = app.openModal(
+        'Editar perfil',
+        `
+        <form id="editProfForm" style="display:flex;flex-direction:column;gap:12px">
+          <div class="field">
+            <label for="epName">Nombre completo</label>
+            <input id="epName" name="full_name" required value="${app.esc(profile.full_name || '')}" />
+          </div>
+          <div class="field">
+            <label for="epBio">Biografía</label>
+            <textarea id="epBio" name="bio" placeholder="Comparte tu servicio o comunidad...">${app.esc(profile.bio || '')}</textarea>
+          </div>
+          <div class="field">
+            <label for="epMotto">Lema personal</label>
+            <input id="epMotto" name="motto" value="${app.esc(profile.motto || '')}" placeholder="Ej. Ad maiorem Dei gloriam" />
+          </div>
+          <button type="submit" class="btn btn-gold btn-block">Guardar cambios</button>
+        </form>
+        `
+      );
+      dlg.querySelector('#editProfForm').addEventListener('submit', async (ev) => {
+        ev.preventDefault();
+        const fd = new FormData(ev.currentTarget);
+        try {
+          const res = await app.api('/api/v1/users/me', {
+            method: 'PUT',
+            body: {
+              full_name: fd.get('full_name'),
+              bio: fd.get('bio'),
+              motto: fd.get('motto'),
+            },
+          });
+          if (res.user) {
+            app.user = res.user;
+            app.renderChrome();
+          }
+          app.closeModal();
+          app.toast('Perfil actualizado');
+          mount({ root, app, signal });
+        } catch (err) {
+          app.toast(err.message);
+        }
+      });
+    };
+
+    const openPostDetail = (p) => {
+      app.openModal(
+        p.title || profile.full_name,
+        `
+        <div style="display:flex;flex-direction:column;gap:12px">
+          ${p.image_url ? `<img src="${app.esc(proxySrc(p.image_url))}" alt="" style="width:100%;border-radius:10px;max-height:360px;object-fit:cover" />` : ''}
+          ${p.youtube_id ? `<div style="aspect-ratio:16/9;border-radius:10px;overflow:hidden;background:#000"><iframe src="https://www.youtube.com/embed/${app.esc(p.youtube_id)}?playsinline=1&rel=0" style="width:100%;height:100%;border:0" allowfullscreen></iframe></div>` : ''}
+          ${p.scripture_ref ? `<span class="post-scripture-pill">📖 ${app.esc(p.scripture_ref)}</span>` : ''}
+          <p style="margin:0;font-size:0.95rem;line-height:1.55;white-space:pre-line">${app.esc(p.content || '')}</p>
+        </div>
+        `
+      );
+    };
+
+    const renderGrid = () => {
+      const list = activeTab === 'vids' ? myVids : activeTab === 'saved' ? savedPosts : myPosts;
+      const gridEl = root.querySelector('#igProfGrid');
+      if (!gridEl) return;
+      if (list.length === 0) {
+        gridEl.className = '';
+        gridEl.innerHTML = `<div class="empty-box" style="margin-top:12px">${activeTab === 'saved' ? 'Aún no tienes publicaciones guardadas.' : activeTab === 'vids' ? 'Aún no has publicado videos.' : 'Aún no hay publicaciones en tu perfil.'}</div>`;
+        return;
+      }
+      gridEl.className = 'ig-prof-grid';
+      gridEl.innerHTML = list.map((p, idx) => `
+        <button type="button" class="ig-prof-tile" data-tile-idx="${idx}" aria-label="${app.esc(p.title || 'Publicación')}">
+          ${renderTilePreview(p, app)}
+        </button>
+      `).join('');
+      gridEl.querySelectorAll('.ig-prof-tile').forEach((btn) => {
+        btn.addEventListener('click', () => openPostDetail(list[Number(btn.dataset.tileIdx)]));
+      });
+    };
+
+    root.innerHTML = `
+      <div class="ig-prof-top">
+        <div class="ig-prof-username">
+          <span>@${app.esc(profile.username || 'credo')}</span>
+          ${profile.can_publish ? '<span class="verified-check" aria-label="Verificado">✓</span>' : ''}
+          ${profile.is_ceo ? '<span class="rank-tag" style="background:#0A84FF;color:#FFFFFF;font-size:0.68rem">CEO</span>' : ''}
+        </div>
+        <div class="ig-prof-actions">
+          ${profile.can_publish ? `
+            <button type="button" class="ig-icon-btn" id="igAddPostBtn" aria-label="Nueva publicación">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+            </button>` : ''}
+          <a href="#/settings" class="ig-icon-btn" aria-label="Configuración">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>
+          </a>
+        </div>
+      </div>
+
+      <section class="ig-prof-head">
+        <div class="ig-prof-avatar" style="${profile.avatar_color ? `background:${app.esc(profile.avatar_color)}` : ''}">
+          ${avUrl ? `<img src="${app.esc(avUrl)}" alt="${app.esc(profile.full_name)}" />` : app.initials(profile.full_name)}
+        </div>
+        <div class="ig-prof-stats">
+          <div>
+            <span class="ig-stat-val">${profile.posts_count ?? myPosts.length}</span>
+            <span class="ig-stat-lbl">Publicaciones</span>
+          </div>
+          <div>
+            <span class="ig-stat-val">${profile.followers_count ?? 0}</span>
+            <span class="ig-stat-lbl">Seguidores</span>
+          </div>
+          <div>
+            <span class="ig-stat-val">${profile.following_count ?? 0}</span>
+            <span class="ig-stat-lbl">Siguiendo</span>
+          </div>
+        </div>
+      </section>
+
+      <div class="ig-prof-bio">
+        <strong style="font-size:0.96rem">${app.esc(profile.title_prefix ? `${profile.title_prefix} ` : '')}${app.esc(profile.full_name)}</strong>
+        <span class="t-footnote">${app.esc(profile.current_office_title || d.ranks[profile.ecclesiastical_rank] || 'Miembro de Credo')}</span>
+        ${profile.bio ? `<p style="margin:4px 0 0;font-size:0.88rem;line-height:1.42">${app.esc(profile.bio)}</p>` : ''}
+        ${profile.motto ? `<p style="margin:2px 0 0;font-size:0.84rem;font-style:italic;color:var(--gold-text)">«${app.esc(profile.motto)}»</p>` : ''}
+      </div>
+
+      <div class="ig-prof-cta">
+        <button type="button" class="btn btn-soft btn-sm" id="igEditProfBtn">Editar perfil</button>
+        <button type="button" class="btn btn-soft btn-sm" id="igShareProfBtn">Compartir perfil</button>
+      </div>
+
+      <div class="ig-prof-tabs" role="tablist">
+        <button type="button" class="ig-prof-tab is-active" data-ptab="posts" aria-label="Publicaciones">
+          <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+        </button>
+        <button type="button" class="ig-prof-tab" data-ptab="vids" aria-label="Vids">
+          <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="m10 8.5 6 3.5-6 3.5z" fill="currentColor" stroke="none"/></svg>
+        </button>
+        <button type="button" class="ig-prof-tab" data-ptab="saved" aria-label="Guardados">
+          <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m19 21-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+        </button>
+      </div>
+
+      <div id="igProfGrid"></div>
+    `;
+
+    root.querySelector('#igAddPostBtn')?.addEventListener('click', () => app.openComposer());
+    root.querySelector('#igEditProfBtn').addEventListener('click', openEditModal);
+    root.querySelector('#igShareProfBtn').addEventListener('click', async () => {
+      const shareUrl = `${location.origin}/#/user/${profile.id}`;
+      try {
+        if (navigator.share) await navigator.share({ title: profile.full_name, url: shareUrl });
+        else {
+          await navigator.clipboard?.writeText(shareUrl);
+          app.toast('Enlace de perfil copiado');
+        }
+      } catch {}
     });
 
-    renderSubTab();
+    root.querySelectorAll('.ig-prof-tab').forEach((tab) => {
+      tab.addEventListener('click', () => {
+        activeTab = tab.dataset.ptab;
+        root.querySelectorAll('.ig-prof-tab').forEach((t) => t.classList.toggle('is-active', t === tab));
+        renderGrid();
+      });
+    });
+
+    renderGrid();
+  } catch (err) {
+    if (err.name !== 'AbortError') root.innerHTML = `<div class="empty-box">${app.esc(err.message)}</div>`;
   }
 
-  async function renderSubTab() {
-    const host = root.querySelector('#profTabBody');
-
-    if (subTab === 'settings') {
-      const scheme = currentScheme();
-
-      host.innerHTML = `
-        <div class="card settings-group">
-          <h2 class="t-title-3">${app.esc(d.profile.appearance)}</h2>
-
-          <div class="setting-row">
-            <label class="t-footnote">${app.esc(d.profile.themeLabel)}</label>
-            <div class="segmented" id="themeSeg">
-              <button type="button" class="seg-btn${scheme === 'system' ? ' is-active' : ''}" data-scheme="system">${app.esc(d.profile.themeSystem)}</button>
-              <button type="button" class="seg-btn${scheme === 'light' ? ' is-active' : ''}" data-scheme="light">${app.esc(d.profile.themeLight)}</button>
-              <button type="button" class="seg-btn${scheme === 'dark' ? ' is-active' : ''}" data-scheme="dark">${app.esc(d.profile.themeDark)}</button>
-            </div>
-          </div>
-
-          <div class="setting-row">
-            <label for="langSelect" class="t-footnote">${app.esc(d.profile.languageLabel)}</label>
-            <select id="langSelect" style="min-height:44px;border-radius:8px;border:1px solid var(--sep-strong);background:var(--surface-2);padding:0 12px">
-              <option value="es"${app.locale === 'es' ? ' selected' : ''}>Español</option>
-              <option value="en"${app.locale === 'en' ? ' selected' : ''}>English</option>
-              <option value="it"${app.locale === 'it' ? ' selected' : ''}>Italiano</option>
-              <option value="pt"${app.locale === 'pt' ? ' selected' : ''}>Português</option>
-              <option value="fr"${app.locale === 'fr' ? ' selected' : ''}>Français</option>
-            </select>
-          </div>
-        </div>
-
-        <div class="card settings-group" style="margin-top:14px">
-          ${window.CredoNative
-            ? `
-              <div class="setting-row-inline">
-                <div>
-                  <strong class="t-headline" style="display:block">App Android · Credo</strong>
-                  <span class="t-footnote">Versión instalada: v${app.esc(window.CredoNative.getVersionName())}</span>
-                </div>
-                <span class="rank-tag">GitHub OTA</span>
-              </div>
-              <button type="button" class="btn btn-gold btn-sm btn-block" id="checkUpdateBtn">🔄 Buscar actualizaciones</button>
-            `
-            : `
-              <div class="setting-row-inline">
-                <div>
-                  <strong class="t-headline" style="display:block">App Android Oficial</strong>
-                  <span class="t-footnote">Con actualizaciones automáticas vía GitHub</span>
-                </div>
-                <span class="rank-tag">APK</span>
-              </div>
-              <a href="https://github.com/ThePunisherBaby/credo-app/releases/latest" target="_blank" rel="noopener noreferrer" class="btn btn-gold btn-sm btn-block">⬇ Descargar Credo (.apk)</a>
-            `}
-          <button type="button" class="btn btn-outline btn-sm btn-block" id="replayOnbBtn">${app.esc(d.profile.replayOnboarding)}</button>
-        </div>
-      `;
-
-      host.querySelector('#checkUpdateBtn')?.addEventListener('click', () => {
-        window.CredoNative?.checkForUpdates();
-      });
-
-      host.querySelector('#themeSeg').onclick = (e) => {
-        const b = e.target.closest('[data-scheme]');
-        if (!b) return;
-        app.setColorScheme(b.dataset.scheme);
-        host.querySelectorAll('#themeSeg .seg-btn').forEach((x) => x.classList.toggle('is-active', x === b));
-      };
-
-      host.querySelector('#langSelect').addEventListener('change', (e) => {
-        app.setLocale(e.target.value);
-      });
-
-      host.querySelector('#replayOnbBtn').onclick = () => app.openOnboarding(true);
-      return;
-    }
-
-    // Saved posts tab
-    if (!app.user) {
-      host.innerHTML = `<div class="empty-box"><p>${app.esc(d.profile.guestHint)}</p><button type="button" class="btn btn-gold btn-sm" id="savedLoginBtn">${app.esc(d.profile.signIn)}</button></div>`;
-      host.querySelector('#savedLoginBtn').onclick = () => app.openAuthModal();
-      return;
-    }
-    host.innerHTML = `<div class="card"><div class="skeleton" style="height:120px"></div></div>`;
-    try {
-      const res = await app.api('/api/v1/posts?scope=saved&limit=20', { signal });
-      const posts = res.posts || [];
-      host.innerHTML =
-        posts.length === 0
-          ? `<div class="empty-box">Aún no has guardado publicaciones. Toca el ícono de marcador en el feed para guardar homilías y videos.</div>`
-          : `<div class="feed-list">${posts
-              .map(
-                (p) => `
-              <article class="card post-card">
-                <strong style="font-size:0.86rem;color:var(--gold-text)">${app.esc(p.author?.full_name || '')}</strong>
-                ${p.title ? `<h3 class="post-title">${app.esc(p.title)}</h3>` : ''}
-                <p class="post-excerpt">${app.esc(p.content)}</p>
-              </article>`
-              )
-              .join('')}</div>`;
-    } catch (err) {
-      if (err.name !== 'AbortError') host.innerHTML = `<div class="empty-box">${app.esc(err.message)}</div>`;
-    }
-  }
-
-  renderShell();
   return { cleanup() {} };
 }

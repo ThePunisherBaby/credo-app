@@ -24,7 +24,6 @@ export async function mount({ root, app, signal, route, params }) {
         <p class="t-footnote">${app.esc(d.parishes.subtitle)}</p>
         <h1 class="t-large-title">${app.esc(d.parishes.title)}</h1>
       </div>
-      <a href="#/messages" class="btn btn-sm btn-soft">💬 Grupos</a>
     </header>
 
     <section id="myParishHost">
@@ -51,12 +50,12 @@ export async function mount({ root, app, signal, route, params }) {
 
     myParishHost.innerHTML = `
       <article class="parish-hero">
-        <div class="parish-cover">
-          <img src="${app.esc(myParish.image_url || 'https://images.unsplash.com/photo-1507692049790-de58290a4334?auto=format&fit=crop&w=1080&q=80')}" alt="${app.esc(myParish.name)}" fetchpriority="high" />
+        <div class="parish-cover" style="background:linear-gradient(145deg, ${app.esc(myParish.accent_color || '#0A84FF')}, #0B0D12)">
+          ${myParish.image_url ? `<img src="${app.esc(myParish.image_url)}" alt="${app.esc(myParish.name)}" fetchpriority="high" />` : ''}
           <div class="parish-cover-scrim" aria-hidden="true"></div>
           <div class="parish-cover-meta">
             <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
-              <span class="rank-tag" style="background:rgba(212,175,55,0.22);color:#FFE07D">✦ ${app.esc(d.parishes.myParishLabel)}</span>
+              <span class="rank-tag" style="background:rgba(10,132,255,0.28);color:#A8D3FF">✦ ${app.esc(d.parishes.myParishLabel)}</span>
               <button type="button" class="btn btn-sm" style="background:rgba(255,255,255,0.16);color:#fff" id="changeMyParishBtn">${app.esc(d.parishes.changeParish)}</button>
             </div>
             <h2 class="t-title-2" style="color:#fff;margin-top:6px">${app.esc(myParish.name)}</h2>
@@ -357,7 +356,7 @@ async function mountUnitDetail({ root, app, signal, unitId }) {
           ${u.image_url ? `<img src="${app.esc(u.image_url)}" alt="${app.esc(u.name)}" fetchpriority="high" />` : ''}
           <div class="parish-cover-scrim"></div>
           <div class="parish-cover-meta">
-            <span class="rank-tag" style="background:rgba(212,175,55,0.22);color:#FFE07D">${app.esc(d.unitTypes[u.unit_type] || u.unit_type)}</span>
+            <span class="rank-tag" style="background:rgba(10,132,255,0.28);color:#A8D3FF">${app.esc(d.unitTypes[u.unit_type] || u.unit_type)}</span>
             <h1 class="t-title-2" style="color:#fff;margin-top:4px">${app.esc(u.name)}</h1>
             <p style="margin:2px 0 0;font-size:0.84rem;color:rgba(255,255,255,0.8)">${app.esc(u.city || '')}${u.country_name ? `, ${app.esc(u.country_name)}` : ''}</p>
           </div>
@@ -450,7 +449,7 @@ async function mountUserProfile({ root, app, signal, userId }) {
             <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
               <h1 class="t-title-2">${app.esc(u.title_prefix ? `${u.title_prefix} ` : '')}${app.esc(u.full_name)}</h1>
               ${u.can_publish ? '<span class="verified-check">✓</span>' : ''}
-              ${u.is_ceo ? '<span class="rank-tag" style="background:linear-gradient(135deg,#D9B75A,#B98E34);color:#0B1220;font-weight:800">CEO · Credo</span>' : ''}
+              ${u.is_ceo ? '<span class="rank-tag" style="background:#0A84FF;color:#FFFFFF;font-weight:800">CEO · Credo</span>' : ''}
             </div>
             <span class="rank-tag" style="margin-top:4px;display:inline-block">${app.esc(d.ranks[u.ecclesiastical_rank] || u.ecclesiastical_rank)}</span>
             ${u.current_office_title ? `<p class="t-footnote" style="margin-top:4px">${app.esc(u.current_office_title)}</p>` : ''}
@@ -476,7 +475,7 @@ async function mountUserProfile({ root, app, signal, userId }) {
           </div>` : ''}
 
         ${hasAireRadio ? `
-          <div class="offering-banner" style="background:linear-gradient(135deg,rgba(15,30,54,0.92),rgba(42,30,12,0.92));color:#fff;border-color:rgba(212,175,55,0.45)">
+          <div class="offering-banner" style="background:linear-gradient(135deg,rgba(10,25,52,0.95),rgba(10,132,255,0.28));color:#fff;border-color:rgba(10,132,255,0.45)">
             <div style="display:flex;align-items:center;gap:12px">
               <img src="https://aire96fm.com.do/wp-content/themes/aire96-liquid/assets/img/aire96-logo-256.png" alt="Aire 96 FM" width="46" height="46" style="border-radius:8px;object-fit:cover" />
               <div>
@@ -500,7 +499,6 @@ async function mountUserProfile({ root, app, signal, userId }) {
         </div>
         <div style="display:flex;gap:8px">
           <button type="button" class="btn btn-gold btn-sm" id="uFollowBtn">${u.is_following ? d.parishes.following : d.parishes.follow}</button>
-          <button type="button" class="btn btn-soft btn-sm" id="uMsgBtn">💬 ${app.esc(d.parishes.message)}</button>
         </div>
       </article>
 
@@ -546,15 +544,6 @@ async function mountUserProfile({ root, app, signal, userId }) {
       const isF = btn.textContent === d.parishes.following;
       await app.api(`/api/v1/users/${u.id}/follow`, { method: isF ? 'DELETE' : 'POST' });
       btn.textContent = isF ? d.parishes.follow : d.parishes.following;
-    };
-    root.querySelector('#uMsgBtn').onclick = async () => {
-      if (!app.user) return app.openAuthModal();
-      try {
-        const res = await app.api('/api/v1/conversations/direct', { method: 'POST', body: { target_user_id: u.id } });
-        location.hash = `#/messages/${res.conversation.id}`;
-      } catch (err) {
-        app.toast(err.message);
-      }
     };
   } catch (err) {
     if (err.name !== 'AbortError') root.innerHTML = `<div class="empty-box">${app.esc(err.message)}</div>`;

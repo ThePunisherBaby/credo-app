@@ -6,7 +6,7 @@ export const CREDO_I18N = {
     tagline: 'Fe, comunión y voz oficial de la Iglesia',
     nav: {
       feed: 'Inicio',
-      reels: 'Reels',
+      vids: 'Vids',
       live: 'En Vivo',
       prayer: 'Oración',
       parishes: 'Parroquias',
@@ -242,7 +242,7 @@ export const CREDO_I18N = {
   en: {
     appName: 'Credo',
     tagline: 'Faith, communion, and the verified voice of the Church',
-    nav: { feed: 'Home', live: 'Live', prayer: 'Prayer', parishes: 'Parishes', profile: 'Profile' },
+    nav: { feed: 'Home', vids: 'Vids', live: 'Live', prayer: 'Prayer', parishes: 'Parishes', profile: 'Profile' },
     greetings: { morning: 'Good morning', afternoon: 'Good afternoon', evening: 'Good evening' },
     feed: {
       storiesTitle: 'Official Highlights',
@@ -406,17 +406,17 @@ export const CREDO_I18N = {
 // Lightweight locale fallbacks for it, pt, fr sharing structured keys with localized nav/greetings
 CREDO_I18N.it = {
   ...CREDO_I18N.es,
-  nav: { feed: 'Home', live: 'Diretta', prayer: 'Preghiera', parishes: 'Parrocchie', profile: 'Profilo' },
+  nav: { feed: 'Home', vids: 'Vids', live: 'Diretta', prayer: 'Preghiera', parishes: 'Parrocchie', profile: 'Profilo' },
   greetings: { morning: 'Buongiorno', afternoon: 'Buon pomeriggio', evening: 'Buonasera' },
 };
 CREDO_I18N.pt = {
   ...CREDO_I18N.es,
-  nav: { feed: 'Início', live: 'Ao Vivo', prayer: 'Oração', parishes: 'Paróquias', profile: 'Perfil' },
+  nav: { feed: 'Início', vids: 'Vids', live: 'Ao Vivo', prayer: 'Oração', parishes: 'Paróquias', profile: 'Perfil' },
   greetings: { morning: 'Bom dia', afternoon: 'Boa tarde', evening: 'Boa noite' },
 };
 CREDO_I18N.fr = {
   ...CREDO_I18N.en,
-  nav: { feed: 'Accueil', live: 'En Direct', prayer: 'Prière', parishes: 'Paroisses', profile: 'Profil' },
+  nav: { feed: 'Accueil', vids: 'Vids', live: 'En Direct', prayer: 'Prière', parishes: 'Paroisses', profile: 'Profil' },
   greetings: { morning: 'Bonjour', afternoon: 'Bon après-midi', evening: 'Bonsoir' },
 };
 
