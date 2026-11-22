@@ -80,7 +80,20 @@ app.use((_req, res, next) => {
   next();
 });
 app.use(cors());
-app.use(compression());
+app.use(
+  compression({
+    filter: (req, res) => {
+      if (
+        req.path.includes('/stream') ||
+        req.path.includes('/rosary/audio') ||
+        res.getHeader('Content-Type') === 'audio/mpeg'
+      ) {
+        return false;
+      }
+      return compression.filter(req, res);
+    },
+  })
+);
 app.use(express.json({ limit: '22mb' }));
 
 // Health check for Hostinger VPS / Coolify

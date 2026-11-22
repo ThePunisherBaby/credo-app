@@ -1,61 +1,169 @@
-// audio-engine.js — Persistent Live Radio stream engine & Gospel audio reader
-// Provides zero-failure meditative liturgical ambient audio synthesis as seamless
-// live radio playback + Media Session API + Sleep Timer + Gospel Speech Synthesis.
+// audio-engine.js — Persistent Live Radio Stream Engine & Neural Human Voice Reader
+// Plays 100% real audio streams (Aire 96 FM, Reflexionando la Palabra, Credo Radio Rosario 24/7,
+// Rosary Mystery Repertoire, and Catholic Instrumental Music) with automatic stream failover
+// + Media Session API + Sleep Timer + Neural Human Voice (es-DO-EmilioNeural) Gospel/Prayer Reader.
 
 class CredoAudioEngine {
   constructor() {
     this.channel = null;
     this.playing = false;
-    this.volume = 0.72;
+    this.volume = 0.88;
     this.sleepMinutes = 0;
     this.sleepEndsAt = 0;
     this._sleepTimer = null;
-    this._ctx = null;
-    this._masterGain = null;
-    this._nodes = [];
     this._audioEl = null;
+    this._ttsEl = null;
     this._listeners = new Set();
     this._gospelSpeaking = false;
+    this._stallTimer = null;
+    this._playToken = 0;
+  }
+
+  _ensureAudioEl() {
+    if (!this._audioEl) {
+      let el = document.getElementById('credoLiveAudio');
+      if (!el) {
+        el = document.createElement('audio');
+        el.id = 'credoLiveAudio';
+        el.preload = 'none';
+        el.setAttribute('playsinline', '');
+        el.style.display = 'none';
+        document.body?.appendChild(el);
+      }
+      this._audioEl = el;
+    }
+    return this._audioEl;
+  }
+
+  _ensureTtsEl() {
+    if (!this._ttsEl) {
+      let el = document.getElementById('credoTtsAudio');
+      if (!el) {
+        el = document.createElement('audio');
+        el.id = 'credoTtsAudio';
+        el.preload = 'none';
+        el.setAttribute('playsinline', '');
+        el.style.display = 'none';
+        document.body?.appendChild(el);
+      }
+      this._ttsEl = el;
+    }
+    return this._ttsEl;
+  }
+
+  _clearStallTimer() {
+    if (this._stallTimer) {
+      clearTimeout(this._stallTimer);
+      this._stallTimer = null;
+    }
   }
 
   _stopRealStream() {
+    this._clearStallTimer();
+    this._playToken += 1;
     if (this._audioEl) {
       try {
+        this._audioEl.onplaying = null;
+        this._audioEl.onerror = null;
+        this._audioEl.onended = null;
         this._audioEl.pause();
-        this._audioEl.removeAttribute('src');
-        this._audioEl.load();
       } catch {}
     }
   }
 
-  _startChannelAudio(channel) {
-    this._stopRealStream();
-    this._stopAmbientStream();
+  _buildCandidateUrls(channel) {
+    const list = [];
+    const add = (u) => {
+      if (u && !list.includes(u)) list.push(u);
+    };
+    add(channel?.stream_url);
+    add(channel?.direct_stream_url);
 
-    if (channel?.stream_url) {
+    if (channel?.slug === 'aire-96' || channel?.slug === 'reflexionando-la-palabra') {
+      add(`/api/v1/live/stream/${channel.slug}`);
+      add('https://paginas.moisespaulino.com/proxy/moises2020/stream');
+    } else if (channel?.slug === 'credo-rosario') {
+      add('/api/v1/rosary/stream');
+      add('/api/v1/rosary/audio/today');
+    }
+    return list;
+  }
+
+  _startChannelAudio(channel) {
+    this._clearStallTimer();
+    const token = ++this._playToken;
+    const candidates = this._buildCandidateUrls(channel);
+    if (candidates.length === 0) return;
+
+    const el = this._ensureAudioEl();
+    el.volume = this.volume;
+
+    const tryCandidate = (idx) => {
+      if (token !== this._playToken || !this.playing) return;
+      if (idx >= candidates.length) {
+        console.warn('[audio-engine] All stream candidates exhausted for', channel?.name);
+        return;
+      }
+
+      const rawUrl = candidates[idx];
+      // Add cache-buster only to live stream endpoints so browsers never serve a dead cached socket
+      const isLiveStream = rawUrl.includes('/stream');
+      const sep = rawUrl.includes('?') ? '&' : '?';
+      const finalUrl = isLiveStream ? `${rawUrl}${sep}_t=${Date.now()}` : rawUrl;
+
+      this._clearStallTimer();
+
+      el.onplaying = () => {
+        if (token !== this._playToken) return;
+        this._clearStallTimer();
+      };
+
+      el.onerror = () => {
+        if (token !== this._playToken) return;
+        this._clearStallTimer();
+        console.warn('[audio-engine] Stream candidate failed, trying next:', rawUrl);
+        tryCandidate(idx + 1);
+      };
+
+      // Loop on-demand Rosary / Music tracks seamlessly when they finish
+      el.onended = () => {
+        if (token !== this._playToken || !this.playing) return;
+        try {
+          el.currentTime = 0;
+          el.play().catch(() => {});
+        } catch {}
+      };
+
+      // If stream hasn't started playing within 6.5s and there is a fallback candidate, switch
+      if (idx + 1 < candidates.length) {
+        this._stallTimer = setTimeout(() => {
+          if (token === this._playToken && this.playing && (el.paused || el.readyState < 2)) {
+            console.warn('[audio-engine] Stream candidate stalled, switching to fallback:', candidates[idx + 1]);
+            tryCandidate(idx + 1);
+          }
+        }, 6500);
+      }
+
       try {
-        if (!this._audioEl) {
-          this._audioEl = new Audio();
-          this._audioEl.preload = 'none';
-        }
-        this._audioEl.volume = this.volume;
-        this._audioEl.src = channel.stream_url;
-        const p = this._audioEl.play();
+        el.src = finalUrl;
+        const p = el.play();
         if (p && typeof p.catch === 'function') {
           p.catch((err) => {
-            console.warn('[audio-engine] Live stream blocked/failed, falling back to ambient:', err.message);
-            if (this.playing && this.channel?.id === channel.id) {
-              this._startAmbientStream(channel);
+            if (token !== this._playToken) return;
+            console.warn('[audio-engine] play() rejected on candidate', rawUrl, err.message);
+            if (idx + 1 < candidates.length) {
+              tryCandidate(idx + 1);
             }
           });
         }
-        return;
       } catch (err) {
-        console.warn('[audio-engine] Audio element error:', err.message);
+        if (idx + 1 < candidates.length) {
+          tryCandidate(idx + 1);
+        }
       }
-    }
+    };
 
-    this._startAmbientStream(channel);
+    tryCandidate(0);
   }
 
   subscribe(fn) {
@@ -84,89 +192,24 @@ class CredoAudioEngine {
     };
   }
 
-  _startAmbientStream(channel) {
-    this._stopAmbientStream();
-    try {
-      const AudioCtx = window.AudioContext || window.webkitAudioContext;
-      if (!AudioCtx) return;
-      if (!this._ctx) this._ctx = new AudioCtx();
-      if (this._ctx.state === 'suspended') this._ctx.resume();
-
-      const ctx = this._ctx;
-      const master = ctx.createGain();
-      master.gain.setValueAtTime(0.0001, ctx.currentTime);
-      master.gain.exponentialRampToValueAtTime(0.11 * this.volume, ctx.currentTime + 1.4);
-
-      const filter = ctx.createBiquadFilter();
-      filter.type = 'lowpass';
-      filter.frequency.setValueAtTime(620, ctx.currentTime);
-      filter.Q.setValueAtTime(0.9, ctx.currentTime);
-
-      filter.connect(master);
-      master.connect(ctx.destination);
-
-      // Select liturgical warm chord palette per channel slug
-      const chords = {
-        'radio-abc': [146.83, 220.0, 293.66, 369.99],
-        'vida-fm': [164.81, 246.94, 329.63, 415.3],
-        'aire-96': [174.61, 220.0, 261.63, 349.23],
-        'reflexionando-la-palabra': [130.81, 196.0, 261.63, 329.63],
-        'radio-vaticano-es': [196.0, 246.94, 293.66, 392.0],
-      };
-      const freqs = chords[channel?.slug] || [146.83, 220.0, 293.66, 369.99];
-
-      const nodes = [];
-      freqs.forEach((f, idx) => {
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        osc.type = idx % 2 === 0 ? 'sine' : 'triangle';
-        osc.frequency.setValueAtTime(f, ctx.currentTime);
-        gain.gain.setValueAtTime(idx === 0 ? 0.38 : 0.18, ctx.currentTime);
-
-        const lfo = ctx.createOscillator();
-        const lfoGain = ctx.createGain();
-        lfo.frequency.setValueAtTime(0.08 + idx * 0.03, ctx.currentTime);
-        lfoGain.gain.setValueAtTime(0.04, ctx.currentTime);
-        lfo.connect(lfoGain);
-        lfoGain.connect(gain.gain);
-
-        osc.connect(gain);
-        gain.connect(filter);
-        osc.start();
-        lfo.start();
-        nodes.push(osc, lfo, gain, lfoGain);
-      });
-
-      this._masterGain = master;
-      this._nodes = [...nodes, filter, master];
-    } catch (err) {
-      console.warn('[audio-engine] Web Audio unavailable:', err.message);
-    }
-  }
-
-  _stopAmbientStream() {
-    if (this._masterGain && this._ctx) {
-      try {
-        this._masterGain.gain.cancelScheduledValues(this._ctx.currentTime);
-        this._masterGain.gain.setTargetAtTime(0.0001, this._ctx.currentTime, 0.12);
-      } catch {}
-    }
-    const oldNodes = this._nodes;
-    this._nodes = [];
-    this._masterGain = null;
-    setTimeout(() => {
-      for (const n of oldNodes) {
-        try {
-          if (typeof n.stop === 'function') n.stop();
-          if (typeof n.disconnect === 'function') n.disconnect();
-        } catch {}
-      }
-    }, 260);
-  }
-
   playChannel(channel) {
     if (!channel) return;
     this.stopGospelSpeech();
+
+    // If this exact stream is already actively playing, keep it playing without interruption
+    if (
+      this.playing &&
+      this.channel &&
+      this.channel.id === channel.id &&
+      this.channel.stream_url === channel.stream_url &&
+      this._audioEl &&
+      !this._audioEl.paused
+    ) {
+      this.channel = channel;
+      this._emit();
+      return;
+    }
+
     this.channel = channel;
     this.playing = true;
     this._startChannelAudio(channel);
@@ -179,7 +222,6 @@ class CredoAudioEngine {
     if (this.playing) {
       this.playing = false;
       this._stopRealStream();
-      this._stopAmbientStream();
       this._updateMediaSession(this.channel, false);
     } else {
       this.stopGospelSpeech();
@@ -195,7 +237,6 @@ class CredoAudioEngine {
     this.channel = null;
     this.setSleepTimer(0);
     this._stopRealStream();
-    this._stopAmbientStream();
     if ('mediaSession' in navigator) {
       try {
         navigator.mediaSession.playbackState = 'none';
@@ -230,9 +271,9 @@ class CredoAudioEngine {
       navigator.mediaSession.metadata = new MediaMetadata({
         title: channel.current_program || channel.name,
         artist: `${channel.name} · EN VIVO`,
-        album: 'Credo · Radio y TV Católica',
+        album: 'Credo · Radio Católica y Santo Rosario',
         artwork: channel.cover_url
-          ? [{ src: channel.cover_url, sizes: '512x512', type: 'image/jpeg' }]
+          ? [{ src: channel.cover_url, sizes: '512x512', type: 'image/png' }]
           : [],
       });
       navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
@@ -247,32 +288,57 @@ class CredoAudioEngine {
   }
 
   toggleGospelSpeech(text, lang = 'es') {
-    if (!('speechSynthesis' in window)) return false;
     if (this._gospelSpeaking) {
       this.stopGospelSpeech();
       return false;
     }
     if (this.playing) this.togglePlay();
-    window.speechSynthesis.cancel();
-    const utter = new SpeechSynthesisUtterance(text);
-    const langMap = { es: 'es-ES', en: 'en-US', it: 'it-IT', pt: 'pt-BR', fr: 'fr-FR' };
-    utter.lang = langMap[lang] || 'es-ES';
-    utter.rate = 0.94;
-    utter.onend = () => {
+
+    const clean = String(text || '').trim().slice(0, 3200);
+    if (!clean) return false;
+
+    const ttsEl = this._ensureTtsEl();
+    ttsEl.volume = this.volume;
+    ttsEl.onended = () => {
       this._gospelSpeaking = false;
       this._emit();
     };
-    utter.onerror = () => {
+    ttsEl.onerror = () => {
+      // Fallback to browser SpeechSynthesis only if neural endpoint is unreachable
+      if ('speechSynthesis' in window) {
+        try {
+          window.speechSynthesis.cancel();
+          const utter = new SpeechSynthesisUtterance(clean);
+          const langMap = { es: 'es-DO', en: 'en-US', it: 'it-IT', pt: 'pt-BR', fr: 'fr-FR' };
+          utter.lang = langMap[lang] || 'es-DO';
+          utter.rate = 0.95;
+          utter.onend = () => { this._gospelSpeaking = false; this._emit(); };
+          utter.onerror = () => { this._gospelSpeaking = false; this._emit(); };
+          window.speechSynthesis.speak(utter);
+          return;
+        } catch {}
+      }
       this._gospelSpeaking = false;
       this._emit();
     };
+
     this._gospelSpeaking = true;
-    window.speechSynthesis.speak(utter);
     this._emit();
+    ttsEl.src = `/api/v1/rosary/tts?text=${encodeURIComponent(clean)}`;
+    ttsEl.play().catch(() => {
+      ttsEl.onerror?.();
+    });
     return true;
   }
 
   stopGospelSpeech() {
+    if (this._ttsEl) {
+      try {
+        this._ttsEl.onended = null;
+        this._ttsEl.onerror = null;
+        this._ttsEl.pause();
+      } catch {}
+    }
     if ('speechSynthesis' in window) {
       try {
         window.speechSynthesis.cancel();

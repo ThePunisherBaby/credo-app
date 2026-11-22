@@ -1,10 +1,10 @@
 // app.js — Credo Apple-Grade Core Router, Persistent Player, Liquid Glass & On-Demand View Loader
 // STRICTLY mounts ONLY the active route's ES module and DOM into #appView.
 
-import { detectLocale, getDict } from './i18n.js';
-import { attachDismissableSheet, createSpringPill, attachSpringPress } from './springs.mjs';
-import { enhanceLiquidGlass } from './glass.js';
-import { audioEngine } from './audio-engine.js';
+import { detectLocale, getDict } from './i18n.js?v=11';
+import { attachDismissableSheet, createSpringPill, attachSpringPress } from './springs.mjs?v=11';
+import { enhanceLiquidGlass } from './glass.js?v=11';
+import { audioEngine } from './audio-engine.js?v=11';
 
 const ICON_PLAY = '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" style="margin-left:2px"><path d="M8 5v14l11-7z"/></svg>';
 const ICON_PAUSE = '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M6 5h4v14H6zm8 0h4v14h-4z"/></svg>';
@@ -419,14 +419,14 @@ class CredoApp {
     // Lazy-import ONLY the required view module
     let mod;
     try {
-      if (route === 'feed') mod = await import('./views/feed.js');
-      else if (route === 'vids') mod = await import('./views/vids.js');
-      else if (route === 'live') mod = await import('./views/live.js');
-      else if (route === 'prayer') mod = await import('./views/prayer.js');
-      else if (route === 'parishes' || route === 'unit' || route === 'user') mod = await import('./views/parishes.js');
-      else if (route === 'settings') mod = await import('./views/settings.js');
-      else if (route === 'profile') mod = await import('./views/profile.js');
-      else mod = await import('./views/feed.js');
+      if (route === 'feed') mod = await import('./views/feed.js?v=11');
+      else if (route === 'vids') mod = await import('./views/vids.js?v=11');
+      else if (route === 'live') mod = await import('./views/live.js?v=11');
+      else if (route === 'prayer') mod = await import('./views/prayer.js?v=11');
+      else if (route === 'parishes' || route === 'unit' || route === 'user') mod = await import('./views/parishes.js?v=11');
+      else if (route === 'settings') mod = await import('./views/settings.js?v=11');
+      else if (route === 'profile') mod = await import('./views/profile.js?v=11');
+      else mod = await import('./views/feed.js?v=11');
     } catch (err) {
       root.innerHTML = `<div class="empty-box">Error cargando vista: ${this.esc(err.message)}</div>`;
       return;

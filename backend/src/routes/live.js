@@ -1,3 +1,5 @@
+const https = require('https');
+const http = require('http');
 const express = require('express');
 const { pool } = require('../db/pool');
 const { getLiveCatholicReels } = require('../utils/officialSync');
@@ -5,9 +7,194 @@ const { getLiturgicalContext } = require('../services/rosaryRadio');
 
 const router = express.Router();
 
-// GET /api/v1/live — Real Radios, 24/7 Rosary Radio, Catholic TV & Live Masses
+const DEFAULT_UPSTREAM = 'https://paginas.moisespaulino.com/proxy/moises2020/stream';
+
+// Warm shared upstream Icecast/Shoutcast relay with a 48KB rolling ring buffer
+// so mobile <audio> elements receive 8 seconds of frame-aligned MP3 audio in < 10ms!
+class WarmRadioRelay {
+  constructor(upstreamUrl) {
+    this.upstreamUrl = upstreamUrl;
+    this.clients = new Set();
+    this.ringChunks = [];
+    this.ringBytes = 0;
+    this.maxRingBytes = 48 * 1024;
+    this.req = null;
+    this.idleTimer = null;
+    this.connecting = false;
+  }
+
+  touch() {
+    clearTimeout(this.idleTimer);
+    this.idleTimer = setTimeout(() => {
+      if (this.clients.size === 0) this.stopUpstream();
+    }, 180000);
+    if (!this.req && !this.connecting) {
+      this.startUpstream();
+    }
+  }
+
+  startUpstream() {
+    if (this.req || this.connecting) return;
+    this.connecting = true;
+    const mod = this.upstreamUrl.startsWith('https') ? https : http;
+    let syncedToFrame = false;
+
+    const req = mod.get(
+      this.upstreamUrl,
+      {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (compatible; CredoLiveRelay/2.0)',
+          Accept: '*/*',
+          'Icy-MetaData': '0',
+        },
+        timeout: 15000,
+      },
+      (upRes) => {
+        this.connecting = false;
+        if (upRes.statusCode && upRes.statusCode >= 300 && upRes.statusCode < 400 && upRes.headers.location) {
+          this.upstreamUrl = upRes.headers.location;
+          this.req = null;
+          this.startUpstream();
+          return;
+        }
+        upRes.on('data', (chunk) => {
+          let data = chunk;
+          if (!syncedToFrame) {
+            for (let i = 0; i < data.length - 1; i += 1) {
+              if (data[i] === 0xff && (data[i + 1] & 0xe0) === 0xe0) {
+                data = data.subarray(i);
+                syncedToFrame = true;
+                break;
+              }
+            }
+            if (!syncedToFrame) return;
+          }
+
+          this.ringChunks.push(data);
+          this.ringBytes += data.length;
+          while (this.ringBytes > this.maxRingBytes && this.ringChunks.length > 1) {
+            const old = this.ringChunks.shift();
+            this.ringBytes -= old.length;
+          }
+
+          for (const clientRes of this.clients) {
+            if (clientRes.writableEnded || clientRes.destroyed) {
+              this.clients.delete(clientRes);
+            } else {
+              try {
+                clientRes.write(data);
+              } catch {
+                this.clients.delete(clientRes);
+              }
+            }
+          }
+        });
+
+        upRes.on('end', () => {
+          this.req = null;
+          if (this.clients.size > 0) {
+            setTimeout(() => this.startUpstream(), 1000);
+          }
+        });
+      }
+    );
+
+    this.req = req;
+    req.on('error', (err) => {
+      console.warn('[live/relay] upstream error:', err.message);
+      this.connecting = false;
+      this.req = null;
+      if (this.clients.size > 0) {
+        setTimeout(() => this.startUpstream(), 1500);
+      }
+    });
+  }
+
+  stopUpstream() {
+    if (this.req) {
+      try { this.req.destroy(); } catch {}
+      this.req = null;
+    }
+    this.connecting = false;
+  }
+
+  addClient(req, res) {
+    this.touch();
+    res.status(200);
+    res.setHeader('Content-Type', 'audio/mpeg');
+    res.setHeader('Cache-Control', 'no-store, no-cache, no-transform');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    if (typeof res.flushHeaders === 'function') res.flushHeaders();
+
+    // Flush warm ring buffer immediately so playback starts in < 10ms
+    if (this.ringChunks.length > 0) {
+      const burst = Buffer.concat(this.ringChunks);
+      // Align burst start to MP3 frame header
+      let start = 0;
+      for (let i = 0; i < Math.min(burst.length - 1, 2048); i += 1) {
+        if (burst[i] === 0xff && (burst[i + 1] & 0xe0) === 0xe0) {
+          start = i;
+          break;
+        }
+      }
+      try {
+        res.write(burst.subarray(start));
+      } catch {}
+    }
+
+    this.clients.add(res);
+    req.on('close', () => {
+      this.clients.delete(res);
+      this.touch();
+    });
+  }
+}
+
+const relays = new Map();
+function getRelay(url) {
+  const target = url || DEFAULT_UPSTREAM;
+  if (!relays.has(target)) {
+    relays.set(target, new WarmRadioRelay(target));
+  }
+  const r = relays.get(target);
+  r.touch();
+  return r;
+}
+
+// Pre-warm primary Aire 96 FM / Reflexionando stream on startup
+setTimeout(() => {
+  try { getRelay(DEFAULT_UPSTREAM); } catch {}
+}, 1500);
+
+// GET /api/v1/live/stream/:slug — Instant pre-buffered same-origin MP3 radio stream
+router.get('/stream/:slug', async (req, res) => {
+  try {
+    const slug = String(req.params.slug || '').toLowerCase();
+    let upstream = DEFAULT_UPSTREAM;
+    const { rows } = await pool.query(
+      'SELECT stream_url FROM live_channels WHERE slug = $1 LIMIT 1',
+      [slug]
+    );
+    if (rows[0]?.stream_url && /^https?:\/\//i.test(rows[0].stream_url)) {
+      upstream = rows[0].stream_url;
+    }
+    const relay = getRelay(upstream);
+    return relay.addClient(req, res);
+  } catch (err) {
+    console.error('[live/stream]', err);
+    if (!res.headersSent) res.status(502).json({ error: 'Stream relay unavailable' });
+  }
+});
+
+// GET /api/v1/live — Real Radios, 24/7 Rosary Radio, Catholic Instrumental Music, Catholic TV & Live Masses
 router.get('/', async (_req, res) => {
   try {
+    // Keep upstream relay warm whenever user opens #/live or #/feed
+    getRelay(DEFAULT_UPSTREAM);
+
     const [{ rows }, videos, rosaryCtx] = await Promise.all([
       pool.query(
         `SELECT id, slug, name, kind, tagline, current_program, host_name,
@@ -20,6 +207,15 @@ router.get('/', async (_req, res) => {
       Promise.resolve(getLiturgicalContext()),
     ]);
 
+    const dbRadios = rows
+      .filter((c) => c.kind === 'radio')
+      .map((c) => ({
+        ...c,
+        accent_color: '#007AFF',
+        direct_stream_url: c.stream_url || DEFAULT_UPSTREAM,
+        stream_url: `/api/v1/live/stream/${encodeURIComponent(c.slug)}`,
+      }));
+
     const rosaryRadio = {
       id: 9001,
       slug: 'credo-rosario',
@@ -28,14 +224,15 @@ router.get('/', async (_req, res) => {
       tagline: `${rosaryCtx.liturgical_season} · Horarios: 7am, 2pm, 4pm, 8pm`,
       current_program: rosaryCtx.is_live_rosary
         ? `EN VIVO: ${rosaryCtx.mystery.name}`
-        : `Próximo: ${rosaryCtx.next_rosary_label} (${rosaryCtx.mystery.name})`,
-      host_name: 'Grupo de Oración Credo',
+        : `Música Católica y Avisos · Próximo: ${rosaryCtx.next_rosary_label} (${rosaryCtx.mystery.name})`,
+      host_name: 'Comunidad de Oración Credo',
       frequency: rosaryCtx.is_live_rosary ? 'ROSARIO EN VIVO' : '24/7 AUTOMÁTICO',
       country_code: 'DO',
       city: 'República Dominicana',
       accent_color: '#007AFF',
       cover_url: '/icons/credo-512.png',
       stream_url: '/api/v1/rosary/stream',
+      direct_stream_url: '/api/v1/rosary/audio/today',
       youtube_live_id: '',
       is_hero: false,
       is_live: true,
@@ -43,7 +240,29 @@ router.get('/', async (_req, res) => {
       sort_order: 3,
     };
 
-    const radios = [...rows.filter((c) => c.kind === 'radio'), rosaryRadio];
+    const musicRadio = {
+      id: 9002,
+      slug: 'credo-musica-oracion',
+      name: 'Credo Música de Oración',
+      kind: 'radio',
+      tagline: 'Piano e Instrumental Católico 24/7',
+      current_program: 'Música Católica Instrumental Continua para Orar y Meditar',
+      host_name: 'Credo Radio',
+      frequency: 'INSTRUMENTAL 24/7',
+      country_code: 'DO',
+      city: 'Señal Continua',
+      accent_color: '#007AFF',
+      cover_url: '/icons/credo-512.png',
+      stream_url: '/api/v1/rosary/stream?slot=music',
+      direct_stream_url: '/api/v1/rosary/audio/music',
+      youtube_live_id: '',
+      is_hero: false,
+      is_live: true,
+      listeners_count: 0,
+      sort_order: 4,
+    };
+
+    const radios = [...dbRadios, rosaryRadio, musicRadio];
 
     const live_masses = (videos || [])
       .filter((v) => /misa|eucarist|homil[ií]a|angelus|ángelus/i.test(v.title))
@@ -81,16 +300,15 @@ router.get('/', async (_req, res) => {
         source_url: v.source_url,
       }));
 
-    const hero = rows.find((c) => c.is_hero) || radios[0] || null;
-    const allRadios = [...radios];
+    const hero = dbRadios.find((c) => c.is_hero) || radios[0] || null;
 
-    res.setHeader('Cache-Control', 'public, max-age=30, stale-while-revalidate=120');
+    res.setHeader('Cache-Control', 'no-cache');
     return res.json({
       hero,
-      radios: allRadios,
+      radios,
       tv_channels,
       live_masses,
-      all: allRadios,
+      all: radios,
       rosary_status: rosaryCtx,
     });
   } catch (err) {
@@ -99,16 +317,16 @@ router.get('/', async (_req, res) => {
   }
 });
 
+// GET /api/v1/live/:id
 router.get('/:id', async (req, res) => {
   try {
-    const id = Number(req.params.id);
-    if (!Number.isInteger(id)) {
-      return res.status(400).json({ error: 'Invalid channel id' });
-    }
-    const { rows } = await pool.query('SELECT * FROM live_channels WHERE id = $1', [id]);
-    if (!rows[0]) {
-      return res.status(404).json({ error: 'Live channel not found' });
-    }
+    const { id } = req.params;
+    const isNum = /^\d+$/.test(id);
+    const { rows } = await pool.query(
+      `SELECT * FROM live_channels WHERE ${isNum ? 'id = $1' : 'slug = $1'} LIMIT 1`,
+      [isNum ? Number(id) : id]
+    );
+    if (rows.length === 0) return res.status(404).json({ error: 'Channel not found' });
     return res.json({ channel: rows[0] });
   } catch (err) {
     console.error('[live/detail]', err);

@@ -20,7 +20,7 @@
   <link rel="icon" type="image/png" sizes="32x32" href="/icons/credo-32.png" />
   <link rel="apple-touch-icon" href="/icons/credo-180.png" />
   <link rel="manifest" href="/manifest.json" />
-  <link rel="stylesheet" href="/styles.css?v=10" />
+  <link rel="stylesheet" href="/styles.css?v=11" />
 </head>
 <body>
   <!-- Soft progressive top scroll edge blur (functional layer) -->
@@ -168,6 +168,10 @@
   <!-- Live Toast Feedback -->
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-  <script type="module" src="/app.js?v=10"></script>
+  <!-- Persistent Hardware Audio Elements for Live Radio & Neural Human Voice -->
+  <audio id="credoLiveAudio" preload="none" playsinline style="display:none"></audio>
+  <audio id="credoTtsAudio" preload="none" playsinline style="display:none"></audio>
+
+  <script type="module" src="/app.js?v=11"></script>
 </body>
 </html>

@@ -1,6 +1,7 @@
 FROM node:22-alpine
 
-RUN apk add --no-cache curl ffmpeg
+RUN apk add --no-cache curl ffmpeg python3 py3-pip && \
+    pip3 install --no-cache-dir --break-system-packages yt-dlp edge-tts
 
 WORKDIR /app
 
