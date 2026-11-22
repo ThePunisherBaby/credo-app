@@ -42,9 +42,6 @@ export async function mount({ root, app, signal }) {
         <h1 class="t-large-title" style="font-size:1.72rem;letter-spacing:-0.03em;margin:0">${app.esc(d.appName)}</h1>
       </div>
       <div class="page-head-actions">
-        <a href="#/parishes" class="icon-btn-44" aria-label="${app.esc(d.nav?.parishes || 'Parroquias y Jerarquía')}" title="${app.esc(d.nav?.parishes || 'Parroquias y Jerarquía')}">
-          <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v5"/><path d="M9.5 4.5h5"/><path d="M5 21V11l7-4 7 4v10"/><path d="M9 21v-5a3 3 0 0 1 6 0v5"/><path d="M3 21h18"/></svg>
-        </a>
         <button type="button" class="icon-btn-44" id="feedSearchToggle" aria-label="Buscar">
           <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
         </button>
@@ -105,7 +102,9 @@ export async function mount({ root, app, signal }) {
     const parts = [];
     // Live stations first in the highlights carousel (clean circular art + breathing live halo)
     state.liveStations.slice(0, 4).forEach((ch, idx) => {
-      const imgUrl = ch.cover_url ? `/api/v1/media/proxy?url=${encodeURIComponent(ch.cover_url)}` : '';
+      const imgUrl = ch.cover_url
+        ? (/^https?:\/\//i.test(ch.cover_url) ? `/api/v1/media/proxy?url=${encodeURIComponent(ch.cover_url)}` : ch.cover_url)
+        : '';
       parts.push(`
         <button type="button" class="story-item stagger-in" style="--stagger-i:${idx}" data-live-slug="${app.esc(ch.slug)}">
           <span class="story-ring is-live">

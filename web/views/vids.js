@@ -110,10 +110,19 @@ export async function mount({ root, app, signal }) {
 
     stage.innerHTML = items.map((it, idx) => {
       const thumb = makeThumbUrl(it);
-      const av = it.avatar_url && (it.avatar_url.includes('aire96fm.com.do') || it.avatar_url.includes('reflexionandolapalabra.com'))
-        ? `/api/v1/media/proxy?url=${encodeURIComponent(it.avatar_url)}`
-        : (it.avatar_url || '');
-      const channelLabel = it.channel_name || it.author_name || 'Credo Oficial';
+      const isInternal = Boolean(it.post_id) && !it.is_external;
+      const av = isInternal && it.avatar_url
+        ? (/^https?:\/\//i.test(it.avatar_url) ? `/api/v1/media/proxy?url=${encodeURIComponent(it.avatar_url)}` : it.avatar_url)
+        : '/icons/credo-192.png';
+      const channelLabel = isInternal && (it.author_name || it.channel_name)
+        ? (it.author_name || it.channel_name)
+        : 'Credo';
+      const cleanDesc = String(it.description || '')
+        .split('\n')
+        .map((l) => l.trim())
+        .filter((l) => l && !/suscr[ií]b|youtube\.com|http|ewtn,\s*la\s*red/i.test(l))
+        .slice(0, 2)
+        .join(' · ');
       const watch = makeWatchUrl(it);
       const countAmen = Number(it.amen_count || 0);
       const countComments = Number(it.comments_count || 0);
@@ -156,15 +165,13 @@ export async function mount({ root, app, signal }) {
 
           <div class="vid-overlay">
             <div class="vid-channel-row">
-              <span class="avatar" style="--av-sz:30px;--av-bg:${app.esc(it.accent_color || '#0A84FF')}">
-                ${av ? `<img src="${app.esc(av)}" alt="" />` : app.initials(channelLabel)}
-              </span>
-              <strong style="font-size:0.9rem;color:#fff">${app.esc(channelLabel)}</strong>
+              <img class="brand-logo" src="${app.esc(av)}" alt="Credo" width="30" height="30" style="border-radius:8px;object-fit:cover" />
+              <strong style="font-size:0.92rem;color:#fff">${app.esc(channelLabel)}</strong>
               <span class="verified-check" aria-label="Verificado">✓</span>
               ${it.is_live ? `<span class="badge-live"><span class="live-dot"></span>EN VIVO</span>` : ''}
             </div>
             ${it.title ? `<h2 class="vid-title">${app.esc(it.title)}</h2>` : ''}
-            ${it.description ? `<p class="vid-desc">${app.esc(it.description)}</p>` : ''}
+            ${cleanDesc ? `<p class="vid-desc">${app.esc(cleanDesc)}</p>` : ''}
           </div>
         </article>
       `;

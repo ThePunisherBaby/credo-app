@@ -1777,6 +1777,9 @@ body.is-vids-mode .main-stage {
   border: 0;
   display: block;
 }
+.vid-media img {
+  transform: scale(1.36);
+}
 .vid-play-btn {
   position: absolute;
   inset: 0;
