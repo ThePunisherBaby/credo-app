@@ -39,6 +39,8 @@ function htmlToText(html) {
       .replace(/<br\s*\/?>/gi, '\n')
       .replace(/<[^>]+>/g, '')
   )
+    .replace(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g, '')
+    .replace(/[ \t]{2,}/g, ' ')
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();

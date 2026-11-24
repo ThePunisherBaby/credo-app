@@ -34,7 +34,7 @@ cp "$ROOT_DIR/android-app/app/build/outputs/apk/release/app-release.apk" "$APK_O
 shasum -a 256 "$APK_OUT" > "${APK_OUT}.sha256"
 
 echo "→ [2/4] Guardando versión en Git..."
-git -C "$ROOT_DIR" add android-app/version.properties
+git -C "$ROOT_DIR" add android-app/version.properties "$APK_OUT" "${APK_OUT}.sha256"
 git -C "$ROOT_DIR" commit -m "release: Credo Android v${NEW_VER}" || true
 git -C "$ROOT_DIR" tag -f "v${NEW_VER}"
 

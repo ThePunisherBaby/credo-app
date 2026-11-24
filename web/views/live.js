@@ -1,6 +1,6 @@
 // views/live.js — En Vivo: Radios · Canales TV · Misas en Vivo
 
-import { audioEngine } from '../audio-engine.js?v=11';
+import { audioEngine } from '../audio-engine.js?v=13';
 
 function proxyImg(url) {
   if (!url) return '';
@@ -110,19 +110,15 @@ export async function mount({ root, app, signal }) {
           ${heroArt ? `<img class="hero-live-bg" src="${app.esc(heroArt)}" alt="" aria-hidden="true" />` : ''}
           <div class="hero-live-scrim" aria-hidden="true"></div>
           <div class="hero-live-content">
-            <div class="hero-top-row">
-              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-                <span class="live-pill-lg"><span class="live-dot" aria-hidden="true"></span>${app.esc(d.live.onAir)}</span>
-                <span class="t-caption" style="color:rgba(255,255,255,0.8)">${app.esc(hero.frequency || 'RADIO')}</span>
-              </div>
+            <div class="hero-live-top">
+              <span class="live-badge-pill"><span class="live-dot" style="background:#fff" aria-hidden="true"></span>${app.esc(d.live.onAir)}</span>
+              <span class="listeners-pill">${app.esc(hero.frequency || 'RADIO')}</span>
             </div>
 
-            <div class="hero-main-row">
-              <div class="hero-cover">
-                ${heroArt ? `<img src="${app.esc(heroArt)}" alt="${app.esc(hero.name)}" fetchpriority="high" />` : ''}
-              </div>
+            <div class="hero-live-row">
+              ${heroArt ? `<img class="hero-live-art" src="${app.esc(heroArt)}" alt="${app.esc(hero.name)}" fetchpriority="high" />` : ''}
               <div style="flex:1;min-width:0">
-                <p style="margin:0;font-size:0.74rem;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#66B2FF">${app.esc(hero.tagline)}</p>
+                <p style="margin:0;font-size:0.72rem;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#66B2FF">${app.esc(hero.tagline)}</p>
                 <h2 class="t-title-2" style="color:#fff;margin-top:4px">${app.esc(hero.name)}</h2>
                 <p style="margin:4px 0 0;font-size:0.86rem;color:rgba(255,255,255,0.85)">${app.esc(hero.current_program || '')}</p>
                 ${hero.city ? `<p style="margin:3px 0 0;font-size:0.74rem;color:rgba(255,255,255,0.65)">${app.esc(hero.city)}</p>` : ''}
@@ -145,14 +141,14 @@ export async function mount({ root, app, signal }) {
         <h2 class="t-title-2">Emisoras Católicas</h2>
         <span class="t-footnote">${radios.length} en vivo</span>
       </div>
-      <div class="stations-grid">
+      <div class="radio-grid">
         ${radios.map((ch) => {
           const isCur = st.channel?.id === ch.id;
           const active = isCur && st.playing;
           const art = proxyImg(ch.cover_url);
           return `
             <button type="button" class="station-card${isCur ? ' is-playing' : ''}" data-play-ch="${ch.id}">
-              <div class="station-art" style="background:${app.esc(ch.accent_color || '#0A84FF')}">
+              <div class="station-art-wrap" style="--st-accent:${app.esc(ch.accent_color || '#0A84FF')}">
                 ${art ? `<img src="${app.esc(art)}" alt="${app.esc(ch.name)}" loading="lazy" />` : ''}
                 <div class="station-art-scrim"></div>
                 <span class="station-freq-badge">${app.esc(ch.frequency || 'EN VIVO')}</span>

@@ -184,6 +184,9 @@ export function createSpringPill(containerEl, indicatorEl) {
       sw.retarget(targetW, now, MOTION.island);
       if (!raf) raf = requestAnimationFrame(tick);
     },
+    isReady() {
+      return initialized;
+    },
     destroy() {
       cancelAnimationFrame(raf);
       raf = 0;

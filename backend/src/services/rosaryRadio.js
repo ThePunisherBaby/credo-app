@@ -648,6 +648,7 @@ function triggerYouTubeDownload(slotKey, youtubeId) {
     try {
       await runProcess('yt-dlp', [
         '--no-playlist',
+        '--js-runtimes', 'node',
         '-f', 'bestaudio[ext=m4a]/bestaudio',
         '-o', tmpM4a,
         `https://www.youtube.com/watch?v=${youtubeId}`,

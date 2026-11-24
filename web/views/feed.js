@@ -105,6 +105,13 @@ export async function mount({ root, app, signal }) {
       const imgUrl = ch.cover_url
         ? (/^https?:\/\//i.test(ch.cover_url) ? `/api/v1/media/proxy?url=${encodeURIComponent(ch.cover_url)}` : ch.cover_url)
         : '';
+      const shortLabel = ch.slug === 'credo-rosario'
+        ? 'Rosario'
+        : ch.slug === 'credo-musica-oracion'
+          ? 'Música'
+          : ch.slug === 'aire-96'
+            ? 'Aire 96'
+            : ch.name.split(' ')[0];
       parts.push(`
         <button type="button" class="story-item stagger-in" style="--stagger-i:${idx}" data-live-slug="${app.esc(ch.slug)}">
           <span class="story-ring is-live">
@@ -116,7 +123,7 @@ export async function mount({ root, app, signal }) {
           </span>
           <span class="story-name">
             <span class="live-dot" aria-hidden="true"></span>
-            <span>${app.esc(ch.name.split(' ')[0])}</span>
+            <span>${app.esc(shortLabel)}</span>
           </span>
         </button>
       `);
@@ -205,6 +212,11 @@ export async function mount({ root, app, signal }) {
       ? `/api/v1/media/proxy?url=${encodeURIComponent(author.avatar_url)}`
       : author.avatar_url;
 
+    const cleanBody = String(p.content || '')
+      .replace(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g, '')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+
     let mediaBlock = '';
     if (isVideo) {
       mediaBlock = `
@@ -228,7 +240,7 @@ export async function mount({ root, app, signal }) {
     } else {
       mediaBlock = `
         <div class="ig-quote-canvas" data-dbltap="${p.id}" style="cursor:pointer;position:relative">
-          “${app.esc(p.content.slice(0, 220))}${p.content.length > 220 ? '…' : ''}”
+          “${app.esc(cleanBody.slice(0, 220))}${cleanBody.length > 220 ? '…' : ''}”
           <span class="ig-heart-burst" aria-hidden="true">🙏</span>
         </div>
       `;
@@ -281,7 +293,7 @@ export async function mount({ root, app, signal }) {
 
         <div class="ig-caption">
           ${p.title ? `<h2 class="post-title" data-open-post="${p.id}" style="cursor:pointer">${app.esc(p.title)}</h2>` : ''}
-          ${p.content ? `<p class="post-excerpt" data-open-post="${p.id}" style="cursor:pointer">${app.esc(p.content)}</p>` : ''}
+          ${cleanBody ? `<p class="post-excerpt" data-open-post="${p.id}" style="cursor:pointer">${app.esc(cleanBody)}</p>` : ''}
           ${p.scripture_ref ? `<span class="post-scripture-pill">📖 ${app.esc(p.scripture_ref)}</span>` : ''}
         </div>
       </article>

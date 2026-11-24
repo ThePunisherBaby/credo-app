@@ -1,7 +1,7 @@
 // views/prayer.js — Oración: Rosario 24/7 (7am/2pm/4pm/8pm) + Repertorio Completo por Día (Voz Humana y YouTube) + Música de Fondo + Oraciones + Muro
 
-import { audioEngine } from '../audio-engine.js?v=11';
-import { enhanceLiquidGlass } from '../glass.js?v=11';
+import { audioEngine } from '../audio-engine.js?v=13';
+import { enhanceLiquidGlass } from '../glass.js?v=13';
 
 function formatCountdown(sec) {
   const s = Math.max(0, Number(sec) || 0);
@@ -191,16 +191,18 @@ export async function mount({ root, app, signal }) {
             : `Música católica de fondo activa · Próximo rosario grupal (${app.esc(rosaryStatus.next_rosary_label)}) en <strong id="rosaryCountdown">${formatCountdown(countdownSec)}</strong>`}
         </div>
 
-        <div style="display:flex;flex-wrap:wrap;gap:8px;padding-top:4px">
-          <button type="button" class="btn btn-gold btn-sm" id="playTodayRosaryNowBtn">
+        <div style="display:flex;flex-direction:column;gap:8px;padding-top:4px">
+          <button type="button" class="btn btn-gold btn-sm btn-block" id="playTodayRosaryNowBtn">
             ${isPlayingTodayNow ? '⏸ Pausar Rosario de Hoy' : `▶ Rezar ${app.esc(mystery.name || 'Rosario')} Ahora`}
           </button>
-          <button type="button" class="btn btn-sm" style="background:rgba(255,255,255,0.16);color:#fff" id="playRosaryStreamBtn">
-            ${isPlayingLive247 ? '⏸ Pausar Radio 24/7' : '📻 Radio 24/7 (Música + Avisos)'}
-          </button>
-          <button type="button" class="btn btn-sm" style="background:rgba(255,255,255,0.12);color:#fff" id="playBgMusicBtn">
-            ${isPlayingBgMusic ? '⏸ Pausar Música' : '🎵 Música Católica de Fondo'}
-          </button>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+            <button type="button" class="btn btn-sm" style="background:rgba(255,255,255,0.16);color:#fff" id="playRosaryStreamBtn">
+              ${isPlayingLive247 ? '⏸ Radio 24/7' : '📻 Radio 24/7'}
+            </button>
+            <button type="button" class="btn btn-sm" style="background:rgba(255,255,255,0.12);color:#fff" id="playBgMusicBtn">
+              ${isPlayingBgMusic ? '⏸ Música' : '🎵 Música Fondo'}
+            </button>
+          </div>
         </div>
       </article>
 
@@ -222,21 +224,21 @@ export async function mount({ root, app, signal }) {
             const ytOpen = activeYtEmbed === item.key;
 
             return `
-              <div style="padding:13px 14px;border-radius:12px;background:var(--surface-2);border:1px solid ${isToday ? 'rgba(10,132,255,0.48)' : 'var(--sep)'}">
-                <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
-                  <div style="min-width:0;flex:1">
+              <div style="padding:14px;border-radius:12px;background:var(--surface-2);border:1px solid ${isToday ? 'rgba(10,132,255,0.48)' : 'var(--sep)'}">
+                <div style="display:flex;flex-direction:column;gap:10px">
+                  <div>
                     <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
                       <span class="t-caption" style="color:var(--gold-text);font-weight:800">${app.esc(item.badge)}</span>
                       ${isToday ? '<span class="rank-tag" style="padding:2px 7px;font-size:0.68rem">HOY</span>' : ''}
                     </div>
-                    <strong style="font-size:0.98rem;display:block;margin-top:2px">${app.esc(item.title)}</strong>
+                    <strong style="font-size:1rem;display:block;margin-top:3px">${app.esc(item.title)}</strong>
                   </div>
-                  <div style="display:flex;gap:6px;flex-wrap:wrap">
+                  <div style="display:grid;grid-template-columns:1fr auto;gap:8px">
                     <button type="button" class="btn btn-sm ${isSlotPlaying ? 'btn-soft' : 'btn-gold'}" data-play-mystery="${app.esc(item.key)}" data-mystery-title="${app.esc(item.title)}" data-mystery-days="${app.esc(item.badge)}">
                       ${isSlotPlaying ? '⏸ En reproducción' : '▶ Escuchar Audio'}
                     </button>
                     <button type="button" class="btn btn-sm btn-soft" data-toggle-yt="${app.esc(item.key)}">
-                      ${ytOpen ? 'Cerrar YouTube' : 'YouTube ▾'}
+                      ${ytOpen ? 'Cerrar ▴' : 'YouTube ▾'}
                     </button>
                   </div>
                 </div>
