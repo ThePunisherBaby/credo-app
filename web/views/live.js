@@ -1,6 +1,6 @@
 // views/live.js — En Vivo: Radios · Canales TV · Misas en Vivo
 
-import { audioEngine } from '../audio-engine.js?v=13';
+import { audioEngine } from '../audio-engine.js?v=14';
 
 function proxyImg(url) {
   if (!url) return '';

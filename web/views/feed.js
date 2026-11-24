@@ -42,21 +42,14 @@ export async function mount({ root, app, signal }) {
         <h1 class="t-large-title" style="font-size:1.72rem;letter-spacing:-0.03em;margin:0">${app.esc(d.appName)}</h1>
       </div>
       <div class="page-head-actions">
-        <button type="button" class="icon-btn-44" id="feedSearchToggle" aria-label="Buscar">
+        <a href="#/explore" class="icon-btn-44" id="feedSearchToggle" aria-label="${app.esc(d.nav.explore || 'Explorar')}">
           <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
-        </button>
-        <button type="button" class="icon-btn-44" id="feedPublishBtn" aria-label="${app.esc(d.feed.publishBtn)}">
+        </a>
+        <button type="button" class="icon-btn-44" id="feedPublishBtn" aria-label="${app.esc(d.feed.publishBtn)}" ${app.user?.can_publish ? '' : 'hidden'}>
           <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="5"/><path d="M12 8v8M8 12h8"/></svg>
         </button>
       </div>
     </header>
-
-    <div id="feedSearchWrap" hidden style="margin-bottom:10px">
-      <div class="search-field">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
-        <input type="search" id="feedSearchInput" placeholder="${app.esc(d.feed.searchPlaceholder)}" />
-      </div>
-    </div>
 
     <section aria-label="${app.esc(d.feed.storiesTitle)}">
       <div class="stories-strip" id="storiesStrip">
@@ -77,83 +70,43 @@ export async function mount({ root, app, signal }) {
   const storiesStrip = root.querySelector('#storiesStrip');
   const feedList = root.querySelector('#feedList');
   const sentinel = root.querySelector('#feedSentinel');
-  const searchWrap = root.querySelector('#feedSearchWrap');
-  const searchInput = root.querySelector('#feedSearchInput');
 
-  root.querySelector('#feedSearchToggle').addEventListener('click', () => {
-    state.searchOpen = !state.searchOpen;
-    searchWrap.hidden = !state.searchOpen;
-    if (state.searchOpen) searchInput.focus();
-  });
-
-  root.querySelector('#feedPublishBtn').addEventListener('click', () => {
+  root.querySelector('#feedPublishBtn')?.addEventListener('click', () => {
+    if (!app.user?.can_publish) return;
     app.openComposer();
-  });
-
-  searchInput.addEventListener('input', () => {
-    clearTimeout(searchTimer);
-    searchTimer = setTimeout(() => {
-      state.q = searchInput.value.trim();
-      reloadFeed();
-    }, 280);
   });
 
   function renderStories() {
     const parts = [];
-    // Live stations first in the highlights carousel (clean circular art + breathing live halo)
-    state.liveStations.slice(0, 4).forEach((ch, idx) => {
-      const imgUrl = ch.cover_url
-        ? (/^https?:\/\//i.test(ch.cover_url) ? `/api/v1/media/proxy?url=${encodeURIComponent(ch.cover_url)}` : ch.cover_url)
-        : '';
-      const shortLabel = ch.slug === 'credo-rosario'
-        ? 'Rosario'
-        : ch.slug === 'credo-musica-oracion'
-          ? 'Música'
-          : ch.slug === 'aire-96'
-            ? 'Aire 96'
-            : ch.name.split(' ')[0];
-      parts.push(`
-        <button type="button" class="story-item stagger-in" style="--stagger-i:${idx}" data-live-slug="${app.esc(ch.slug)}">
-          <span class="story-ring is-live">
-            <span class="story-ring-inner" style="background:${app.esc(ch.accent_color || '#0F1E36')}">
-              ${imgUrl
-                ? `<img src="${app.esc(imgUrl)}" alt="${app.esc(ch.name)}" width="62" height="62" />`
-                : `<span style="color:#fff;font-weight:800">${app.initials(ch.name)}</span>`}
-            </span>
-          </span>
-          <span class="story-name">
-            <span class="live-dot" aria-hidden="true"></span>
-            <span>${app.esc(shortLabel)}</span>
-          </span>
-        </button>
-      `);
-    });
-
-    // Official Clergy Stories (if any)
+    // Instagram-style Video Stories & Official Clergy Highlights (ZERO audio radio stations)
     state.stories.forEach((st, idx) => {
-      const name = st.author?.full_name || 'Clero';
+      const name = st.author?.title_prefix
+        ? `${st.author.title_prefix} ${st.author.full_name}`
+        : (st.author?.full_name || 'Credo Video');
+      const shortName = name.length > 14 ? name.split(' ').slice(0, 2).join(' ') : name;
+      const isVid = Boolean(st.is_video || st.youtube_id || st.video_url);
+      const rawThumb = st.image_url || st.author?.avatar_url || '';
+      const thumb = rawThumb && rawThumb.includes('aire96fm.com.do')
+        ? `/api/v1/media/proxy?url=${encodeURIComponent(rawThumb)}`
+        : rawThumb;
+
       parts.push(`
-        <button type="button" class="story-item stagger-in" style="--stagger-i:${Math.min(idx + 2, 5)}" data-story-idx="${idx}">
-          <span class="story-ring">
+        <button type="button" class="story-item stagger-in" style="--stagger-i:${Math.min(idx, 5)}" data-story-idx="${idx}">
+          <span class="story-ring${isVid ? ' is-video' : ''}">
             <span class="story-ring-inner" style="background:${app.esc(st.author?.avatar_color || '#0F1E36')}">
-              ${st.image_url
-                ? `<img src="${app.esc(st.image_url)}" alt="${app.esc(name)}" loading="lazy" width="62" height="62" />`
-                : `<span style="color:#fff;font-weight:800">${app.initials(name)}</span>`}
+              ${thumb
+                ? `<img src="${app.esc(thumb)}" alt="${app.esc(name)}" loading="lazy" width="62" height="62" />`
+                : `<span style="color:#fff;font-weight:800">${app.initials(st.author?.full_name || name)}</span>`}
             </span>
+            ${isVid ? '<span class="story-vid-badge" aria-hidden="true">▶</span>' : ''}
           </span>
-          <span class="story-name"><span>${app.esc(name.split(' ')[0])}</span></span>
+          <span class="story-name"><span>${app.esc(shortName)}</span></span>
         </button>
       `);
     });
 
     storiesStrip.innerHTML = parts.join('');
     storiesStrip.onclick = (e) => {
-      const liveBtn = e.target.closest('[data-live-slug]');
-      if (liveBtn) {
-        const ch = state.liveStations.find((c) => c.slug === liveBtn.dataset.liveSlug);
-        if (ch) app.playLive(ch);
-        return;
-      }
       const stBtn = e.target.closest('[data-story-idx]');
       if (stBtn) {
         app.openStoryViewer(state.stories, Number(stBtn.dataset.storyIdx));
@@ -161,12 +114,15 @@ export async function mount({ root, app, signal }) {
     };
   }
 
-  function triggerAmenBurst(cardEl) {
-    const burst = cardEl?.querySelector('.ig-heart-burst');
-    if (!burst) return;
-    burst.classList.remove('is-burst');
-    void burst.offsetWidth;
-    burst.classList.add('is-burst');
+  function triggerButtonDopamine(reactBtn) {
+    if (!reactBtn) return;
+    reactBtn.classList.remove('is-dopamine');
+    void reactBtn.offsetWidth;
+    reactBtn.classList.add('is-dopamine');
+    clearTimeout(reactBtn._dopamineTimer);
+    reactBtn._dopamineTimer = setTimeout(() => {
+      reactBtn.classList.remove('is-dopamine');
+    }, 580);
   }
 
   async function toggleAmen(postId, reactBtn, { onlyAdd = false } = {}) {
@@ -175,7 +131,11 @@ export async function mount({ root, app, signal }) {
       return;
     }
     const already = reactBtn?.classList.contains('is-active');
-    if (onlyAdd && already) return;
+    if (onlyAdd && already) {
+      triggerButtonDopamine(reactBtn);
+      return;
+    }
+    triggerButtonDopamine(reactBtn);
     try {
       const res = await app.api(`/api/v1/posts/${postId}/react`, {
         method: 'POST',
@@ -185,10 +145,6 @@ export async function mount({ root, app, signal }) {
       if (reactBtn) {
         reactBtn.classList.toggle('is-active', active);
         reactBtn.setAttribute('aria-pressed', String(active));
-        if (active) {
-          reactBtn.classList.add('is-pop');
-          setTimeout(() => reactBtn.classList.remove('is-pop'), 500);
-        }
         const cntEl = reactBtn.querySelector(`[data-amen-count="${postId}"]`);
         if (cntEl) cntEl.textContent = String(res.reactions?.amen || 0);
       }
@@ -221,7 +177,8 @@ export async function mount({ root, app, signal }) {
     if (isVideo) {
       mediaBlock = `
         <div class="ig-media" data-video-box="${p.id}" data-yt="${app.esc(p.youtube_id)}">
-          <img src="${app.esc(p.image_url)}" alt="${app.esc(p.title || d.feed.officialChannel)}" ${imgAttrs} width="640" height="480" />
+          ${p.image_url ? `<img class="ig-media-aura" src="${app.esc(p.image_url)}" alt="" aria-hidden="true" />` : ''}
+          <img class="ig-media-photo" src="${app.esc(p.image_url)}" alt="${app.esc(p.title || d.feed.officialChannel)}" ${imgAttrs} width="640" height="480" />
           ${p.video_duration ? `<span class="video-duration-pill">${app.esc(p.video_duration)}</span>` : ''}
           <button type="button" class="video-play-overlay" data-play-video="${p.id}" aria-label="${app.esc(d.feed.watchInline)}">
             <span class="video-play-circle">
@@ -233,18 +190,23 @@ export async function mount({ root, app, signal }) {
     } else if (p.image_url) {
       mediaBlock = `
         <div class="ig-media" data-dbltap="${p.id}" style="cursor:pointer">
-          <img src="${app.esc(p.image_url)}" alt="${app.esc(p.title || author.full_name)}" ${imgAttrs} width="640" height="480" />
-          <span class="ig-heart-burst" aria-hidden="true">🙏</span>
+          <img class="ig-media-aura" src="${app.esc(p.image_url)}" alt="" aria-hidden="true" />
+          <img class="ig-media-photo" src="${app.esc(p.image_url)}" alt="${app.esc(p.title || author.full_name)}" ${imgAttrs} width="640" height="480" />
         </div>
       `;
     } else {
       mediaBlock = `
         <div class="ig-quote-canvas" data-dbltap="${p.id}" style="cursor:pointer;position:relative">
           “${app.esc(cleanBody.slice(0, 220))}${cleanBody.length > 220 ? '…' : ''}”
-          <span class="ig-heart-burst" aria-hidden="true">🙏</span>
         </div>
       `;
     }
+
+    const sourcePillHtml = unitName
+      ? (p.source_url
+          ? `<a href="${app.esc(p.source_url)}" target="_blank" rel="noopener noreferrer" class="source-pill-box">${app.esc(unitName)}<span class="source-pill-arrow" aria-hidden="true">↗</span></a>`
+          : `<span class="source-pill-box">${app.esc(unitName)}</span>`)
+      : '';
 
     return `
       <article class="ig-post${deferClass}${staggerClass}"${staggerAttr} data-post-id="${p.id}">
@@ -255,13 +217,10 @@ export async function mount({ root, app, signal }) {
           <div class="post-author-info">
             <div class="post-author-row">
               <a href="#/user/${author.id}" class="post-author-name">${app.esc(author.title_prefix ? `${author.title_prefix} ` : '')}${app.esc(author.full_name)}</a>
-              <span class="verified-check" title="Cuenta oficial verificada" aria-label="Verificado">
-                <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m3.5 8.5 3 3 6-6.5"/></svg>
-              </span>
               ${author.is_ceo ? '<span class="rank-tag">CEO</span>' : ''}
             </div>
             <div class="post-meta-line">
-              ${unitName ? `<span>${app.esc(unitName)}</span> · ` : ''}
+              ${sourcePillHtml}
               <span>${app.relTime(p.created_at)}</span>
             </div>
           </div>
@@ -272,9 +231,9 @@ export async function mount({ root, app, signal }) {
         <footer class="ig-actions">
           <div class="post-act-group">
             <button type="button" class="act-btn${isAmen ? ' is-active' : ''}" data-react-post="${p.id}" aria-pressed="${isAmen}">
-              <span>🙏</span>
+              <span class="amen-emoji" aria-hidden="true">🙏</span>
               <span>${app.esc(d.feed.amen)}</span>
-              <strong data-amen-count="${p.id}">${p.reactions?.amen || 0}</strong>
+              <strong class="amen-count" data-amen-count="${p.id}">${p.reactions?.amen || 0}</strong>
             </button>
             <button type="button" class="act-btn" data-open-post="${p.id}" aria-label="${app.esc(d.feed.comment)}">
               <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
@@ -385,8 +344,8 @@ export async function mount({ root, app, signal }) {
         clearTimeout(tapTimer);
         lastTap = { id: 0, time: 0 };
         const card = dblEl.closest('.ig-post');
-        triggerAmenBurst(card);
         const btn = card?.querySelector(`[data-react-post="${postId}"]`);
+        triggerButtonDopamine(btn);
         await toggleAmen(postId, btn, { onlyAdd: true });
       } else {
         lastTap = { id: postId, time: now };
@@ -449,16 +408,14 @@ export async function mount({ root, app, signal }) {
   );
   observer.observe(sentinel);
 
-  // Parallel lightweight initial fetch ONLY for this view
-  const [storiesRes, liveRes] = await Promise.allSettled([
+  // Parallel lightweight initial fetch ONLY for this view (Video Stories + Feed Posts)
+  const [storiesRes] = await Promise.allSettled([
     app.api('/api/v1/stories', { signal }),
-    app.api('/api/v1/live', { signal }),
     loadPage(true),
   ]);
 
   if (!signal.aborted) {
     if (storiesRes.status === 'fulfilled') state.stories = storiesRes.value.stories || [];
-    if (liveRes.status === 'fulfilled') state.liveStations = liveRes.value.all || [];
     renderStories();
   }
 
@@ -473,19 +430,24 @@ export async function mount({ root, app, signal }) {
 
 async function openPostDetailModal(post, app, d) {
   const author = post.author || {};
+  const avUrl = author.avatar_url && author.avatar_url.includes('aire96fm.com.do')
+    ? `/api/v1/media/proxy?url=${encodeURIComponent(author.avatar_url)}`
+    : author.avatar_url;
   const body = `
     <article style="display:flex;flex-direction:column;gap:14px;">
       <div class="post-head">
-        <span class="avatar" style="--av-bg:${app.esc(author.avatar_color || '#0F1E36')}">${app.initials(author.full_name)}</span>
+        <span class="avatar" style="--av-bg:${app.esc(author.avatar_color || '#0F1E36')}">
+          ${avUrl ? `<img src="${app.esc(avUrl)}" alt="" />` : app.initials(author.full_name)}
+        </span>
         <div>
           <div class="post-author-row">
             <strong>${app.esc(author.title_prefix ? `${author.title_prefix} ` : '')}${app.esc(author.full_name)}</strong>
-            <span class="verified-check">✓</span>
+            ${author.is_ceo ? '<span class="rank-tag">CEO</span>' : ''}
           </div>
-          <span class="t-footnote">${app.esc(post.scope_unit?.name || '')} · ${app.relTime(post.created_at)}</span>
+          <span class="t-footnote">${app.esc(post.channel_name || post.scope_unit?.name || '')} · ${app.relTime(post.created_at)}</span>
         </div>
       </div>
-      ${post.image_url ? `<img src="${app.esc(post.image_url)}" alt="" style="width:100%;border-radius:8px;aspect-ratio:16/10;object-fit:cover" />` : ''}
+      ${post.image_url ? `<img src="${app.esc(post.image_url)}" alt="" style="width:100%;border-radius:12px;aspect-ratio:16/10;object-fit:cover" />` : ''}
       ${post.title ? `<h3 class="t-serif" style="margin:0;font-size:1.3rem;line-height:1.3">${app.esc(post.title)}</h3>` : ''}
       ${post.scripture_ref ? `<span class="post-scripture-pill">📖 ${app.esc(post.scripture_ref)}</span>` : ''}
       <p style="margin:0;line-height:1.65;white-space:pre-line">${app.esc(post.content)}</p>

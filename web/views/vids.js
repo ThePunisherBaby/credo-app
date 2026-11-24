@@ -2,7 +2,7 @@
 
 function makeThumbUrl(it) {
   if (it.thumbnail_url) {
-    if (it.thumbnail_url.includes('aire96fm.com.do') || it.thumbnail_url.includes('reflexionandolapalabra.com')) {
+    if (/^https?:\/\/(aire96fm\.com\.do|reflexionandolapalabra\.com)/i.test(it.thumbnail_url)) {
       return `/api/v1/media/proxy?url=${encodeURIComponent(it.thumbnail_url)}`;
     }
     return it.thumbnail_url;
@@ -167,7 +167,6 @@ export async function mount({ root, app, signal }) {
             <div class="vid-channel-row">
               <img class="brand-logo" src="${app.esc(av)}" alt="Credo" width="30" height="30" style="border-radius:8px;object-fit:cover" />
               <strong style="font-size:0.92rem;color:#fff">${app.esc(channelLabel)}</strong>
-              <span class="verified-check" aria-label="Verificado">✓</span>
               ${it.is_live ? `<span class="badge-live"><span class="live-dot"></span>EN VIVO</span>` : ''}
             </div>
             ${it.title ? `<h2 class="vid-title">${app.esc(it.title)}</h2>` : ''}

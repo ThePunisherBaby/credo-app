@@ -1,10 +1,10 @@
 // app.js — Credo Apple-Grade Core Router, Persistent Player, Liquid Glass & On-Demand View Loader
 // STRICTLY mounts ONLY the active route's ES module and DOM into #appView.
 
-import { detectLocale, getDict } from './i18n.js?v=13';
-import { attachDismissableSheet, createSpringPill, attachSpringPress } from './springs.mjs?v=13';
-import { enhanceLiquidGlass } from './glass.js?v=13';
-import { audioEngine } from './audio-engine.js?v=13';
+import { detectLocale, getDict } from './i18n.js?v=14';
+import { attachDismissableSheet, createSpringPill, attachSpringPress } from './springs.mjs?v=14';
+import { enhanceLiquidGlass } from './glass.js?v=14';
+import { audioEngine } from './audio-engine.js?v=14';
 
 const ICON_PLAY = '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" style="margin-left:2px"><path d="M8 5v14l11-7z"/></svg>';
 const ICON_PAUSE = '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M6 5h4v14H6zm8 0h4v14h-4z"/></svg>';
@@ -21,10 +21,9 @@ const NAV_TABS = [
     icon: '<svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="m10 8.5 6 3.5-6 3.5z" fill="currentColor" stroke="none"/></svg>',
   },
   {
-    id: 'live',
-    hash: '#/live',
-    livePip: true,
-    icon: '<svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9"/><path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5"/><circle cx="12" cy="12" r="2" fill="currentColor"/><path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5"/><path d="M19.1 4.9C23 8.8 23 15.1 19.1 19"/></svg>',
+    id: 'explore',
+    hash: '#/explore',
+    icon: '<svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2.15" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.8-3.8"/></svg>',
   },
   {
     id: 'prayer',
@@ -329,8 +328,22 @@ class CredoApp {
         ).join('');
         mobileNav.insertAdjacentHTML('beforeend', linksHtml);
         this._dockPill = createSpringPill(mobileNav, indicator);
+        mobileNav.addEventListener('click', (e) => {
+          const btn = e.target.closest('.dock-btn[data-nav]');
+          if (!btn || !this._dockPill) return;
+          mobileNav.querySelectorAll('.dock-btn').forEach((b) => {
+            const on = b === btn;
+            b.classList.toggle('is-active', on);
+            b.setAttribute('aria-current', on ? 'page' : 'false');
+          });
+          this._dockPill.moveTo(btn, false);
+        });
         if (typeof ResizeObserver === 'function') {
+          let lastWidth = mobileNav.getBoundingClientRect().width;
           new ResizeObserver(() => {
+            const wNow = mobileNav.getBoundingClientRect().width;
+            if (Math.abs(wNow - lastWidth) < 1) return;
+            lastWidth = wNow;
             const curActive = mobileNav.querySelector('.dock-btn.is-active');
             if (curActive && this._dockPill) {
               this._dockPill.moveTo(curActive, true);
@@ -360,11 +373,15 @@ class CredoApp {
       }
     }
 
-    // Desktop Publish button (Clergy Only) & Account chip
+    // Desktop & Mobile Publish buttons (Strictly Clergy Only) & Account chip
     const pubBtn = document.getElementById('desktopPublishBtn');
     if (pubBtn) {
       pubBtn.hidden = !this.user?.can_publish;
       pubBtn.onclick = () => this.openComposer();
+    }
+    const feedPubBtn = document.getElementById('feedPublishBtn');
+    if (feedPubBtn) {
+      feedPubBtn.hidden = !this.user?.can_publish;
     }
 
     const accBtn = document.getElementById('desktopAccountBtn');
@@ -392,17 +409,18 @@ class CredoApp {
     const raw = (location.hash || '#/feed').replace(/^#\/?/, '');
     const [seg, arg] = raw.split('/');
     if (seg === 'vids' || seg === 'reels') return { route: 'vids', tab: 'vids', params: {} };
-    if (seg === 'live') return { route: 'live', tab: 'live', params: {} };
+    if (seg === 'explore') return { route: 'explore', tab: 'explore', params: { filter: arg || 'all' } };
+    if (seg === 'live') return { route: 'explore', tab: 'explore', params: { filter: 'live' } };
     if (seg === 'prayer') return { route: 'prayer', tab: 'prayer', params: {} };
-    if (seg === 'parishes') return { route: 'parishes', tab: 'parishes', params: {} };
-    if (seg === 'unit' && arg) return { route: 'unit', tab: 'parishes', params: { id: arg } };
-    if (seg === 'user' && arg) return { route: 'user', tab: 'parishes', params: { id: arg } };
+    if (seg === 'parishes') return { route: 'explore', tab: 'explore', params: { filter: 'parishes' } };
+    if (seg === 'unit' && arg) return { route: 'unit', tab: 'explore', params: { id: arg } };
+    if (seg === 'user' && arg) return { route: 'user', tab: 'explore', params: { id: arg } };
     if (seg === 'settings') return { route: 'settings', tab: 'profile', params: {} };
     if (seg === 'profile') return { route: 'profile', tab: 'profile', params: {} };
     return { route: 'feed', tab: 'feed', params: {} };
   }
 
-  // Strictly view-based on-demand mounting & lazy ES module loading
+  // Strictly view-based on-demand mounting & lazy ES module loading with Horizontal Motion Blur Slide
   async navigate() {
     const seq = ++this._routeSeq;
 
@@ -417,11 +435,37 @@ class CredoApp {
     }
 
     const { route, tab, params } = this.parseRoute();
+    const newIdx = NAV_TABS.findIndex((t) => t.id === tab);
+    const prevIdx = typeof this._prevTabIdx === 'number' ? this._prevTabIdx : newIdx;
+    const dir = newIdx !== -1 && prevIdx !== -1 && newIdx !== prevIdx ? (newIdx > prevIdx ? 1 : -1) : 0;
+    const prevRoute = this._prevRoute || '';
+    this._prevTabIdx = newIdx !== -1 ? newIdx : prevIdx;
+    this._prevRoute = route;
+
     document.body.classList.toggle('is-vids-mode', route === 'vids');
     this.renderChrome();
 
     const root = document.getElementById('appView');
     if (!root) return;
+    const stage = root.parentElement;
+    const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    const shouldSlide = dir !== 0 && !reduceMotion && route !== 'vids' && prevRoute !== 'vids';
+
+    // Capture exiting view layer for side-by-side horizontal slide + motion blur
+    if (stage) {
+      stage.querySelectorAll('.view-exit-layer').forEach((n) => n.remove());
+      if (shouldSlide && root.children.length > 0) {
+        const ghost = document.createElement('div');
+        ghost.className = `view-exit-layer ${dir > 0 ? 'is-exit-to-left' : 'is-exit-to-right'}`;
+        ghost.setAttribute('aria-hidden', 'true');
+        ghost.innerHTML = root.innerHTML;
+        ghost.querySelectorAll('[id]').forEach((el) => el.removeAttribute('id'));
+        ghost.querySelectorAll('iframe, video, audio').forEach((el) => el.remove());
+        stage.appendChild(ghost);
+        setTimeout(() => ghost.remove(), 290);
+      }
+    }
+
     // Clear previous DOM completely so ONLY the active screen exists in memory/DOM
     root.innerHTML = '';
     window.scrollTo({ top: 0, behavior: 'instant' });
@@ -432,14 +476,14 @@ class CredoApp {
     // Lazy-import ONLY the required view module
     let mod;
     try {
-      if (route === 'feed') mod = await import('./views/feed.js?v=13');
-      else if (route === 'vids') mod = await import('./views/vids.js?v=13');
-      else if (route === 'live') mod = await import('./views/live.js?v=13');
-      else if (route === 'prayer') mod = await import('./views/prayer.js?v=13');
-      else if (route === 'parishes' || route === 'unit' || route === 'user') mod = await import('./views/parishes.js?v=13');
-      else if (route === 'settings') mod = await import('./views/settings.js?v=13');
-      else if (route === 'profile') mod = await import('./views/profile.js?v=13');
-      else mod = await import('./views/feed.js?v=13');
+      if (route === 'feed') mod = await import('./views/feed.js?v=14');
+      else if (route === 'vids') mod = await import('./views/vids.js?v=14');
+      else if (route === 'explore') mod = await import('./views/explore.js?v=14');
+      else if (route === 'prayer') mod = await import('./views/prayer.js?v=14');
+      else if (route === 'parishes' || route === 'unit' || route === 'user') mod = await import('./views/parishes.js?v=14');
+      else if (route === 'settings') mod = await import('./views/settings.js?v=14');
+      else if (route === 'profile') mod = await import('./views/profile.js?v=14');
+      else mod = await import('./views/feed.js?v=14');
     } catch (err) {
       root.innerHTML = `<div class="empty-box">Error cargando vista: ${this.esc(err.message)}</div>`;
       return;
@@ -447,10 +491,15 @@ class CredoApp {
 
     if (seq !== this._routeSeq || controller.signal.aborted) return;
 
-    // Trigger subtle view entry transition
-    root.classList.remove('view-mount');
+    // Side-by-side directional presentation slide + motion blur (and clear transform after settle)
+    root.classList.remove('view-mount', 'view-enter-from-right', 'view-enter-from-left', 'view-enter-subtle');
     void root.offsetWidth;
-    root.classList.add('view-mount');
+    const enterCls = shouldSlide ? (dir > 0 ? 'view-enter-from-right' : 'view-enter-from-left') : 'view-enter-subtle';
+    root.classList.add('view-mount', enterCls);
+    clearTimeout(this._viewTransTimer);
+    this._viewTransTimer = setTimeout(() => {
+      root.classList.remove('view-enter-from-right', 'view-enter-from-left', 'view-enter-subtle');
+    }, 310);
 
     const handle = await mod.mount({ root, app: this, signal: controller.signal, route, params });
     if (seq !== this._routeSeq) {
@@ -629,57 +678,104 @@ class CredoApp {
     if (!stories || stories.length === 0) return;
     const dlg = document.getElementById('storyDialog');
     let idx = startIdx;
+    let muted = false;
+
+    const closeViewer = () => {
+      clearTimeout(this._storyTimer);
+      dlg.innerHTML = '';
+      if (dlg.open) dlg.close();
+    };
+
+    dlg.oncancel = (e) => {
+      e.preventDefault();
+      closeViewer();
+    };
 
     const show = () => {
       clearTimeout(this._storyTimer);
       const st = stories[idx];
-      if (!st) return dlg.close();
+      if (!st) return closeViewer();
+
+      const authorAvRaw = st.author?.avatar_url || '';
+      const authorAv = authorAvRaw && authorAvRaw.includes('aire96fm.com.do')
+        ? `/api/v1/media/proxy?url=${encodeURIComponent(authorAvRaw)}`
+        : authorAvRaw;
+      const isVideoStory = Boolean(st.youtube_id || st.video_url);
+      const ytUrl = st.youtube_id
+        ? `https://www.youtube.com/embed/${encodeURIComponent(st.youtube_id)}?autoplay=1&playsinline=1&rel=0&modestbranding=1&mute=${muted ? 1 : 0}`
+        : '';
+
+      const stageMediaHtml = st.video_url
+        ? `<div class="story-video-wrap">${st.image_url ? `<img src="${this.esc(st.image_url)}" alt="" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0" />` : ''}<video class="story-video-el" style="position:relative;z-index:1" src="${this.esc(st.video_url)}" autoplay playsinline loop ${muted ? 'muted' : ''}></video></div>`
+        : st.youtube_id
+          ? `<div class="story-video-wrap">${st.image_url ? `<img src="${this.esc(st.image_url)}" alt="" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0" />` : ''}<iframe class="story-video-frame" style="position:relative;z-index:1" src="${this.esc(ytUrl)}" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe></div>`
+          : (st.image_url ? `<img class="story-stage-bg" src="${this.esc(st.image_url)}" alt="" />` : '');
+
+      const durMs = isVideoStory ? 18000 : 6000;
+
       dlg.innerHTML = `
-        <div class="story-stage" style="background:${this.esc(st.bg_gradient || '#0F1E36')}">
-          ${st.image_url ? `<img class="story-stage-bg" src="${this.esc(st.image_url)}" alt="" />` : ''}
-          <div class="story-stage-scrim"></div>
+        <div class="story-stage" style="background:${this.esc(st.bg_gradient || '#0B1424')}">
+          ${isVideoStory && st.image_url ? `<img class="story-stage-bg" src="${this.esc(st.image_url)}" alt="" style="filter:blur(28px) saturate(1.4);opacity:0.45" />` : ''}
+          ${stageMediaHtml}
+          <div class="story-stage-scrim" style="${isVideoStory ? 'pointer-events:none;background:linear-gradient(to bottom,rgba(0,0,0,0.65),transparent 24%,transparent 68%,rgba(0,0,0,0.88))' : ''}"></div>
           <div>
             <div class="story-bars">
-              ${stories.map((_, i) => `<div class="story-bar ${i < idx ? 'is-done' : i === idx ? 'is-active' : ''}"><div class="story-bar-fill"></div></div>`).join('')}
+              ${stories.map((_, i) => `<div class="story-bar ${i < idx ? 'is-done' : i === idx ? 'is-active' : ''}"><div class="story-bar-fill" style="${i === idx ? `animation-duration:${durMs}ms` : ''}"></div></div>`).join('')}
             </div>
             <div class="story-top">
-              <div style="display:flex;align-items:center;gap:10px">
-                <span class="avatar" style="--av-sz:36px;--av-bg:${this.esc(st.author?.avatar_color || '#0F1E36')}">${this.initials(st.author?.full_name)}</span>
-                <div>
-                  <strong style="font-size:0.9rem">${this.esc(st.author?.full_name || 'Clero Oficial')}</strong>
-                  <div style="font-size:0.72rem;opacity:0.75">${this.relTime(st.created_at)}</div>
+              <div style="display:flex;align-items:center;gap:10px;min-width:0">
+                <span class="avatar" style="--av-sz:36px;--av-bg:${this.esc(st.author?.avatar_color || '#0F1E36')}">
+                  ${authorAv ? `<img src="${this.esc(authorAv)}" alt="" />` : this.initials(st.author?.full_name)}
+                </span>
+                <div style="min-width:0">
+                  <strong style="font-size:0.9rem;color:#fff;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${this.esc(st.author?.full_name || 'Credo Video')}</strong>
+                  <div style="font-size:0.72rem;opacity:0.8;color:#fff">${isVideoStory ? 'Video · ' : ''}${this.relTime(st.created_at)}</div>
                 </div>
               </div>
-              <button type="button" class="icon-btn-44" id="stClose" style="color:#fff" aria-label="Cerrar">✕</button>
+              <div style="display:flex;align-items:center;gap:8px">
+                ${isVideoStory ? `<button type="button" class="story-audio-btn" id="stMute">${muted ? '🔇 Silencio' : '🔊 Audio'}</button>` : ''}
+                <button type="button" class="icon-btn-44" id="stClose" style="color:#fff" aria-label="Cerrar">✕</button>
+              </div>
             </div>
           </div>
-          <div class="story-tap-zones">
-            <div id="stPrev"></div>
-            <div id="stNext"></div>
-          </div>
+          ${!isVideoStory ? `
+            <div class="story-tap-zones">
+              <div id="stPrev"></div>
+              <div id="stNext"></div>
+            </div>` : ''}
           <div class="story-bottom">
-            ${st.scripture_ref ? `<span style="color:#66B2FF;font-family:var(--font-serif);font-style:italic">📖 ${this.esc(st.scripture_ref)}</span>` : ''}
-            <p style="margin:0;font-size:1rem;line-height:1.45">${this.esc(st.caption || '')}</p>
+            ${isVideoStory ? `
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:4px">
+                <span style="color:#66B2FF;font-family:var(--font-serif);font-style:italic">${this.esc(st.scripture_ref || '')}</span>
+                <div style="display:flex;gap:8px">
+                  <button type="button" id="stPrev" class="story-audio-btn" aria-label="Anterior">‹ Anterior</button>
+                  <button type="button" id="stNext" class="story-audio-btn" aria-label="Siguiente">Siguiente ›</button>
+                </div>
+              </div>` : (st.scripture_ref ? `<span style="color:#66B2FF;font-family:var(--font-serif);font-style:italic">${this.esc(st.scripture_ref)}</span>` : '')}
+            <p style="margin:0;font-size:0.98rem;line-height:1.42;color:#fff">${this.esc(st.caption || '')}</p>
           </div>
         </div>
       `;
-      dlg.querySelector('#stClose').onclick = () => {
-        clearTimeout(this._storyTimer);
-        dlg.close();
-      };
-      dlg.querySelector('#stPrev').onclick = () => {
+
+      dlg.querySelector('#stClose').onclick = closeViewer;
+      dlg.querySelector('#stMute')?.addEventListener('click', () => {
+        muted = !muted;
+        show();
+      });
+      dlg.querySelector('#stPrev')?.addEventListener('click', () => {
         idx = Math.max(0, idx - 1);
         show();
-      };
-      dlg.querySelector('#stNext').onclick = () => {
+      });
+      dlg.querySelector('#stNext')?.addEventListener('click', () => {
         if (idx + 1 < stories.length) { idx += 1; show(); }
-        else { clearTimeout(this._storyTimer); dlg.close(); }
-      };
+        else closeViewer();
+      });
+
       this._storyTimer = setTimeout(() => {
         if (!dlg.open) return;
         if (idx + 1 < stories.length) { idx += 1; show(); }
-        else dlg.close();
-      }, 5500);
+        else closeViewer();
+      }, durMs);
     };
 
     if (!dlg.open) dlg.showModal();

@@ -112,12 +112,13 @@ export const MOTION = {
   micro: fromDurationBounce(0.28, 0),
   microSnappy: fromDurationBounce(0.3, 0.18),
   large: fromDurationBounce(0.56, 0),
-  island: fromDurationBounce(0.36, 0.12),
+  island: fromDurationBounce(0.24, 0.22),
 };
 
 /**
  * Apple Dynamic Island Sliding Pill Indicator.
- * Glides smoothly on GPU compositor (translate3d + width) without scale distortion.
+ * Pure GPU compositor transform (translate3d + velocity scale3d) with static width
+ * so border-radius: 999px never flashes rectangular during layout/texture reallocation.
  */
 export function createSpringPill(containerEl, indicatorEl) {
   const reduceMQ = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -126,12 +127,19 @@ export function createSpringPill(containerEl, indicatorEl) {
   let initialized = false;
   let lastTargetX = null;
   let lastTargetW = null;
+  let staticBaseW = 0;
   let raf = 0;
 
-  const paint = (x, w) => {
-    if (w <= 0) return;
-    indicatorEl.style.width = `${w.toFixed(1)}px`;
-    indicatorEl.style.transform = `translate3d(${x.toFixed(2)}px, 0, 0)`;
+  const paint = (x, w, vX = 0) => {
+    if (w <= 0 || staticBaseW <= 0) return;
+    // Set CSS width only on initialization or real resize — NEVER per-frame during motion
+    const widthRatio = w / staticBaseW;
+    const velStretch = Math.min(0.14, Math.abs(vX) / 2800);
+    const scaleX = widthRatio * (1 + velStretch);
+    const scaleY = 1 - Math.min(0.06, Math.abs(vX) / 5600);
+    // Keep visual center aligned with spring position when stretched
+    const stretchOffset = (w * (1 - (1 + velStretch))) * 0.5;
+    indicatorEl.style.transform = `translate3d(${(x + stretchOffset).toFixed(2)}px, 0, 0) scale3d(${scaleX.toFixed(4)}, ${scaleY.toFixed(4)}, 1)`;
     indicatorEl.style.opacity = '1';
   };
 
@@ -139,12 +147,12 @@ export function createSpringPill(containerEl, indicatorEl) {
     const now = ms / 1000;
     const xS = sx.sample(now);
     const wS = sw.sample(now);
-    if (sx.isSettled(now, 0.08, 0.5) && sw.isSettled(now, 0.08, 0.5)) {
-      paint(sx.target, sw.target);
+    if (sx.isSettled(now, 0.12, 0.6) && sw.isSettled(now, 0.12, 0.6)) {
+      paint(sx.target, sw.target, 0);
       raf = 0;
       return;
     }
-    paint(xS.value, wS.value);
+    paint(xS.value, wS.value, xS.velocity);
     raf = requestAnimationFrame(tick);
   };
 
@@ -155,8 +163,16 @@ export function createSpringPill(containerEl, indicatorEl) {
       const tRect = targetEl.getBoundingClientRect();
       if (tRect.width < 10 || cRect.width < 10) return;
       const targetX = tRect.left - cRect.left;
-      const targetW = tRect.width;
+      const targetW = Math.round(tRect.width);
       const now = performance.now() / 1000;
+
+      if (Math.abs(staticBaseW - targetW) > 1.5 && (!initialized || immediate)) {
+        staticBaseW = targetW;
+        indicatorEl.style.width = `${staticBaseW}px`;
+      } else if (staticBaseW <= 0) {
+        staticBaseW = targetW;
+        indicatorEl.style.width = `${staticBaseW}px`;
+      }
 
       if (
         initialized &&
@@ -174,9 +190,11 @@ export function createSpringPill(containerEl, indicatorEl) {
         initialized = true;
         cancelAnimationFrame(raf);
         raf = 0;
+        staticBaseW = targetW;
+        indicatorEl.style.width = `${staticBaseW}px`;
         sx.set(targetX, now);
         sw.set(targetW, now);
-        paint(targetX, targetW);
+        paint(targetX, targetW, 0);
         return;
       }
 

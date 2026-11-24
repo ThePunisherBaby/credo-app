@@ -256,21 +256,72 @@ img { display: block; max-width: 100%; }
 .desktop-sidebar { display: none; }
 
 .main-stage {
+  position: relative;
+  overflow-x: clip;
   width: 100%;
   max-width: 620px;
   padding: calc(18px + env(safe-area-inset-top, 0px)) var(--s-5)
-           calc(var(--dock-height) + var(--mini-height) + 42px + env(safe-area-inset-bottom, 0px));
+           calc(var(--dock-height) + var(--mini-height) + 28px + env(safe-area-inset-bottom, 0px));
   outline: none;
 }
 
 .view-mount {
+  position: relative;
+  z-index: 1;
+}
+.view-mount.view-enter-from-right {
   @media (prefers-reduced-motion: no-preference) {
-    animation: viewEnter 360ms var(--ease-smooth);
+    animation: viewSlideFromRight 280ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+    will-change: transform, filter, opacity;
   }
 }
+.view-mount.view-enter-from-left {
+  @media (prefers-reduced-motion: no-preference) {
+    animation: viewSlideFromLeft 280ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+    will-change: transform, filter, opacity;
+  }
+}
+.view-mount.view-enter-subtle {
+  @media (prefers-reduced-motion: no-preference) {
+    animation: viewEnter 240ms var(--ease-smooth) forwards;
+  }
+}
+.view-exit-layer {
+  position: absolute;
+  top: calc(18px + env(safe-area-inset-top, 0px));
+  left: var(--s-5);
+  right: var(--s-5);
+  pointer-events: none;
+  z-index: 0;
+  will-change: transform, filter, opacity;
+}
+.view-exit-layer.is-exit-to-left {
+  animation: viewExitToLeft 260ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+.view-exit-layer.is-exit-to-right {
+  animation: viewExitToRight 260ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
 @keyframes viewEnter {
-  from { transform: translate3d(0, 8px, 0); }
-  to { transform: translate3d(0, 0, 0); }
+  from { opacity: 0.6; transform: translate3d(0, 6px, 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+@keyframes viewSlideFromRight {
+  0% { opacity: 0.55; transform: translate3d(44%, 0, 0); filter: blur(9px); }
+  65% { opacity: 0.96; filter: blur(1.5px); }
+  100% { opacity: 1; transform: translate3d(0, 0, 0); filter: blur(0px); }
+}
+@keyframes viewSlideFromLeft {
+  0% { opacity: 0.55; transform: translate3d(-44%, 0, 0); filter: blur(9px); }
+  65% { opacity: 0.96; filter: blur(1.5px); }
+  100% { opacity: 1; transform: translate3d(0, 0, 0); filter: blur(0px); }
+}
+@keyframes viewExitToLeft {
+  0% { opacity: 1; transform: translate3d(0, 0, 0); filter: blur(0px); }
+  100% { opacity: 0; transform: translate3d(-34%, 0, 0); filter: blur(10px); }
+}
+@keyframes viewExitToRight {
+  0% { opacity: 1; transform: translate3d(0, 0, 0); filter: blur(0px); }
+  100% { opacity: 0; transform: translate3d(34%, 0, 0); filter: blur(10px); }
 }
 
 @media (min-width: 960px) {
@@ -302,6 +353,11 @@ img { display: block; max-width: 100%; }
     flex: 1;
     max-width: 680px;
     padding: var(--s-6) 0 calc(var(--mini-height) + 56px);
+  }
+  .view-exit-layer {
+    top: var(--s-6);
+    left: 0;
+    right: 0;
   }
   .mobile-dock { display: none !important; }
 }
@@ -365,15 +421,16 @@ img { display: block; max-width: 100%; }
   position: fixed;
   left: 12px;
   right: 12px;
-  bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+  bottom: calc(3px + env(safe-area-inset-bottom, 0px));
   z-index: 40;
   max-width: 376px;
   margin: 0 auto;
-  transition: transform 420ms var(--ease-smooth);
+  transition: transform 380ms var(--ease-smooth);
 }
 .lg-dock {
-  --lg-radius: 999px;
-  border-radius: 999px;
+  --lg-radius: 9999px;
+  border-radius: 9999px;
+  overflow: hidden;
 }
 .dock-items {
   position: relative;
@@ -381,21 +438,26 @@ img { display: block; max-width: 100%; }
   grid-template-columns: repeat(5, 1fr);
   padding: 5px 5px;
   gap: 2px;
+  border-radius: 9999px;
+  overflow: hidden;
 }
 
-/* Physics-Driven Sliding Liquid Glass Active Capsule (springs.mjs) */
+/* Physics-Driven Sliding Liquid Glass Active Capsule (springs.mjs — GPU Transform Only) */
 .dock-pill-indicator {
   position: absolute;
   top: 5px;
   bottom: 5px;
   left: 0;
-  border-radius: 999px;
+  border-radius: 9999px;
   background: var(--gold-soft);
-  box-shadow: inset 0 0 0 1px rgba(10, 132, 255, 0.25);
+  box-shadow: inset 0 0 0 1px rgba(10, 132, 255, 0.28);
   opacity: 0;
   pointer-events: none;
   z-index: 0;
-  will-change: transform, width;
+  transform-origin: center center;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  will-change: transform;
 }
 
 .dock-btn {
@@ -996,7 +1058,8 @@ img { display: block; max-width: 100%; }
 .ig-post {
   display: flex;
   flex-direction: column;
-  padding: 14px 0 18px;
+  padding: 14px 0 20px;
+  overflow-x: clip;
   border-bottom: var(--hairline) solid var(--sep);
 }
 .ig-post-head {
@@ -1009,13 +1072,40 @@ img { display: block; max-width: 100%; }
 .post-author-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .post-author-name { font-weight: 800; font-size: 0.94rem; letter-spacing: -0.015em; }
 .post-meta-line {
-  font-size: 0.75rem;
+  font-size: 0.74rem;
   color: var(--label-2);
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   flex-wrap: wrap;
   font-weight: 600;
+  margin-top: 2px;
+}
+.source-pill-box {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 7px;
+  border: var(--hairline) solid var(--sep-strong);
+  background: var(--surface-2);
+  color: var(--label);
+  font-size: 0.71rem;
+  font-weight: 700;
+  line-height: 1.3;
+  transition: background 180ms ease, border-color 180ms ease, transform 150ms var(--ease-snappy);
+}
+a.source-pill-box:hover {
+  background: var(--gold-soft);
+  border-color: rgba(10, 132, 255, 0.45);
+  color: var(--gold-text);
+}
+a.source-pill-box:active {
+  transform: scale(0.96);
+}
+.source-pill-arrow {
+  font-size: 0.68rem;
+  opacity: 0.72;
 }
 .rank-tag {
   font-size: 0.66rem;
@@ -1027,31 +1117,53 @@ img { display: block; max-width: 100%; }
   letter-spacing: 0.01em;
 }
 
+/* Outward Ambilight Colored Shadow Projection (Crisp Unmasked Photo + Vibrant External Glow) */
 .ig-media {
   position: relative;
-  width: 100%;
-  overflow: hidden;
-  background: var(--surface-2);
+  width: calc(100% - 28px);
+  overflow: visible;
+  background: transparent;
   aspect-ratio: 4 / 3;
   user-select: none;
+  margin: 6px auto 14px;
 }
-@media (min-width: 960px) {
-  .ig-media { border-radius: 8px; }
+.ig-media-aura {
+  position: absolute;
+  inset: -24px -18px;
+  width: calc(100% + 36px);
+  height: calc(100% + 48px);
+  object-fit: cover;
+  filter: blur(34px) saturate(1.9) brightness(1.06);
+  opacity: light-dark(0.38, 0.56);
+  pointer-events: none;
+  z-index: 0;
+  -webkit-mask-image: radial-gradient(ellipse 74% 72% at 50% 52%, #000 32%, transparent 94%);
+  mask-image: radial-gradient(ellipse 74% 72% at 50% 52%, #000 32%, transparent 94%);
 }
-.ig-media img, .ig-media iframe {
+.ig-media-photo, .ig-media iframe {
+  position: relative;
+  z-index: 1;
   width: 100%;
   height: 100%;
   object-fit: cover;
   display: block;
   border: 0;
+  border-radius: 14px;
+  box-shadow: 0 2px 14px light-dark(rgba(0, 0, 0, 0.08), rgba(0, 0, 0, 0.45)),
+              0 0 0 1px light-dark(rgba(0, 0, 0, 0.05), rgba(255, 255, 255, 0.08));
+}
+@media (min-width: 960px) {
+  .ig-media { width: 100%; margin: 6px 0 14px; }
+  .ig-media-photo, .ig-media iframe { border-radius: 14px; }
 }
 .ig-heart-burst {
   position: absolute;
   inset: 0;
+  z-index: 3;
   display: grid;
   place-items: center;
   pointer-events: none;
-  font-size: 4.4rem;
+  font-size: 4.2rem;
   opacity: 0;
   transform: scale(0.4);
   filter: drop-shadow(0 8px 24px rgba(0, 0, 0, 0.45));
@@ -1076,36 +1188,66 @@ img { display: block; max-width: 100%; }
   font-family: var(--font-serif);
   font-size: 1.12rem;
   line-height: 1.55;
-}
-@media (min-width: 960px) {
-  .ig-quote-canvas { border-radius: 8px; }
+  border-radius: 14px;
 }
 
 .ig-actions {
+  position: relative;
+  z-index: 2;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 6px 8px 2px;
+  padding: 4px 10px 4px;
 }
 .ig-caption {
-  padding: 2px var(--s-4) 0;
+  padding: 6px var(--s-5) 2px;
   display: flex;
   flex-direction: column;
+  align-items: center;
+  text-align: center;
   gap: 5px;
 }
 .post-title {
   font-family: var(--font-rounded);
-  font-size: 1.04rem;
+  font-size: 1.14rem;
   font-weight: 800;
-  line-height: 1.26;
-  letter-spacing: -0.02em;
+  line-height: 1.24;
+  letter-spacing: -0.022em;
   margin: 0;
+  text-align: center;
+  color: var(--label);
+  background: linear-gradient(
+    105deg,
+    light-dark(#0F172A, #F8FAFC) 0%,
+    light-dark(#0F172A, #F8FAFC) 35%,
+    light-dark(#007AFF, #A2D6FF) 47%,
+    light-dark(#4DB2FF, #FFFFFF) 52%,
+    light-dark(#0F172A, #F8FAFC) 65%,
+    light-dark(#0F172A, #F8FAFC) 100%
+  );
+  background-size: 260% 100%;
+  background-position: 115% 0;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 1px 12px light-dark(rgba(0, 122, 255, 0.16), rgba(116, 192, 255, 0.34)));
+}
+@media (prefers-reduced-motion: no-preference) {
+  .post-title {
+    animation: titleLightSweep 4.8s ease-in-out infinite;
+  }
+}
+@keyframes titleLightSweep {
+  0%, 35% { background-position: 115% 0; }
+  65%, 100% { background-position: -35% 0; }
 }
 .post-excerpt {
-  font-size: 0.91rem;
-  line-height: 1.48;
+  font-size: 0.76rem;
+  line-height: 1.44;
   color: var(--label-2);
-  margin: 0;
+  margin: 0 auto;
+  text-align: center;
+  max-width: 88%;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -1113,8 +1255,9 @@ img { display: block; max-width: 100%; }
 }
 .video-duration-pill {
   position: absolute;
-  bottom: 10px;
-  right: 10px;
+  bottom: 12px;
+  right: 14px;
+  z-index: 2;
   background: rgba(0, 0, 0, 0.78);
   color: #FFFFFF;
   font-size: 0.74rem;
@@ -1125,8 +1268,10 @@ img { display: block; max-width: 100%; }
 .video-play-overlay {
   position: absolute;
   inset: 0;
+  z-index: 2;
   border: none;
-  background: linear-gradient(to top, rgba(0, 0, 0, 0.45), transparent 55%);
+  border-radius: 14px;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.42), transparent 55%);
   display: grid;
   place-items: center;
   color: #FFFFFF;
@@ -1147,11 +1292,13 @@ img { display: block; max-width: 100%; }
 .post-scripture-pill {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
   font-family: var(--font-serif);
   font-style: italic;
-  font-size: 0.84rem;
+  font-size: 0.80rem;
   color: var(--gold-text);
+  margin-top: 2px;
 }
 
 .post-act-group { display: flex; align-items: center; gap: 4px; }
@@ -1161,21 +1308,94 @@ img { display: block; max-width: 100%; }
   align-items: center;
   gap: 6px;
   min-height: 44px;
-  padding: 0 11px;
-  border-radius: 8px;
+  padding: 0 12px;
+  border-radius: 999px;
   border: none;
   background: transparent;
   color: var(--label-2);
   font-size: 0.84rem;
   font-weight: 700;
-  transition: color 200ms ease, background 200ms ease, transform var(--dur-bouncy) var(--ease-bouncy);
+  overflow: visible;
+  transition: color 180ms ease, background 180ms ease, transform 240ms cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 .act-btn:hover { background: var(--surface-2); color: var(--label); }
-.act-btn.is-active { color: var(--gold-text); background: var(--gold-soft); }
-.act-btn.is-pop {
-  @media (prefers-reduced-motion: no-preference) {
-    animation: candlePop 480ms var(--ease-bouncy);
-  }
+.act-btn.is-active {
+  color: var(--gold-text);
+  background: var(--gold-soft);
+  box-shadow: inset 0 0 0 1px rgba(10, 132, 255, 0.24);
+}
+.act-btn .amen-emoji {
+  display: inline-block;
+  transform-origin: center bottom;
+}
+.act-btn .amen-count {
+  display: inline-block;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Tactile In-Place Dopamine Burst Strictly Confined to the Amén Button */
+.act-btn.is-dopamine {
+  animation: amenBtnPop 540ms cubic-bezier(0.22, 1.48, 0.36, 1);
+}
+.act-btn.is-dopamine .amen-emoji {
+  animation: amenEmojiKick 540ms cubic-bezier(0.22, 1.55, 0.36, 1);
+}
+.act-btn.is-dopamine .amen-count {
+  animation: amenCountPop 460ms cubic-bezier(0.22, 1.45, 0.36, 1);
+}
+.act-btn.is-dopamine::before {
+  content: "";
+  position: absolute;
+  inset: -2px;
+  border-radius: 999px;
+  border: 2px solid #0A84FF;
+  pointer-events: none;
+  animation: amenRingRipple 560ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+.act-btn.is-dopamine::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  pointer-events: none;
+  box-shadow:
+    -18px -12px 0 0 #0A84FF,
+    18px -12px 0 0 #66B2FF,
+    -24px 2px 0 0 #66B2FF,
+    24px 2px 0 0 #0A84FF,
+    -12px 14px 0 0 #38A1FF,
+    12px 14px 0 0 #38A1FF;
+  animation: amenSparks 520ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+@keyframes amenBtnPop {
+  0% { transform: scale(1); }
+  22% { transform: scale(1.16); background: rgba(10, 132, 255, 0.28); }
+  52% { transform: scale(0.94); }
+  78% { transform: scale(1.05); }
+  100% { transform: scale(1); }
+}
+@keyframes amenEmojiKick {
+  0% { transform: scale(1) rotate(0deg); }
+  30% { transform: scale(1.42) translateY(-3px) rotate(-12deg); }
+  62% { transform: scale(0.95) rotate(6deg); }
+  100% { transform: scale(1) rotate(0deg); }
+}
+@keyframes amenCountPop {
+  0% { transform: translateY(0) scale(1); color: inherit; }
+  35% { transform: translateY(-2px) scale(1.24); color: #66B2FF; }
+  100% { transform: translateY(0) scale(1); color: inherit; }
+}
+@keyframes amenRingRipple {
+  0% { transform: scale(0.88); opacity: 0.95; box-shadow: 0 0 12px rgba(10, 132, 255, 0.55); }
+  100% { transform: scale(1.26); opacity: 0; box-shadow: 0 0 24px rgba(10, 132, 255, 0); }
+}
+@keyframes amenSparks {
+  0% { opacity: 0.95; transform: translate(-50%, -50%) scale(0.35); }
+  45% { opacity: 1; transform: translate(-50%, -50%) scale(1.05); }
+  100% { opacity: 0; transform: translate(-50%, -50%) scale(1.38); }
 }
 
 /* ==========================================================================
@@ -2110,3 +2330,170 @@ body.is-vids-mode .main-stage {
 
 /* Credo official logo mark */
 .brand-logo { display: block; flex-shrink: 0; object-fit: contain; filter: drop-shadow(0 2px 6px rgba(2, 78, 174, 0.28)); }
+
+/* Story Video Ring Badge & Story Video Stage */
+.story-ring.is-video {
+  background: linear-gradient(145deg, #0A84FF, #5AC8FA, #0051D5);
+}
+.story-vid-badge {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #0A84FF;
+  border: 2px solid var(--bg);
+  color: #FFFFFF;
+  display: grid;
+  place-items: center;
+  font-size: 0.56rem;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+}
+.story-video-wrap {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  aspect-ratio: 16 / 9;
+  z-index: 2;
+  background: #0B1220;
+  border-radius: 16px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 22px 54px rgba(0, 0, 0, 0.72);
+  display: grid;
+  place-items: center;
+}
+.story-video-frame, .story-video-el {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  object-fit: cover;
+}
+.story-audio-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 11px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  background: rgba(0, 0, 0, 0.54);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  color: #FFFFFF;
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+
+/* ==========================================================================
+   VIEW: EXPLORAR (Search, Live Radios/TV Filter, Clergy, Parishes & Vids)
+   ========================================================================== */
+.explore-search-row {
+  margin-bottom: var(--s-3);
+}
+.explore-filter-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding: 2px 0 var(--s-4);
+}
+.explore-filter-strip::-webkit-scrollbar { display: none; }
+.explore-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  min-height: 36px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: var(--hairline) solid var(--sep-strong);
+  background: var(--surface-2);
+  color: var(--label-2);
+  font-size: 0.82rem;
+  font-weight: 700;
+  transition: background 180ms ease, color 180ms ease, border-color 180ms ease, transform 160ms var(--ease-snappy);
+}
+.explore-pill:active { transform: scale(0.95); }
+.explore-pill.is-active {
+  background: var(--gold-bright);
+  border-color: var(--gold-bright);
+  color: #FFFFFF;
+  box-shadow: 0 4px 14px rgba(10, 132, 255, 0.28);
+}
+.explore-quick-live {
+  display: flex;
+  gap: 12px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding: 2px 0 var(--s-4);
+}
+.explore-quick-live::-webkit-scrollbar { display: none; }
+.explore-live-chip {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px 8px 8px;
+  border-radius: 14px;
+  border: var(--hairline) solid var(--sep);
+  background: var(--surface);
+  text-align: left;
+  transition: background 180ms ease, transform 180ms var(--ease-snappy);
+}
+.explore-live-chip.is-playing {
+  background: var(--gold-soft);
+  border-color: rgba(10, 132, 255, 0.45);
+}
+.explore-live-chip img {
+  width: 42px;
+  height: 42px;
+  border-radius: 9px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+.explore-vids-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+}
+.explore-vid-card {
+  position: relative;
+  border-radius: 12px;
+  overflow: hidden;
+  border: var(--hairline) solid var(--sep);
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  text-align: left;
+  padding: 0;
+}
+.explore-vid-thumb {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  width: 100%;
+  background: #000;
+  overflow: hidden;
+}
+.explore-vid-thumb img, .explore-vid-thumb iframe {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border: 0;
+}
+.explore-vid-meta {
+  padding: 9px 10px 10px;
+}
+.explore-vid-meta strong {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: 0.8rem;
+  line-height: 1.3;
+  margin-bottom: 3px;
+}
+

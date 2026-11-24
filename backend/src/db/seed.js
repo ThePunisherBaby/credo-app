@@ -1428,6 +1428,7 @@ async function seedCredoEcosystem() {
   );
   const domUnitId = domUnitRes.rows[0]?.id || null;
   const ceoPassHash = await bcrypt.hash('Credo2026!', 10);
+  const ceoBio = 'Sacerdote católico ordenado el 26 de enero de 1996 en San Pedro Apóstol, Pedro García (Santiago, RD), por imposición de manos y unción de Mons. José Dolores Grullón Estrella. CEO de Credo y propietario de Aire 96 FM (aire96fm.com.do) y Reflexionando la Palabra (reflexionandolapalabra.com). Con mente y corazón de pastor y alma misionera, anunciando la Abundante Redención en valores.';
   const ceoLinks = JSON.stringify([
     {
       label: 'Aire 96 FM',
@@ -1439,22 +1440,27 @@ async function seedCredoEcosystem() {
       url: 'https://reflexionandolapalabra.com',
       role: 'Propietario & Director · Evangelio Diario',
     },
+    {
+      label: 'Amigo del Hogar · 25 años de ministerio',
+      url: 'https://www.amigodelhogar.net/2021/01/el-padre-domingo-25-anos-de-ministerio.html',
+      role: 'Testimonio Sacerdotal · Anunciando la Abundante Redención',
+    },
   ]);
 
   const ceoRes = await pool.query(
     `INSERT INTO users (
        email, password_hash, username, full_name, title_prefix,
        ecclesiastical_rank, primary_unit_id, current_office_title,
-       bio, motto, country_code, languages, preferred_locale,
+       bio, motto, ordination_date, country_code, languages, preferred_locale,
        avatar_color, avatar_url, verification_status, verification_note,
        is_admin, is_ceo, is_credo_plus, credo_plus_plan, website_links
      ) VALUES (
        'padre.domingo@credo.org', $1, 'p_domingo_vasquez', 'Domingo Vásquez', 'P.',
        'priest', $2, 'CEO de Credo · Propietario de Aire 96 FM y Reflexionando la Palabra',
-       'Sacerdote católico, CEO de Credo y propietario de Aire 96 FM (aire96fm.com.do) y Reflexionando la Palabra (reflexionandolapalabra.com). Comprometido con la evangelización digital, la radio católica en vivo y la cercanía pastoral para toda la Iglesia.',
-       'Llevando la Palabra de Dios al aire y a cada corazón',
-       'DO', ARRAY['es','en'], 'es',
-       '#0F1E36', 'https://aire96fm.com.do/wp-content/themes/aire96-liquid/assets/img/aire96-logo-256.png',
+       $4,
+       'Anunciando la Abundante Redención en valores y en la Palabra',
+       '1996-01-26', 'DO', ARRAY['es','en'], 'es',
+       '#0F1E36', '/icons/p_domingo_vasquez.png',
        'verified', 'CEO & Fundador verificado',
        TRUE, TRUE, TRUE, 'annual', $3::jsonb
      )
@@ -1464,6 +1470,7 @@ async function seedCredoEcosystem() {
        current_office_title = EXCLUDED.current_office_title,
        bio = EXCLUDED.bio,
        motto = EXCLUDED.motto,
+       ordination_date = EXCLUDED.ordination_date,
        avatar_url = EXCLUDED.avatar_url,
        verification_status = 'verified',
        is_admin = TRUE,
@@ -1472,13 +1479,13 @@ async function seedCredoEcosystem() {
        credo_plus_plan = 'annual',
        website_links = EXCLUDED.website_links
      RETURNING id`,
-    [ceoPassHash, domUnitId, ceoLinks]
+    [ceoPassHash, domUnitId, ceoLinks, ceoBio]
   );
   const ceoId = ceoRes.rows[0].id;
 
   // Ensure CEO has a pinned welcome post featuring Aire 96 FM & Reflexionando la Palabra
   const ceoPostPhoto = 'https://images.unsplash.com/photo-1548625149-fc4a29cf7092?auto=format&fit=crop&w=1080&q=80';
-  const ceoStoryPhoto = 'https://images.unsplash.com/photo-1507692049790-de58290a4334?auto=format&fit=crop&w=900&q=80';
+  const ceoStoryPhoto = '/icons/p_domingo_vasquez.png';
   const { rows: ceoPostCheck } = await pool.query(
     'SELECT COUNT(*)::int AS cnt FROM posts WHERE author_id = $1',
     [ceoId]
@@ -1504,7 +1511,7 @@ async function seedCredoEcosystem() {
     );
   }
 
-  // Ensure CEO has an official story
+  // Ensure CEO has an official portrait/ministry story (never audio radio)
   const { rows: ceoStoryCheck } = await pool.query(
     'SELECT COUNT(*)::int AS cnt FROM stories WHERE author_id = $1 AND expires_at > NOW()',
     [ceoId]
@@ -1515,16 +1522,16 @@ async function seedCredoEcosystem() {
        VALUES (
          $1, $2,
          $3,
-         '¡Aire 96 FM está EN VIVO ahora mismo en Credo! Escucha nuestra señal oficial y acompaña la Palabra cada día.',
+         'Seguimos Reflexionando la Palabra y anunciando la Abundante Redención en valores. Un hombre con mente y corazón de pastor y alma misionera.',
          'Sal 19, 5',
-         'linear-gradient(145deg,#0F1E36,#3D2C0A)',
+         'linear-gradient(145deg,#0B1424,#13233E)',
          NOW() + INTERVAL '30 days'
        )`,
       [ceoId, domUnitId, ceoStoryPhoto]
     );
   } else {
     await pool.query(
-      `UPDATE stories SET image_url = $1 WHERE author_id = $2 AND image_url LIKE '%aire96fm.com.do/wp-content/uploads/%'`,
+      `UPDATE stories SET image_url = $1 WHERE author_id = $2`,
       [ceoStoryPhoto, ceoId]
     );
   }
@@ -1948,6 +1955,7 @@ async function purgeMockDataAndSyncReal() {
   );
   const domUnitId = domUnitRes.rows[0]?.id || null;
   const ceoPassHash = await bcrypt.hash('Credo2026!', 10);
+  const ceoBio = 'Sacerdote católico ordenado el 26 de enero de 1996 en San Pedro Apóstol, Pedro García (Santiago, RD), por imposición de manos y unción de Mons. José Dolores Grullón Estrella. CEO de Credo y propietario de Aire 96 FM (aire96fm.com.do) y Reflexionando la Palabra (reflexionandolapalabra.com). Con mente y corazón de pastor y alma misionera, anunciando la Abundante Redención en valores.';
   const ceoLinks = JSON.stringify([
     {
       label: 'Aire 96 FM',
@@ -1959,22 +1967,29 @@ async function purgeMockDataAndSyncReal() {
       url: 'https://reflexionandolapalabra.com',
       role: 'Propietario & Director · Evangelio Diario',
     },
+    {
+      label: 'Amigo del Hogar · 25 años de ministerio',
+      url: 'https://www.amigodelhogar.net/2021/01/el-padre-domingo-25-anos-de-ministerio.html',
+      role: 'Testimonio Sacerdotal · Anunciando la Abundante Redención',
+    },
   ]);
+
+  await pool.query(`UPDATE users SET is_ceo = FALSE WHERE username <> 'p_domingo_vasquez'`);
 
   await pool.query(
     `INSERT INTO users (
        email, password_hash, username, full_name, title_prefix,
        ecclesiastical_rank, primary_unit_id, current_office_title,
-       bio, motto, country_code, languages, preferred_locale,
+       bio, motto, ordination_date, country_code, languages, preferred_locale,
        avatar_color, avatar_url, verification_status, verification_note,
        is_admin, is_ceo, is_credo_plus, credo_plus_plan, website_links
      ) VALUES (
        'padre.domingo@credo.org', $1, 'p_domingo_vasquez', 'Domingo Vásquez', 'P.',
        'priest', $2, 'CEO de Credo · Propietario de Aire 96 FM y Reflexionando la Palabra',
-       'Sacerdote católico, CEO de Credo y propietario de Aire 96 FM (aire96fm.com.do) y Reflexionando la Palabra (reflexionandolapalabra.com).',
-       'Llevando la Palabra de Dios al aire y a cada corazón',
-       'DO', ARRAY['es'], 'es',
-       '#0F1E36', 'https://aire96fm.com.do/wp-content/themes/aire96-liquid/assets/img/aire96-logo-256.png',
+       $4,
+       'Anunciando la Abundante Redención en valores y en la Palabra',
+       '1996-01-26', 'DO', ARRAY['es'], 'es',
+       '#0F1E36', '/icons/p_domingo_vasquez.png',
        'verified', 'CEO & Fundador verificado',
        TRUE, TRUE, TRUE, 'annual', $3::jsonb
      )
@@ -1984,6 +1999,7 @@ async function purgeMockDataAndSyncReal() {
        current_office_title = EXCLUDED.current_office_title,
        bio = EXCLUDED.bio,
        motto = EXCLUDED.motto,
+       ordination_date = EXCLUDED.ordination_date,
        avatar_url = EXCLUDED.avatar_url,
        verification_status = 'verified',
        is_admin = TRUE,
@@ -1991,7 +2007,15 @@ async function purgeMockDataAndSyncReal() {
        is_credo_plus = TRUE,
        credo_plus_plan = 'annual',
        website_links = EXCLUDED.website_links`,
-    [ceoPassHash, domUnitId, ceoLinks]
+    [ceoPassHash, domUnitId, ceoLinks, ceoBio]
+  );
+
+  await pool.query(
+    `UPDATE stories
+        SET image_url = '/icons/p_domingo_vasquez.png'
+      WHERE author_id = (SELECT id FROM users WHERE username = 'p_domingo_vasquez' LIMIT 1)
+        AND COALESCE(video_url, '') = ''
+        AND COALESCE(youtube_id, '') = ''`
   );
 
   // 6. Upsert ONLY real live radio channels

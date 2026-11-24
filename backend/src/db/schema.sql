@@ -318,3 +318,6 @@ CREATE TABLE IF NOT EXISTS rosary_audio_tracks (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_rosary_tracks_slot ON rosary_audio_tracks(slot_type, created_at DESC);
+
+ALTER TABLE stories ADD COLUMN IF NOT EXISTS video_url TEXT DEFAULT '';
+ALTER TABLE stories ADD COLUMN IF NOT EXISTS youtube_id TEXT DEFAULT '';

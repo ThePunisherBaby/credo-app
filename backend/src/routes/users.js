@@ -61,6 +61,7 @@ router.get('/', async (req, res) => {
          FROM users u
         ${whereSql}
         ORDER BY
+          COALESCE(u.is_ceo, FALSE) DESC,
           CASE u.ecclesiastical_rank
             WHEN 'pope' THEN 1
             WHEN 'cardinal' THEN 2

@@ -181,7 +181,7 @@ export async function mount({ root, app, signal, route, params }) {
                   <a href="#/unit/${u.id}" class="entity-row">
                     <span class="avatar" style="--av-bg:${app.esc(u.accent_color || '#0F1E36')}">⛪</span>
                     <div class="entity-main">
-                      <div class="entity-title">${app.esc(u.name)} <span class="verified-check">✓</span></div>
+                      <div class="entity-title">${app.esc(u.name)}</div>
                       <div class="entity-sub">${app.esc(u.city || '')}${u.country_name ? `, ${app.esc(u.country_name)}` : ''}</div>
                     </div>
                     <span class="t-caption">›</span>
@@ -201,18 +201,23 @@ export async function mount({ root, app, signal, route, params }) {
         }
         resultsEl.innerHTML =
           users.length === 0
-            ? `<div class="empty-box">No se encontraron cuentas verificadas.</div>`
+            ? `<div class="empty-box">No se encontraron cuentas oficiales.</div>`
             : users
                 .map((u) => {
                   const rank = d.ranks[u.ecclesiastical_rank] || u.ecclesiastical_rank;
                   const loc = u.lineage?.[u.lineage.length - 1]?.name || '';
+                  const avUrl = u.avatar_url && u.avatar_url.includes('aire96fm.com.do')
+                    ? `/api/v1/media/proxy?url=${encodeURIComponent(u.avatar_url)}`
+                    : u.avatar_url;
                   return `
                     <a href="#/user/${u.id}" class="entity-row">
-                      <span class="avatar" style="--av-bg:${app.esc(u.avatar_color || '#0F1E36')}">${app.initials(u.full_name)}</span>
+                      <span class="avatar" style="--av-bg:${app.esc(u.avatar_color || '#0F1E36')}">
+                        ${avUrl ? `<img src="${app.esc(avUrl)}" alt="" />` : app.initials(u.full_name)}
+                      </span>
                       <div class="entity-main">
                         <div class="entity-title">
                           <span>${app.esc(u.title_prefix ? `${u.title_prefix} ` : '')}${app.esc(u.full_name)}</span>
-                          <span class="verified-check">✓</span>
+                          ${u.is_ceo ? '<span class="rank-tag">CEO</span>' : ''}
                         </div>
                         <div class="entity-sub">${app.esc(rank)}${loc ? ` · ${app.esc(loc)}` : ''}</div>
                       </div>
@@ -383,9 +388,11 @@ async function mountUnitDetail({ root, app, signal, unitId }) {
         <div class="entity-list">
           ${members.map((m) => `
             <a href="#/user/${m.id}" class="entity-row">
-              <span class="avatar" style="--av-bg:${app.esc(m.avatar_color || '#0F1E36')}">${app.initials(m.full_name)}</span>
+              <span class="avatar" style="--av-bg:${app.esc(m.avatar_color || '#0F1E36')}">
+                ${m.avatar_url ? `<img src="${app.esc(m.avatar_url)}" alt="" />` : app.initials(m.full_name)}
+              </span>
               <div class="entity-main">
-                <div class="entity-title">${app.esc(m.title_prefix ? `${m.title_prefix} ` : '')}${app.esc(m.full_name)} ${m.can_publish ? '<span class="verified-check">✓</span>' : ''}</div>
+                <div class="entity-title">${app.esc(m.title_prefix ? `${m.title_prefix} ` : '')}${app.esc(m.full_name)} ${m.is_ceo ? '<span class="rank-tag">CEO</span>' : ''}</div>
                 <div class="entity-sub">${app.esc(m.current_office_title || d.ranks[m.ecclesiastical_rank] || '')}</div>
               </div>
               <span class="t-caption">›</span>
@@ -439,7 +446,7 @@ async function mountUserProfile({ root, app, signal, userId }) {
     const hasAireRadio = u.is_ceo || u.username === 'p_domingo_vasquez';
 
     root.innerHTML = `
-      <div style="margin-bottom:12px"><a href="#/parishes" class="btn btn-sm btn-soft">← ${app.esc(d.parishes.title)}</a></div>
+      <div style="margin-bottom:12px"><a href="#/explore" class="btn btn-sm btn-soft">← ${app.esc(d.nav.explore || 'Explorar')}</a></div>
       <article class="card" style="display:flex;flex-direction:column;gap:14px;margin-bottom:18px">
         <div style="display:flex;align-items:center;gap:14px">
           <span class="avatar" style="--av-sz:68px;--av-bg:${app.esc(u.avatar_color || '#0F1E36')}">
@@ -448,7 +455,6 @@ async function mountUserProfile({ root, app, signal, userId }) {
           <div style="flex:1;min-width:0">
             <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
               <h1 class="t-title-2">${app.esc(u.title_prefix ? `${u.title_prefix} ` : '')}${app.esc(u.full_name)}</h1>
-              ${u.can_publish ? '<span class="verified-check">✓</span>' : ''}
               ${u.is_ceo ? '<span class="rank-tag" style="background:#0A84FF;color:#FFFFFF;font-weight:800">CEO · Credo</span>' : ''}
             </div>
             <span class="rank-tag" style="margin-top:4px;display:inline-block">${app.esc(d.ranks[u.ecclesiastical_rank] || u.ecclesiastical_rank)}</span>
@@ -466,7 +472,7 @@ async function mountUserProfile({ root, app, signal, userId }) {
                 <a href="${app.esc(lk.url)}" target="_blank" rel="noopener noreferrer" class="entity-row" style="padding:10px 12px">
                   <span class="avatar" style="--av-sz:38px;--av-bg:#0F1E36">🔗</span>
                   <div class="entity-main">
-                    <div class="entity-title">${app.esc(lk.label)} <span class="verified-check">✓</span></div>
+                    <div class="entity-title">${app.esc(lk.label)}</div>
                     <div class="entity-sub">${app.esc(lk.role || lk.url)} · ${app.esc(lk.url.replace(/^https?:\/\//, ''))}</div>
                   </div>
                   <span class="t-caption">↗</span>

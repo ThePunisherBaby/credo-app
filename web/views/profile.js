@@ -2,7 +2,7 @@
 
 function proxySrc(url) {
   if (!url) return '';
-  if (url.includes('aire96fm.com.do') || url.includes('reflexionandolapalabra.com')) {
+  if (/^https?:\/\/(aire96fm\.com\.do|reflexionandolapalabra\.com)/i.test(url)) {
     return `/api/v1/media/proxy?url=${encodeURIComponent(url)}`;
   }
   return url;
@@ -116,11 +116,11 @@ function renderAuthGate({ root, app, signal }) {
 
 function renderTilePreview(p, app) {
   if (p.image_url) {
-    return `<img src="${app.esc(proxySrc(p.image_url))}" alt="${app.esc(p.title || '')}" loading="lazy" />`;
+    return `<img src="${app.esc(proxySrc(p.image_url))}" alt="${app.esc(p.title || '')}" />`;
   }
   if (p.youtube_id) {
     return `
-      <img src="https://i.ytimg.com/vi/${app.esc(p.youtube_id)}/hqdefault.jpg" alt="${app.esc(p.title || '')}" loading="lazy" />
+      <img src="https://i.ytimg.com/vi/${app.esc(p.youtube_id)}/hqdefault.jpg" alt="${app.esc(p.title || '')}" />
       <span style="position:absolute;top:6px;right:6px;background:rgba(0,0,0,0.62);color:#fff;width:22px;height:22px;border-radius:6px;display:grid;place-items:center">
         <svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
       </span>`;
@@ -235,7 +235,6 @@ export async function mount({ root, app, signal }) {
       <div class="ig-prof-top">
         <div class="ig-prof-username">
           <span>@${app.esc(profile.username || 'credo')}</span>
-          ${profile.can_publish ? '<span class="verified-check" aria-label="Verificado">✓</span>' : ''}
           ${profile.is_ceo ? '<span class="rank-tag" style="background:#0A84FF;color:#FFFFFF;font-size:0.68rem">CEO</span>' : ''}
         </div>
         <div class="ig-prof-actions">
@@ -274,6 +273,14 @@ export async function mount({ root, app, signal }) {
         <span class="t-footnote">${app.esc(profile.current_office_title || d.ranks[profile.ecclesiastical_rank] || 'Miembro de Credo')}</span>
         ${profile.bio ? `<p style="margin:4px 0 0;font-size:0.88rem;line-height:1.42">${app.esc(profile.bio)}</p>` : ''}
         ${profile.motto ? `<p style="margin:2px 0 0;font-size:0.84rem;font-style:italic;color:var(--gold-text)">«${app.esc(profile.motto)}»</p>` : ''}
+        ${Array.isArray(profile.website_links) && profile.website_links.length > 0 ? `
+          <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">
+            ${profile.website_links.map((lk) => `
+              <a href="${app.esc(lk.url)}" target="_blank" rel="noopener noreferrer" class="source-pill-box">
+                <span>🔗 ${app.esc(lk.label)}</span>
+                <span class="source-pill-arrow" aria-hidden="true">↗</span>
+              </a>`).join('')}
+          </div>` : ''}
       </div>
 
       <div class="ig-prof-cta">
