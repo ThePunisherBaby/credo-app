@@ -431,106 +431,184 @@ async function mountUnitDetail({ root, app, signal, unitId }) {
   return { cleanup() {} };
 }
 
+function proxyProfileMedia(url) {
+  if (!url) return '';
+  if (/^https?:\/\/(aire96fm\.com\.do|reflexionandolapalabra\.com)/i.test(url)) {
+    return `/api/v1/media/proxy?url=${encodeURIComponent(url)}`;
+  }
+  return url;
+}
+
+function renderPublicTile(p, app, idx = 0) {
+  const lazyAttr = idx < 6 ? '' : ' loading="lazy"';
+  if (p.image_url) {
+    return `<img src="${app.esc(proxyProfileMedia(p.image_url))}" alt="${app.esc(p.title || '')}"${lazyAttr} />`;
+  }
+  if (p.youtube_id) {
+    return `
+      <img src="https://i.ytimg.com/vi/${app.esc(p.youtube_id)}/hqdefault.jpg" alt="${app.esc(p.title || '')}"${lazyAttr} />
+      <span style="position:absolute;top:6px;right:6px;background:rgba(0,0,0,0.62);color:#fff;width:22px;height:22px;border-radius:6px;display:grid;place-items:center">
+        <svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+      </span>`;
+  }
+  return `<div class="ig-tile-text">${app.esc(p.title || p.content || '')}</div>`;
+}
+
 async function mountUserProfile({ root, app, signal, userId }) {
   const d = app.dict();
-  root.innerHTML = `<div class="card"><div class="skeleton" style="height:220px"></div></div>`;
+  root.innerHTML = `<div class="skeleton" style="height:260px"></div>`;
   try {
     const [profRes, postsRes] = await Promise.all([
       app.api(`/api/v1/users/${userId}`, { signal }),
-      app.api(`/api/v1/posts?author_id=${userId}&limit=12`, { signal }),
+      app.api(`/api/v1/posts?author_id=${userId}&limit=36`, { signal }),
     ]);
     const u = profRes.user;
     const assignments = profRes.assignments || [];
     const posts = postsRes.posts || [];
+    const vids = posts.filter((p) => p.media_kind === 'video' || Boolean(p.youtube_id));
     const links = Array.isArray(u.website_links) ? u.website_links : [];
     const hasAireRadio = u.is_ceo || u.username === 'p_domingo_vasquez';
+    const avUrl = proxyProfileMedia(u.avatar_url);
+    let activeTab = 'posts';
+
+    const openPublicPostSheet = (p) => {
+      app.openModal(
+        p.title || `${u.title_prefix ? `${u.title_prefix} ` : ''}${u.full_name}`,
+        `
+        <div style="display:flex;flex-direction:column;gap:12px">
+          ${p.image_url ? `<img src="${app.esc(proxyProfileMedia(p.image_url))}" alt="" style="width:100%;border-radius:12px;max-height:360px;object-fit:cover" />` : ''}
+          ${p.youtube_id ? `<div style="aspect-ratio:16/9;border-radius:12px;overflow:hidden;background:#000"><iframe src="https://www.youtube.com/embed/${app.esc(p.youtube_id)}?playsinline=1&rel=0" style="width:100%;height:100%;border:0" allowfullscreen></iframe></div>` : ''}
+          ${p.scripture_ref ? `<span class="post-scripture-pill">📖 ${app.esc(p.scripture_ref)}</span>` : ''}
+          <p style="margin:0;font-size:0.95rem;line-height:1.58;white-space:pre-line">${app.esc(p.content || '')}</p>
+          ${p.source_url ? `<a href="${app.esc(p.source_url)}" target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-soft" style="align-self:flex-start">Leer en ${app.esc(p.channel_name || 'fuente oficial')} ↗</a>` : ''}
+        </div>
+        `
+      );
+    };
+
+    const renderPublicBody = () => {
+      const container = root.querySelector('#pubProfGrid');
+      if (!container) return;
+      if (activeTab === 'lineage') {
+        container.className = '';
+        container.innerHTML = `
+          <div class="entity-list" style="margin-top:12px">
+            ${assignments.map((a) => `
+              <a href="#/unit/${a.unit_id}" class="entity-row">
+                <div class="entity-main">
+                  <div class="entity-title">${app.esc(a.role_title)}</div>
+                  <div class="entity-sub">${app.esc(a.unit_name || '')}${a.start_year ? ` · ${a.start_year}` : ''}${a.is_current ? ' — Presente' : a.end_year ? ` — ${a.end_year}` : ''}</div>
+                </div>
+                <span class="t-caption">›</span>
+              </a>`).join('')}
+          </div>`;
+        return;
+      }
+      const list = activeTab === 'vids' ? vids : posts;
+      if (list.length === 0) {
+        container.className = '';
+        container.innerHTML = `<div class="empty-box" style="margin-top:12px">${activeTab === 'vids' ? 'Sin videos publicados todavía.' : 'Sin publicaciones todavía.'}</div>`;
+        return;
+      }
+      container.className = 'ig-prof-grid';
+      container.innerHTML = list.map((p, idx) => `
+        <button type="button" class="ig-prof-tile" data-pub-tile="${idx}" aria-label="${app.esc(p.title || 'Publicación')}">
+          ${renderPublicTile(p, app, idx)}
+        </button>
+      `).join('');
+      container.querySelectorAll('[data-pub-tile]').forEach((btn) => {
+        btn.addEventListener('click', () => openPublicPostSheet(list[Number(btn.dataset.pubTile)]));
+      });
+    };
 
     root.innerHTML = `
-      <div style="margin-bottom:12px"><a href="#/explore" class="btn btn-sm btn-soft">← ${app.esc(d.nav.explore || 'Explorar')}</a></div>
-      <article class="card" style="display:flex;flex-direction:column;gap:14px;margin-bottom:18px">
-        <div style="display:flex;align-items:center;gap:14px">
-          <span class="avatar" style="--av-sz:68px;--av-bg:${app.esc(u.avatar_color || '#0F1E36')}">
-            ${u.avatar_url ? `<img src="${app.esc(u.avatar_url)}" alt="${app.esc(u.full_name)}" />` : app.initials(u.full_name)}
-          </span>
-          <div style="flex:1;min-width:0">
-            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-              <h1 class="t-title-2">${app.esc(u.title_prefix ? `${u.title_prefix} ` : '')}${app.esc(u.full_name)}</h1>
-              ${u.is_ceo ? '<span class="rank-tag" style="background:#0A84FF;color:#FFFFFF;font-weight:800">CEO · Credo</span>' : ''}
-            </div>
-            <span class="rank-tag" style="margin-top:4px;display:inline-block">${app.esc(d.ranks[u.ecclesiastical_rank] || u.ecclesiastical_rank)}</span>
-            ${u.current_office_title ? `<p class="t-footnote" style="margin-top:4px">${app.esc(u.current_office_title)}</p>` : ''}
+      <header class="ig-prof-top">
+        <div class="ig-prof-username">
+          <a href="#/explore" class="ig-icon-btn" style="width:34px;height:34px;flex-shrink:0" aria-label="Volver">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+          </a>
+          <span>@${app.esc(u.username || 'credo')}</span>
+          ${u.is_ceo ? '<span class="rank-tag" style="background:#0A84FF;color:#FFFFFF;font-size:0.66rem;flex-shrink:0">CEO</span>' : ''}
+        </div>
+        <div class="ig-prof-actions">
+          <button type="button" class="ig-icon-btn" id="pubShareTopBtn" aria-label="Compartir perfil">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
+          </button>
+        </div>
+      </header>
+
+      <section class="ig-prof-head">
+        <div class="ig-prof-avatar" style="${u.avatar_color ? `background:${app.esc(u.avatar_color)}` : ''}">
+          ${avUrl ? `<img src="${app.esc(avUrl)}" alt="${app.esc(u.full_name)}" />` : app.initials(u.full_name)}
+        </div>
+        <div class="ig-prof-stats">
+          <div>
+            <span class="ig-stat-val">${u.posts_count ?? posts.length}</span>
+            <span class="ig-stat-lbl">Publicaciones</span>
+          </div>
+          <div>
+            <span class="ig-stat-val" id="pubFollowersVal">${u.followers_count ?? 0}</span>
+            <span class="ig-stat-lbl">Seguidores</span>
+          </div>
+          <div>
+            <span class="ig-stat-val">${u.following_count ?? 0}</span>
+            <span class="ig-stat-lbl">Siguiendo</span>
           </div>
         </div>
-        ${u.bio ? `<p style="margin:0;font-size:0.93rem;line-height:1.5">${app.esc(u.bio)}</p>` : ''}
-        ${u.motto ? `<p class="t-serif" style="margin:0;font-style:italic;color:var(--gold-text)">«${app.esc(u.motto)}»</p>` : ''}
+      </section>
 
+      <div class="ig-prof-bio">
+        <strong style="font-size:0.98rem">${app.esc(u.title_prefix ? `${u.title_prefix} ` : '')}${app.esc(u.full_name)}</strong>
+        <span class="t-footnote">${app.esc(u.current_office_title || d.ranks[u.ecclesiastical_rank] || u.ecclesiastical_rank)}</span>
+        ${u.bio ? `<p style="margin:4px 0 0;font-size:0.88rem;line-height:1.45">${app.esc(u.bio)}</p>` : ''}
+        ${u.motto ? `<p style="margin:2px 0 0;font-size:0.84rem;font-style:italic;color:var(--gold-text)">«${app.esc(u.motto)}»</p>` : ''}
         ${links.length > 0 ? `
-          <div style="display:flex;flex-direction:column;gap:8px">
-            <strong class="t-footnote" style="text-transform:uppercase;letter-spacing:0.06em;color:var(--gold-text)">🌐 Medios Oficiales Propios</strong>
-            <div style="display:grid;gap:8px">
-              ${links.map((lk) => `
-                <a href="${app.esc(lk.url)}" target="_blank" rel="noopener noreferrer" class="entity-row" style="padding:10px 12px">
-                  <span class="avatar" style="--av-sz:38px;--av-bg:#0F1E36">🔗</span>
-                  <div class="entity-main">
-                    <div class="entity-title">${app.esc(lk.label)}</div>
-                    <div class="entity-sub">${app.esc(lk.role || lk.url)} · ${app.esc(lk.url.replace(/^https?:\/\//, ''))}</div>
-                  </div>
-                  <span class="t-caption">↗</span>
-                </a>`).join('')}
-            </div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">
+            ${links.map((lk) => `
+              <a href="${app.esc(lk.url)}" target="_blank" rel="noopener noreferrer" class="source-pill-box">
+                <span>🔗 ${app.esc(lk.label)}</span>
+                <span class="source-pill-arrow" aria-hidden="true">↗</span>
+              </a>`).join('')}
           </div>` : ''}
-
-        ${hasAireRadio ? `
-          <div class="offering-banner" style="background:linear-gradient(135deg,rgba(10,25,52,0.95),rgba(10,132,255,0.28));color:#fff;border-color:rgba(10,132,255,0.45)">
-            <div style="display:flex;align-items:center;gap:12px">
-              <img src="https://aire96fm.com.do/wp-content/themes/aire96-liquid/assets/img/aire96-logo-256.png" alt="Aire 96 FM" width="46" height="46" style="border-radius:8px;object-fit:cover" />
-              <div>
-                <div style="display:flex;align-items:center;gap:6px;font-size:0.72rem;font-weight:800;color:#FF6961">
-                  <span class="live-dot"></span> RADIO EN VIVO · 96.5 FM
-                </div>
-                <strong style="display:block;font-size:0.96rem">Aire 96 FM · Señal Oficial</strong>
-                <span style="font-size:0.76rem;color:rgba(255,255,255,0.75)">aire96fm.com.do</span>
-              </div>
-            </div>
-            <button type="button" class="btn btn-gold btn-sm" id="ceoPlayAireBtn">▶ Escuchar en Vivo</button>
-          </div>` : ''}
-
         ${(u.lineage || []).length > 0 ? `
-          <div class="lineage-trail">
+          <div class="lineage-trail" style="margin-top:6px">
             ${u.lineage.map((x) => `<a href="#/unit/${x.id}" class="lineage-pill">${app.esc(x.name)}</a>`).join('<span class="t-caption">›</span>')}
           </div>` : ''}
-        <div style="display:flex;gap:16px;font-size:0.86rem;color:var(--label-2)">
-          <span><strong style="color:var(--label)">${u.posts_count || 0}</strong> publicaciones</span>
-          <span><strong style="color:var(--label)">${u.followers_count || 0}</strong> seguidores</span>
-        </div>
-        <div style="display:flex;gap:8px">
-          <button type="button" class="btn btn-gold btn-sm" id="uFollowBtn">${u.is_following ? d.parishes.following : d.parishes.follow}</button>
-        </div>
-      </article>
+      </div>
 
-      ${assignments.length > 0 ? `
-        <div class="section-bar"><h2 class="t-title-3">Trayectoria Eclesiástica</h2></div>
-        <div class="entity-list" style="margin-bottom:18px">
-          ${assignments.map((a) => `
-            <a href="#/unit/${a.unit_id}" class="entity-row">
-              <div class="entity-main">
-                <div class="entity-title">${app.esc(a.role_title)}</div>
-                <div class="entity-sub">${app.esc(a.unit_name || '')} · ${a.start_year || ''}${a.is_current ? ' — Presente' : a.end_year ? ` — ${a.end_year}` : ''}</div>
+      ${hasAireRadio ? `
+        <div class="offering-banner" style="padding:11px 14px;margin-bottom:14px;background:linear-gradient(135deg,rgba(10,25,52,0.95),rgba(10,132,255,0.28));color:#fff;border-color:rgba(10,132,255,0.45)">
+          <div style="display:flex;align-items:center;gap:10px;min-width:0">
+            <img src="${app.esc(proxyProfileMedia('https://aire96fm.com.do/wp-content/themes/aire96-liquid/assets/img/aire96-logo-256.png'))}" alt="Aire 96 FM" width="40" height="40" style="border-radius:8px;object-fit:cover;flex-shrink:0" />
+            <div style="min-width:0">
+              <div style="display:flex;align-items:center;gap:5px;font-size:0.68rem;font-weight:800;color:#FF6961">
+                <span class="live-dot" style="width:6px;height:6px"></span> RADIO EN VIVO · 96.5 FM
               </div>
-            </a>`).join('')}
+              <strong style="display:block;font-size:0.88rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Aire 96 FM · Señal Oficial</strong>
+            </div>
+          </div>
+          <button type="button" class="btn btn-gold btn-sm" id="ceoPlayAireBtn">▶ Escuchar</button>
         </div>` : ''}
 
-      <div class="section-bar"><h2 class="t-title-3">Publicaciones Oficiales (${posts.length})</h2></div>
-      <div class="feed-list">
-        ${posts.length === 0 ? `<div class="empty-box" style="margin:0 20px">Sin publicaciones todavía.</div>` : posts.map((p) => `
-          <article class="ig-post">
-            ${p.image_url ? `<div class="ig-media"><img src="${app.esc(p.image_url)}" alt="" loading="lazy" /></div>` : ''}
-            <div class="ig-caption" style="padding-top:10px">
-              ${p.title ? `<h3 class="post-title">${app.esc(p.title)}</h3>` : ''}
-              <p class="post-excerpt">${app.esc(p.content)}</p>
-            </div>
-          </article>`).join('')}
+      <div class="ig-prof-cta">
+        <button type="button" class="btn ${u.is_following ? 'btn-soft' : 'btn-gold'} btn-sm" id="uFollowBtn">${u.is_following ? d.parishes.following : d.parishes.follow}</button>
+        <button type="button" class="btn btn-soft btn-sm" id="pubShareBtn">Compartir perfil</button>
       </div>
+
+      <div class="ig-prof-tabs" role="tablist">
+        <button type="button" class="ig-prof-tab is-active" data-pubtab="posts" aria-label="Publicaciones">
+          <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+        </button>
+        <button type="button" class="ig-prof-tab" data-pubtab="vids" aria-label="Vids">
+          <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="m10 8.5 6 3.5-6 3.5z" fill="currentColor" stroke="none"/></svg>
+        </button>
+        ${assignments.length > 0 ? `
+          <button type="button" class="ig-prof-tab" data-pubtab="lineage" aria-label="Trayectoria Eclesiástica">
+            <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v5M10 4h4"/><path d="M5 21h14"/><path d="M7 21v-8l5-4 5 4v8"/></svg>
+          </button>` : ''}
+      </div>
+
+      <div id="pubProfGrid"></div>
     `;
 
     root.querySelector('#ceoPlayAireBtn')?.addEventListener('click', async () => {
@@ -544,13 +622,52 @@ async function mountUserProfile({ root, app, signal, userId }) {
       }
     });
 
+    const shareProfile = async () => {
+      const shareUrl = `${location.origin}/#/user/${u.id}`;
+      try {
+        if (navigator.share) await navigator.share({ title: u.full_name, url: shareUrl });
+        else {
+          await navigator.clipboard?.writeText(shareUrl);
+          app.toast('Enlace de perfil copiado');
+        }
+      } catch {}
+    };
+    root.querySelector('#pubShareBtn')?.addEventListener('click', shareProfile);
+    root.querySelector('#pubShareTopBtn')?.addEventListener('click', shareProfile);
+
+    let followingState = Boolean(u.is_following);
     root.querySelector('#uFollowBtn').onclick = async (ev) => {
       if (!app.user) return app.openAuthModal();
       const btn = ev.currentTarget;
-      const isF = btn.textContent === d.parishes.following;
-      await app.api(`/api/v1/users/${u.id}/follow`, { method: isF ? 'DELETE' : 'POST' });
-      btn.textContent = isF ? d.parishes.follow : d.parishes.following;
+      const fValEl = root.querySelector('#pubFollowersVal');
+      const prevCount = Number(fValEl?.textContent || 0);
+      const nextFollow = !followingState;
+      followingState = nextFollow;
+      btn.textContent = nextFollow ? d.parishes.following : d.parishes.follow;
+      btn.classList.toggle('btn-gold', !nextFollow);
+      btn.classList.toggle('btn-soft', nextFollow);
+      if (fValEl) fValEl.textContent = String(Math.max(0, prevCount + (nextFollow ? 1 : -1)));
+      try {
+        await app.api(`/api/v1/users/${u.id}/follow`, { method: nextFollow ? 'POST' : 'DELETE' });
+      } catch (err) {
+        followingState = !nextFollow;
+        btn.textContent = followingState ? d.parishes.following : d.parishes.follow;
+        btn.classList.toggle('btn-gold', !followingState);
+        btn.classList.toggle('btn-soft', followingState);
+        if (fValEl) fValEl.textContent = String(prevCount);
+        app.toast(err.message);
+      }
     };
+
+    root.querySelectorAll('[data-pubtab]').forEach((tab) => {
+      tab.addEventListener('click', () => {
+        activeTab = tab.dataset.pubtab;
+        root.querySelectorAll('[data-pubtab]').forEach((t) => t.classList.toggle('is-active', t === tab));
+        renderPublicBody();
+      });
+    });
+
+    renderPublicBody();
   } catch (err) {
     if (err.name !== 'AbortError') root.innerHTML = `<div class="empty-box">${app.esc(err.message)}</div>`;
   }

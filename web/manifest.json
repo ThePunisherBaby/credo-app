@@ -4,8 +4,9 @@
   "description": "Feed editorial oficial del clero, Radio y TV Católica en vivo, Evangelio del Día, Intenciones de Oración y Jerarquía Eclesiástica Mundial.",
   "start_url": "/",
   "display": "standalone",
+  "display_override": ["standalone", "fullscreen"],
   "background_color": "#000000",
-  "theme_color": "#024EAE",
+  "theme_color": "#000000",
   "orientation": "portrait-primary",
   "icons": [
     {

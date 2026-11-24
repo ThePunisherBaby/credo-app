@@ -7,10 +7,14 @@ export async function mount({ root, app }) {
   })();
 
   root.innerHTML = `
-    <div style="display:flex;align-items:center;gap:12px;margin-bottom:18px">
-      <a href="#/profile" class="btn btn-sm btn-soft" aria-label="Volver a Perfil">← ${app.esc(d.nav.profile)}</a>
-      <h1 class="t-title-2" style="margin:0">${app.esc(d.profile.settings || 'Configuración')}</h1>
-    </div>
+    <header class="ig-prof-top">
+      <div class="ig-prof-username">
+        <a href="#/profile" class="ig-icon-btn" style="width:34px;height:34px;flex-shrink:0" aria-label="Volver a Perfil">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+        </a>
+        <span>${app.esc(d.profile.settings || 'Configuración')}</span>
+      </div>
+    </header>
 
     <div class="ios-list">
       <div class="ios-row" style="flex-direction:column;align-items:stretch;gap:10px">

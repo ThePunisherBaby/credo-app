@@ -156,6 +156,8 @@ export function createSpringPill(containerEl, indicatorEl) {
     raf = requestAnimationFrame(tick);
   };
 
+  let settleFallback = 0;
+
   return {
     moveTo(targetEl, immediate = false) {
       if (!targetEl || !containerEl || !indicatorEl) return;
@@ -186,6 +188,8 @@ export function createSpringPill(containerEl, indicatorEl) {
       lastTargetX = targetX;
       lastTargetW = targetW;
 
+      clearTimeout(settleFallback);
+
       if (!initialized || immediate || reduceMQ.matches) {
         initialized = true;
         cancelAnimationFrame(raf);
@@ -201,11 +205,21 @@ export function createSpringPill(containerEl, indicatorEl) {
       sx.retarget(targetX, now, MOTION.island);
       sw.retarget(targetW, now, MOTION.island);
       if (!raf) raf = requestAnimationFrame(tick);
+      settleFallback = setTimeout(() => {
+        if (raf) {
+          cancelAnimationFrame(raf);
+          raf = 0;
+          sx.set(targetX, performance.now() / 1000);
+          sw.set(targetW, performance.now() / 1000);
+          paint(targetX, targetW, 0);
+        }
+      }, 360);
     },
     isReady() {
       return initialized;
     },
     destroy() {
+      clearTimeout(settleFallback);
       cancelAnimationFrame(raf);
       raf = 0;
     },

@@ -1,10 +1,10 @@
 // views/live.js — En Vivo: Radios · Canales TV · Misas en Vivo
 
-import { audioEngine } from '../audio-engine.js?v=14';
+import { audioEngine } from '../audio-engine.js?v=18';
 
 function proxyImg(url) {
   if (!url) return '';
-  if (url.includes('aire96fm.com.do') || url.includes('reflexionandolapalabra.com')) {
+  if (/^https?:\/\/(aire96fm\.com\.do|reflexionandolapalabra\.com)/i.test(url)) {
     return `/api/v1/media/proxy?url=${encodeURIComponent(url)}`;
   }
   return url;

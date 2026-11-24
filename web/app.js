@@ -1,10 +1,10 @@
 // app.js — Credo Apple-Grade Core Router, Persistent Player, Liquid Glass & On-Demand View Loader
 // STRICTLY mounts ONLY the active route's ES module and DOM into #appView.
 
-import { detectLocale, getDict } from './i18n.js?v=14';
-import { attachDismissableSheet, createSpringPill, attachSpringPress } from './springs.mjs?v=14';
-import { enhanceLiquidGlass } from './glass.js?v=14';
-import { audioEngine } from './audio-engine.js?v=14';
+import { detectLocale, getDict } from './i18n.js?v=18';
+import { attachDismissableSheet, createSpringPill, attachSpringPress } from './springs.mjs?v=18';
+import { enhanceLiquidGlass } from './glass.js?v=18';
+import { audioEngine } from './audio-engine.js?v=18';
 
 const ICON_PLAY = '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" style="margin-left:2px"><path d="M8 5v14l11-7z"/></svg>';
 const ICON_PAUSE = '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M6 5h4v14H6zm8 0h4v14h-4z"/></svg>';
@@ -76,17 +76,19 @@ async function closeTopLayer(dialog) {
 
 function wireDialogAccessibility(dialog) {
   if (!dialog) return;
-  // Safari fallback for closedby="any" (per light-dismiss-a-dialog guide)
+  // Pointer-bounds fallback for closedby="any" (per dialog guide: require press AND release outside so drag selection doesn't dismiss)
   if (dialog.getAttribute('closedby') === 'any' && !('closedBy' in HTMLDialogElement.prototype)) {
-    dialog.addEventListener('click', (event) => {
-      if (event.target !== dialog) return;
-      const rect = dialog.getBoundingClientRect();
-      const inside =
-        rect.top <= event.clientY &&
-        event.clientY <= rect.top + rect.height &&
-        rect.left <= event.clientX &&
-        event.clientX <= rect.left + rect.width;
-      if (!inside) closeTopLayer(dialog);
+    const outside = (e) => {
+      const r = dialog.getBoundingClientRect();
+      return e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom;
+    };
+    let pressedOutside = false;
+    dialog.addEventListener('pointerdown', (e) => {
+      pressedOutside = outside(e);
+    });
+    dialog.addEventListener('pointerup', (e) => {
+      if (pressedOutside && outside(e)) closeTopLayer(dialog);
+      pressedOutside = false;
     });
   }
   // Route Esc / native cancel through top-layer exit helper
@@ -108,6 +110,7 @@ class CredoApp {
     this.guestPlus = false;
     this.linkedParishId = null;
     this.liveQueue = [];
+    this.seenStories = new Set();
 
     this._activeCleanup = null;
     this._activeAbort = null;
@@ -122,7 +125,23 @@ class CredoApp {
       this.guestPlus = localStorage.getItem('credo-guest-plus') === '1';
       const lp = localStorage.getItem('credo-parish-id');
       if (lp) this.linkedParishId = Number(lp);
+      const seenRaw = localStorage.getItem('credo-seen-stories');
+      if (seenRaw) {
+        JSON.parse(seenRaw).slice(-120).forEach((id) => this.seenStories.add(String(id)));
+      }
     } catch {}
+  }
+
+  markStorySeen(id) {
+    if (!id) return;
+    this.seenStories.add(String(id));
+    try {
+      localStorage.setItem('credo-seen-stories', JSON.stringify([...this.seenStories].slice(-120)));
+    } catch {}
+  }
+
+  isStorySeen(id) {
+    return id ? this.seenStories.has(String(id)) : false;
   }
 
   dict() {
@@ -175,14 +194,22 @@ class CredoApp {
 
   setColorScheme(mode) {
     const meta = document.querySelector('meta[name="color-scheme"]');
-    if (!meta) return;
     if (mode === 'dark' || mode === 'light') {
-      meta.content = mode;
+      if (meta) meta.content = mode;
+      document.documentElement.style.colorScheme = mode;
+      document.documentElement.dataset.theme = mode;
       try { localStorage.setItem('credo-color-scheme', mode); } catch {}
     } else {
-      meta.content = 'light dark';
+      if (meta) meta.content = 'light dark';
+      document.documentElement.style.colorScheme = 'light dark';
+      delete document.documentElement.dataset.theme;
       try { localStorage.removeItem('credo-color-scheme'); } catch {}
     }
+    const osDark = window.matchMedia?.('(prefers-color-scheme: dark)').matches;
+    const isDark = mode === 'dark' ? true : mode === 'light' ? false : Boolean(osDark);
+    const metaTheme = document.querySelector('meta[name="theme-color"]');
+    if (metaTheme) metaTheme.content = isDark ? '#000000' : '#FFFFFF';
+    try { window.CredoNative?.setSystemTheme?.(isDark); } catch {}
   }
 
   setLocale(lang) {
@@ -247,8 +274,15 @@ class CredoApp {
     // Cross-tab color-scheme sync (per dark-mode-toggle guide)
     window.addEventListener('storage', (e) => {
       if (e.key === 'credo-color-scheme') {
+        const val = e.newValue === 'dark' || e.newValue === 'light' ? e.newValue : 'light dark';
         const meta = document.querySelector('meta[name="color-scheme"]');
-        if (meta) meta.content = e.newValue || 'light dark';
+        if (meta) meta.content = val;
+        document.documentElement.style.colorScheme = val;
+        if (e.newValue === 'dark' || e.newValue === 'light') {
+          document.documentElement.dataset.theme = e.newValue;
+        } else {
+          delete document.documentElement.dataset.theme;
+        }
       }
     });
 
@@ -443,6 +477,7 @@ class CredoApp {
     this._prevRoute = route;
 
     document.body.classList.toggle('is-vids-mode', route === 'vids');
+    try { window.CredoNative?.setImmersive?.(route === 'vids'); } catch {}
     this.renderChrome();
 
     const root = document.getElementById('appView');
@@ -468,7 +503,7 @@ class CredoApp {
 
     // Clear previous DOM completely so ONLY the active screen exists in memory/DOM
     root.innerHTML = '';
-    window.scrollTo({ top: 0, behavior: 'instant' });
+    try { window.scrollTo(0, 0); } catch {}
 
     const controller = new AbortController();
     this._activeAbort = controller;
@@ -476,14 +511,14 @@ class CredoApp {
     // Lazy-import ONLY the required view module
     let mod;
     try {
-      if (route === 'feed') mod = await import('./views/feed.js?v=14');
-      else if (route === 'vids') mod = await import('./views/vids.js?v=14');
-      else if (route === 'explore') mod = await import('./views/explore.js?v=14');
-      else if (route === 'prayer') mod = await import('./views/prayer.js?v=14');
-      else if (route === 'parishes' || route === 'unit' || route === 'user') mod = await import('./views/parishes.js?v=14');
-      else if (route === 'settings') mod = await import('./views/settings.js?v=14');
-      else if (route === 'profile') mod = await import('./views/profile.js?v=14');
-      else mod = await import('./views/feed.js?v=14');
+      if (route === 'feed') mod = await import('./views/feed.js?v=18');
+      else if (route === 'vids') mod = await import('./views/vids.js?v=18');
+      else if (route === 'explore') mod = await import('./views/explore.js?v=18');
+      else if (route === 'prayer') mod = await import('./views/prayer.js?v=18');
+      else if (route === 'parishes' || route === 'unit' || route === 'user') mod = await import('./views/parishes.js?v=18');
+      else if (route === 'settings') mod = await import('./views/settings.js?v=18');
+      else if (route === 'profile') mod = await import('./views/profile.js?v=18');
+      else mod = await import('./views/feed.js?v=18');
     } catch (err) {
       root.innerHTML = `<div class="empty-box">Error cargando vista: ${this.esc(err.message)}</div>`;
       return;
@@ -501,12 +536,18 @@ class CredoApp {
       root.classList.remove('view-enter-from-right', 'view-enter-from-left', 'view-enter-subtle');
     }, 310);
 
-    const handle = await mod.mount({ root, app: this, signal: controller.signal, route, params });
-    if (seq !== this._routeSeq) {
-      handle?.cleanup?.();
-      return;
+    try {
+      const handle = await mod.mount({ root, app: this, signal: controller.signal, route, params });
+      if (seq !== this._routeSeq) {
+        handle?.cleanup?.();
+        return;
+      }
+      this._activeCleanup = handle?.cleanup || null;
+    } catch (err) {
+      if (err?.name !== 'AbortError') {
+        root.innerHTML = `<div class="empty-box">Error en vista: ${this.esc(err?.message || String(err))}</div>`;
+      }
     }
-    this._activeCleanup = handle?.cleanup || null;
   }
 
   // =========================================================================
@@ -559,7 +600,7 @@ class CredoApp {
 
       miniAnchor.hidden = false;
       document.body.classList.add('has-mini-player');
-      const artSrc = ch.cover_url && (ch.cover_url.includes('aire96fm.com.do') || ch.cover_url.includes('reflexionandolapalabra.com'))
+      const artSrc = ch.cover_url && /^https?:\/\/(aire96fm\.com\.do|reflexionandolapalabra\.com)/i.test(ch.cover_url)
         ? `/api/v1/media/proxy?url=${encodeURIComponent(ch.cover_url)}`
         : (ch.cover_url || '');
       miniGlass.style.setProperty('--mini-accent', ch.accent_color || '#007AFF');
@@ -656,9 +697,11 @@ class CredoApp {
   openModal(title, bodyHTML) {
     const dlg = document.getElementById('modalDialog');
     dlg.removeAttribute('data-closing');
+    dlg.style.transform = '';
     dlg.innerHTML = `
-      <div class="dialog-head">
-        <h2 id="modalTitle">${this.esc(title)}</h2>
+      <div class="dialog-grabber" aria-hidden="true"></div>
+      <div class="dialog-head" id="modalDragZone">
+        <h1 id="modalTitle">${this.esc(title)}</h1>
         <button type="button" class="icon-btn-44" id="modalCloseBtn" aria-label="Cerrar">
           <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
         </button>
@@ -666,6 +709,38 @@ class CredoApp {
       <div class="dialog-body">${bodyHTML}</div>
     `;
     dlg.querySelector('#modalCloseBtn').onclick = () => closeTopLayer(dlg);
+
+    // Tactile swipe-down on grabber/header for mobile bottom-sheet
+    const dragZone = dlg.querySelector('#modalDragZone');
+    const grabber = dlg.querySelector('.dialog-grabber');
+    let startY = null;
+    const onDown = (e) => {
+      if (e.target.closest('button')) return;
+      startY = e.clientY;
+    };
+    const onMove = (e) => {
+      if (startY === null) return;
+      const dy = Math.max(0, e.clientY - startY);
+      if (dy > 4 && window.innerWidth < 720) {
+        dlg.style.transition = 'none';
+        dlg.style.transform = `translateY(${dy}px)`;
+      }
+    };
+    const onUp = (e) => {
+      if (startY === null) return;
+      const dy = e.clientY - startY;
+      startY = null;
+      dlg.style.transition = '';
+      dlg.style.transform = '';
+      if (dy > 76 && window.innerWidth < 720) closeTopLayer(dlg);
+    };
+    [grabber, dragZone].forEach((el) => {
+      el?.addEventListener('pointerdown', onDown);
+      el?.addEventListener('pointermove', onMove);
+      el?.addEventListener('pointerup', onUp);
+      el?.addEventListener('pointercancel', onUp);
+    });
+
     if (!dlg.open) dlg.showModal();
     return dlg;
   }
@@ -680,10 +755,14 @@ class CredoApp {
     let idx = startIdx;
     let muted = false;
 
+    try { window.CredoNative?.setImmersive?.(true); } catch {}
+
     const closeViewer = () => {
       clearTimeout(this._storyTimer);
       dlg.innerHTML = '';
       if (dlg.open) dlg.close();
+      try { window.CredoNative?.setImmersive?.(this.parseRoute().route === 'vids'); } catch {}
+      window.dispatchEvent(new CustomEvent('credo:stories-seen'));
     };
 
     dlg.oncancel = (e) => {
@@ -695,27 +774,31 @@ class CredoApp {
       clearTimeout(this._storyTimer);
       const st = stories[idx];
       if (!st) return closeViewer();
+      if (st.id != null) this.markStorySeen(st.id);
 
       const authorAvRaw = st.author?.avatar_url || '';
-      const authorAv = authorAvRaw && authorAvRaw.includes('aire96fm.com.do')
+      const authorAv = authorAvRaw && /^https?:\/\/(aire96fm\.com\.do|reflexionandolapalabra\.com)/i.test(authorAvRaw)
         ? `/api/v1/media/proxy?url=${encodeURIComponent(authorAvRaw)}`
         : authorAvRaw;
+      const imgSrc = st.image_url && /^https?:\/\/(aire96fm\.com\.do|reflexionandolapalabra\.com)/i.test(st.image_url)
+        ? `/api/v1/media/proxy?url=${encodeURIComponent(st.image_url)}`
+        : (st.image_url || '');
       const isVideoStory = Boolean(st.youtube_id || st.video_url);
       const ytUrl = st.youtube_id
         ? `https://www.youtube.com/embed/${encodeURIComponent(st.youtube_id)}?autoplay=1&playsinline=1&rel=0&modestbranding=1&mute=${muted ? 1 : 0}`
         : '';
 
       const stageMediaHtml = st.video_url
-        ? `<div class="story-video-wrap">${st.image_url ? `<img src="${this.esc(st.image_url)}" alt="" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0" />` : ''}<video class="story-video-el" style="position:relative;z-index:1" src="${this.esc(st.video_url)}" autoplay playsinline loop ${muted ? 'muted' : ''}></video></div>`
+        ? `<div class="story-video-wrap">${imgSrc ? `<img src="${this.esc(imgSrc)}" alt="" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0" />` : ''}<video class="story-video-el" style="position:relative;z-index:1" src="${this.esc(st.video_url)}" autoplay playsinline loop ${muted ? 'muted' : ''}></video></div>`
         : st.youtube_id
-          ? `<div class="story-video-wrap">${st.image_url ? `<img src="${this.esc(st.image_url)}" alt="" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0" />` : ''}<iframe class="story-video-frame" style="position:relative;z-index:1" src="${this.esc(ytUrl)}" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe></div>`
-          : (st.image_url ? `<img class="story-stage-bg" src="${this.esc(st.image_url)}" alt="" />` : '');
+          ? `<div class="story-video-wrap">${imgSrc ? `<img src="${this.esc(imgSrc)}" alt="" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0" />` : ''}<iframe class="story-video-frame" style="position:relative;z-index:1" src="${this.esc(ytUrl)}" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe></div>`
+          : (imgSrc ? `<img class="story-stage-bg" src="${this.esc(imgSrc)}" alt="" />` : '');
 
       const durMs = isVideoStory ? 18000 : 6000;
 
       dlg.innerHTML = `
         <div class="story-stage" style="background:${this.esc(st.bg_gradient || '#0B1424')}">
-          ${isVideoStory && st.image_url ? `<img class="story-stage-bg" src="${this.esc(st.image_url)}" alt="" style="filter:blur(28px) saturate(1.4);opacity:0.45" />` : ''}
+          ${isVideoStory && imgSrc ? `<img class="story-stage-bg" src="${this.esc(imgSrc)}" alt="" style="filter:blur(28px) saturate(1.4);opacity:0.45" />` : ''}
           ${stageMediaHtml}
           <div class="story-stage-scrim" style="${isVideoStory ? 'pointer-events:none;background:linear-gradient(to bottom,rgba(0,0,0,0.65),transparent 24%,transparent 68%,rgba(0,0,0,0.88))' : ''}"></div>
           <div>
@@ -769,6 +852,23 @@ class CredoApp {
       dlg.querySelector('#stNext')?.addEventListener('click', () => {
         if (idx + 1 < stories.length) { idx += 1; show(); }
         else closeViewer();
+      });
+
+      // Instagram vertical swipe-down to dismiss story
+      const stageEl = dlg.querySelector('.story-stage');
+      let swipeStart = null;
+      stageEl?.addEventListener('pointerdown', (e) => {
+        if (e.target.closest('button, iframe, video')) return;
+        swipeStart = { x: e.clientX, y: e.clientY };
+      });
+      stageEl?.addEventListener('pointerup', (e) => {
+        if (!swipeStart) return;
+        const dx = e.clientX - swipeStart.x;
+        const dy = e.clientY - swipeStart.y;
+        swipeStart = null;
+        if (dy > 76 && Math.abs(dy) > Math.abs(dx) * 1.3) {
+          closeViewer();
+        }
       });
 
       this._storyTimer = setTimeout(() => {

@@ -1,7 +1,7 @@
 // views/prayer.js — Oración: Rosario 24/7 (7am/2pm/4pm/8pm) + Repertorio Completo por Día (Voz Humana y YouTube) + Música de Fondo + Oraciones + Muro
 
-import { audioEngine } from '../audio-engine.js?v=14';
-import { enhanceLiquidGlass } from '../glass.js?v=14';
+import { audioEngine } from '../audio-engine.js?v=18';
+import { enhanceLiquidGlass } from '../glass.js?v=18';
 
 function formatCountdown(sec) {
   const s = Math.max(0, Number(sec) || 0);
@@ -60,17 +60,16 @@ export async function mount({ root, app, signal }) {
   let countdownTimer = null;
 
   root.innerHTML = `
-    <header class="page-head">
-      <div>
-        <p class="t-footnote">${app.esc(d.prayer.subtitle)}</p>
-        <h1 class="t-large-title">${app.esc(d.prayer.title)}</h1>
+    <div class="explore-sticky-top">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px">
+        <h1 class="t-title-2" style="margin:0;font-size:1.35rem;letter-spacing:-0.025em">${app.esc(d.prayer.title)}</h1>
+        <span class="t-caption" style="color:var(--label-2);font-weight:700">${app.esc(d.prayer.subtitle)}</span>
       </div>
-    </header>
-
-    <div class="seg-tabs" id="prayerTabs" role="tablist">
-      <button type="button" class="seg-tab is-active" data-ptab="rosary" role="tab" aria-selected="true">Rosario 24/7</button>
-      <button type="button" class="seg-tab" data-ptab="prayers" role="tab" aria-selected="false">Oraciones</button>
-      <button type="button" class="seg-tab" data-ptab="wall" role="tab" aria-selected="false">Muro</button>
+      <div class="seg-tabs" id="prayerTabs" role="tablist" style="margin-bottom:2px">
+        <button type="button" class="seg-tab is-active" data-ptab="rosary" role="tab" aria-selected="true">Rosario 24/7</button>
+        <button type="button" class="seg-tab" data-ptab="prayers" role="tab" aria-selected="false">Oraciones</button>
+        <button type="button" class="seg-tab" data-ptab="wall" role="tab" aria-selected="false">Muro</button>
+      </div>
     </div>
 
     <div id="prayerTabRosary">
@@ -706,23 +705,31 @@ export async function mount({ root, app, signal }) {
     }
   }, 1000);
 
-  const [rosRes, litRes] = await Promise.allSettled([
-    app.api('/api/v1/rosary/status', { signal }),
-    app.api(`/api/v1/prayers/liturgy?lang=${app.locale}`, { signal }),
-    loadIntentions(),
-  ]);
+  app.api('/api/v1/rosary/status', { signal })
+    .then((val) => {
+      if (signal.aborted) return;
+      rosaryStatus = val.status;
+      rosaryTracks = val.tracks || [];
+      countdownSec = Number(rosaryStatus?.seconds_until_next || 0);
+      renderRosary();
+    })
+    .catch((err) => {
+      if (!signal.aborted && err.name !== 'AbortError') {
+        rosaryHost.innerHTML = `<div class="empty-box">${app.esc(err.message)}</div>`;
+      }
+    });
 
-  if (!signal.aborted && rosRes.status === 'fulfilled') {
-    rosaryStatus = rosRes.value.status;
-    rosaryTracks = rosRes.value.tracks || [];
-    countdownSec = Number(rosaryStatus?.seconds_until_next || 0);
-    renderRosary();
-  }
+  app.api(`/api/v1/prayers/liturgy?lang=${app.locale}`, { signal })
+    .then((val) => {
+      if (signal.aborted) return;
+      liturgy = val.liturgy;
+      renderLiturgyAndPrayers();
+    })
+    .catch(() => {
+      if (!signal.aborted) renderLiturgyAndPrayers();
+    });
 
-  if (!signal.aborted && litRes.status === 'fulfilled') {
-    liturgy = litRes.value.liturgy;
-    renderLiturgyAndPrayers();
-  }
+  loadIntentions();
 
   return {
     cleanup() {

@@ -1,6 +1,6 @@
 // views/explore.js — Explorar: Búsqueda Universal, Filtro "● En Vivo" (Radios, TV, Misas), Presbíteros, Parroquias y Vids
 
-import { audioEngine } from '../audio-engine.js?v=14';
+import { audioEngine } from '../audio-engine.js?v=18';
 
 function proxyImg(url) {
   if (!url) return '';
@@ -36,27 +36,26 @@ export async function mount({ root, app, signal, params }) {
   let audioUnsub = null;
 
   root.innerHTML = `
-    <header class="page-head">
-      <div>
-        <p class="t-footnote">Comunión universal · Radio en vivo · Directorio</p>
-        <h1 class="t-large-title">${app.esc(d.nav.explore || 'Explorar')}</h1>
+    <div class="explore-sticky-top">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px">
+        <h1 class="t-title-2" style="margin:0;font-size:1.35rem;letter-spacing:-0.025em">${app.esc(d.nav.explore || 'Explorar')}</h1>
+        <span class="t-caption" style="color:var(--label-2);font-weight:700">Radio · Directorio · Vids</span>
       </div>
-    </header>
-
-    <div class="explore-search-row">
-      <div class="search-field" style="margin-top:0">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
-        <input type="search" id="exploreSearchInput" placeholder="Buscar presbíteros, parroquias, radios o videos…" />
+      <div class="explore-search-row">
+        <div class="search-field" style="margin:0;min-height:42px;background:var(--surface-2)">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+          <input type="search" id="exploreSearchInput" placeholder="Buscar presbíteros, parroquias, radios o videos…" />
+        </div>
       </div>
-    </div>
 
-    <div class="explore-filter-strip" id="exploreFilters" role="tablist" aria-label="Filtros de exploración">
-      ${FILTERS.map((f) => `
-        <button type="button" class="explore-pill${activeFilter === f.id ? ' is-active' : ''}" data-efilter="${f.id}" role="tab" aria-selected="${activeFilter === f.id}">
-          ${f.isLive ? '<span class="live-dot" style="width:7px;height:7px"></span>' : ''}
-          <span>${app.esc(f.label.replace(/^●\s*/, ''))}</span>
-        </button>
-      `).join('')}
+      <div class="explore-filter-strip" id="exploreFilters" role="tablist" aria-label="Filtros de exploración">
+        ${FILTERS.map((f) => `
+          <button type="button" class="explore-pill${activeFilter === f.id ? ' is-active' : ''}" data-efilter="${f.id}" role="tab" aria-selected="${activeFilter === f.id}">
+            ${f.isLive ? '<span class="live-dot" style="width:7px;height:7px"></span>' : ''}
+            <span>${app.esc(f.label.replace(/^●\s*/, ''))}</span>
+          </button>
+        `).join('')}
+      </div>
     </div>
 
     <div id="exploreBody">
@@ -374,7 +373,7 @@ export async function mount({ root, app, signal, params }) {
             const active = st.playing && st.channel?.id === ch.id;
             return `
               <button type="button" class="explore-live-chip${active ? ' is-playing' : ''}" data-play-ch="${ch.id}">
-                ${art ? `<img src="${app.esc(art)}" alt="" loading="lazy" />` : ''}
+                ${art ? `<img src="${app.esc(art)}" alt="" width="42" height="42" />` : ''}
                 <div>
                   <strong style="display:block;font-size:0.84rem;line-height:1.2">${app.esc(ch.name)}</strong>
                   <span class="t-caption" style="color:${active ? 'var(--gold-text)' : 'var(--label-2)'}">${active ? '⏸ Escuchando' : `▶ ${app.esc(ch.frequency || 'En Vivo')}`}</span>

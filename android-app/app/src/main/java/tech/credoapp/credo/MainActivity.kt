@@ -2,11 +2,14 @@ package tech.credoapp.credo
 
 import android.annotation.SuppressLint
 import android.content.Intent
+import android.content.res.Configuration
 import android.graphics.Color
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.view.Gravity
 import android.view.View
+import android.view.WindowManager
 import android.webkit.JavascriptInterface
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
@@ -20,11 +23,13 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.activity.OnBackPressedCallback
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 
 class MainActivity : AppCompatActivity() {
 
@@ -32,6 +37,12 @@ class MainActivity : AppCompatActivity() {
     private lateinit var offlineBox: LinearLayout
     private lateinit var updateEngine: GitHubUpdateEngine
     private var filePathCallback: ValueCallback<Array<Uri>>? = null
+
+    private var safeTopDp = 0f
+    private var safeBottomDp = 0f
+    private var safeLeftDp = 0f
+    private var safeRightDp = 0f
+    private var lastIsDark = true
 
     private val filePickerLauncher =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -56,28 +67,101 @@ class MainActivity : AppCompatActivity() {
                 updateEngine.checkForUpdate(silent = false)
             }
         }
+
+        @JavascriptInterface
+        fun setSystemTheme(isDark: Boolean) {
+            runOnUiThread {
+                applySystemBarAppearance(isDark)
+            }
+        }
+
+        @JavascriptInterface
+        fun setImmersive(enabled: Boolean) {
+            runOnUiThread {
+                applyImmersiveMode(enabled)
+            }
+        }
+    }
+
+    private fun applySystemBarAppearance(isDark: Boolean) {
+        lastIsDark = isDark
+        val controller = WindowCompat.getInsetsController(window, window.decorView)
+        controller.isAppearanceLightStatusBars = !isDark
+        controller.isAppearanceLightNavigationBars = !isDark
+        val bgColor = if (isDark) Color.BLACK else Color.parseColor("#F2F4F8")
+        window.decorView.setBackgroundColor(bgColor)
+        if (::webView.isInitialized) {
+            webView.setBackgroundColor(bgColor)
+        }
+    }
+
+    private fun applyImmersiveMode(enabled: Boolean) {
+        val controller = WindowCompat.getInsetsController(window, window.decorView)
+        controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        if (enabled) {
+            controller.hide(WindowInsetsCompat.Type.systemBars())
+        } else {
+            controller.show(WindowInsetsCompat.Type.systemBars())
+        }
+    }
+
+    private fun pushSafeInsetsToWeb() {
+        if (!::webView.isInitialized) return
+        val js = """
+            (function(){
+              var r = document.documentElement.style;
+              r.setProperty('--native-safe-top', '${safeTopDp}px');
+              r.setProperty('--native-safe-bottom', '${safeBottomDp}px');
+              r.setProperty('--native-safe-left', '${safeLeftDp}px');
+              r.setProperty('--native-safe-right', '${safeRightDp}px');
+            })();
+        """.trimIndent()
+        webView.evaluateJavascript(js, null)
     }
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
+        enableEdgeToEdge()
         super.onCreate(savedInstanceState)
 
         WindowCompat.setDecorFitsSystemWindows(window, false)
-        window.statusBarColor = Color.TRANSPARENT
-        window.navigationBarColor = Color.TRANSPARENT
+        @Suppress("DEPRECATION")
+        run {
+            window.statusBarColor = Color.TRANSPARENT
+            window.navigationBarColor = Color.TRANSPARENT
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            @Suppress("DEPRECATION")
+            run {
+                window.isStatusBarContrastEnforced = false
+                window.isNavigationBarContrastEnforced = false
+            }
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            window.attributes = window.attributes.apply {
+                layoutInDisplayCutoutMode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+                } else {
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+                }
+            }
+        }
 
+        val osDark = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+        lastIsDark = osDark
         updateEngine = GitHubUpdateEngine(this)
 
         val root = FrameLayout(this).apply {
-            setBackgroundColor(Color.BLACK)
+            setBackgroundColor(if (osDark) Color.BLACK else Color.parseColor("#F2F4F8"))
         }
 
         webView = WebView(this).apply {
-            setBackgroundColor(Color.BLACK)
+            setBackgroundColor(if (osDark) Color.BLACK else Color.parseColor("#F2F4F8"))
             overScrollMode = View.OVER_SCROLL_NEVER
             settings.apply {
                 javaScriptEnabled = true
                 domStorageEnabled = true
+                @Suppress("DEPRECATION")
                 databaseEnabled = true
                 mediaPlaybackRequiresUserGesture = false
                 allowFileAccess = false
@@ -107,6 +191,7 @@ class MainActivity : AppCompatActivity() {
                 override fun onPageFinished(view: WebView?, url: String?) {
                     offlineBox.visibility = View.GONE
                     webView.visibility = View.VISIBLE
+                    pushSafeInsetsToWeb()
                 }
 
                 override fun onReceivedError(
@@ -153,7 +238,7 @@ class MainActivity : AppCompatActivity() {
             addView(TextView(context).apply {
                 text = "Credo"
                 textSize = 28f
-                setTextColor(Color.parseColor("#DDBB62"))
+                setTextColor(Color.parseColor("#0A84FF"))
                 gravity = Gravity.CENTER
             })
             addView(TextView(context).apply {
@@ -176,13 +261,26 @@ class MainActivity : AppCompatActivity() {
         root.addView(webView, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
         root.addView(offlineBox, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
 
+        // True edge-to-edge full screen: ZERO system-bar padding on root.
+        // Forward real cutout & system-bar safe-area insets cleanly to CSS, reserving root bottom padding ONLY for soft keyboard IME.
         ViewCompat.setOnApplyWindowInsetsListener(root) { view, insets ->
-            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-            view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
-            insets
+            val safe = insets.getInsets(
+                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
+            )
+            val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
+            val density = resources.displayMetrics.density.coerceAtLeast(1f)
+            safeTopDp = safe.top / density
+            safeBottomDp = safe.bottom / density
+            safeLeftDp = safe.left / density
+            safeRightDp = safe.right / density
+
+            view.setPadding(0, 0, 0, ime.bottom)
+            pushSafeInsetsToWeb()
+            WindowInsetsCompat.CONSUMED
         }
 
         setContentView(root)
+        applySystemBarAppearance(osDark)
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {

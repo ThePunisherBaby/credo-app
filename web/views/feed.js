@@ -76,6 +76,14 @@ export async function mount({ root, app, signal }) {
     app.openComposer();
   });
 
+  function proxyImg(url) {
+    if (!url) return '';
+    if (/^https?:\/\/(aire96fm\.com\.do|reflexionandolapalabra\.com)/i.test(url)) {
+      return `/api/v1/media/proxy?url=${encodeURIComponent(url)}`;
+    }
+    return url;
+  }
+
   function renderStories() {
     const parts = [];
     // Instagram-style Video Stories & Official Clergy Highlights (ZERO audio radio stations)
@@ -85,14 +93,12 @@ export async function mount({ root, app, signal }) {
         : (st.author?.full_name || 'Credo Video');
       const shortName = name.length > 14 ? name.split(' ').slice(0, 2).join(' ') : name;
       const isVid = Boolean(st.is_video || st.youtube_id || st.video_url);
-      const rawThumb = st.image_url || st.author?.avatar_url || '';
-      const thumb = rawThumb && rawThumb.includes('aire96fm.com.do')
-        ? `/api/v1/media/proxy?url=${encodeURIComponent(rawThumb)}`
-        : rawThumb;
+      const isSeen = st.id != null && app.isStorySeen(st.id);
+      const thumb = proxyImg(st.image_url || st.author?.avatar_url || '');
 
       parts.push(`
         <button type="button" class="story-item stagger-in" style="--stagger-i:${Math.min(idx, 5)}" data-story-idx="${idx}">
-          <span class="story-ring${isVid ? ' is-video' : ''}">
+          <span class="story-ring${isVid ? ' is-video' : ''}${isSeen ? ' is-seen' : ''}">
             <span class="story-ring-inner" style="background:${app.esc(st.author?.avatar_color || '#0F1E36')}">
               ${thumb
                 ? `<img src="${app.esc(thumb)}" alt="${app.esc(name)}" loading="lazy" width="62" height="62" />`
@@ -114,6 +120,8 @@ export async function mount({ root, app, signal }) {
     };
   }
 
+  window.addEventListener('credo:stories-seen', renderStories, { signal });
+
   function triggerButtonDopamine(reactBtn) {
     if (!reactBtn) return;
     reactBtn.classList.remove('is-dopamine');
@@ -130,25 +138,47 @@ export async function mount({ root, app, signal }) {
       app.openAuthModal();
       return;
     }
-    const already = reactBtn?.classList.contains('is-active');
+    const already = Boolean(reactBtn?.classList.contains('is-active'));
     if (onlyAdd && already) {
       triggerButtonDopamine(reactBtn);
       return;
     }
+
+    // Optimistic 0ms Instagram-grade state flip
+    const nextActive = !already;
+    const cntEl = reactBtn?.querySelector(`[data-amen-count="${postId}"]`);
+    const prevCount = Number(cntEl?.textContent || 0);
+    const optimisticCount = Math.max(0, prevCount + (nextActive ? 1 : -1));
+    if (reactBtn) {
+      reactBtn.classList.toggle('is-active', nextActive);
+      reactBtn.setAttribute('aria-pressed', String(nextActive));
+      if (cntEl) cntEl.textContent = String(optimisticCount);
+    }
     triggerButtonDopamine(reactBtn);
+
     try {
       const res = await app.api(`/api/v1/posts/${postId}/react`, {
         method: 'POST',
         body: { reaction_type: 'amen' },
       });
       const active = (res.my_reactions || []).includes('amen');
+      const serverCount = res.reactions?.amen ?? optimisticCount;
       if (reactBtn) {
         reactBtn.classList.toggle('is-active', active);
         reactBtn.setAttribute('aria-pressed', String(active));
-        const cntEl = reactBtn.querySelector(`[data-amen-count="${postId}"]`);
-        if (cntEl) cntEl.textContent = String(res.reactions?.amen || 0);
+        if (cntEl) cntEl.textContent = String(serverCount);
+      }
+      const pObj = state.posts.find((x) => x.id === postId);
+      if (pObj) {
+        pObj.my_reactions = res.my_reactions || [];
+        pObj.reactions = { ...(pObj.reactions || {}), amen: serverCount };
       }
     } catch (err) {
+      if (reactBtn) {
+        reactBtn.classList.toggle('is-active', already);
+        reactBtn.setAttribute('aria-pressed', String(already));
+        if (cntEl) cntEl.textContent = String(prevCount);
+      }
       app.toast(err.message);
     }
   }
@@ -164,21 +194,21 @@ export async function mount({ root, app, signal }) {
     const staggerClass = globalIndex < 5 ? ' stagger-in' : '';
     // optimize-image-priority: fetchpriority="high" ONLY on index 0 LCP image, NEVER combined with loading="lazy"
     const imgAttrs = globalIndex === 0 ? 'fetchpriority="high"' : 'loading="lazy"';
-    const avUrl = author.avatar_url && author.avatar_url.includes('aire96fm.com.do')
-      ? `/api/v1/media/proxy?url=${encodeURIComponent(author.avatar_url)}`
-      : author.avatar_url;
+    const avUrl = proxyImg(author.avatar_url);
+    const mediaSrc = proxyImg(p.image_url);
 
     const cleanBody = String(p.content || '')
       .replace(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g, '')
       .replace(/\s{2,}/g, ' ')
       .trim();
+    const isLongBody = cleanBody.length > 135;
 
     let mediaBlock = '';
     if (isVideo) {
       mediaBlock = `
         <div class="ig-media" data-video-box="${p.id}" data-yt="${app.esc(p.youtube_id)}">
-          ${p.image_url ? `<img class="ig-media-aura" src="${app.esc(p.image_url)}" alt="" aria-hidden="true" />` : ''}
-          <img class="ig-media-photo" src="${app.esc(p.image_url)}" alt="${app.esc(p.title || d.feed.officialChannel)}" ${imgAttrs} width="640" height="480" />
+          ${mediaSrc ? `<img class="ig-media-aura" src="${app.esc(mediaSrc)}" alt="" aria-hidden="true" />` : ''}
+          <img class="ig-media-photo" src="${app.esc(mediaSrc)}" alt="${app.esc(p.title || d.feed.officialChannel)}" ${imgAttrs} width="640" height="480" />
           ${p.video_duration ? `<span class="video-duration-pill">${app.esc(p.video_duration)}</span>` : ''}
           <button type="button" class="video-play-overlay" data-play-video="${p.id}" aria-label="${app.esc(d.feed.watchInline)}">
             <span class="video-play-circle">
@@ -187,11 +217,11 @@ export async function mount({ root, app, signal }) {
           </button>
         </div>
       `;
-    } else if (p.image_url) {
+    } else if (mediaSrc) {
       mediaBlock = `
         <div class="ig-media" data-dbltap="${p.id}" style="cursor:pointer">
-          <img class="ig-media-aura" src="${app.esc(p.image_url)}" alt="" aria-hidden="true" />
-          <img class="ig-media-photo" src="${app.esc(p.image_url)}" alt="${app.esc(p.title || author.full_name)}" ${imgAttrs} width="640" height="480" />
+          <img class="ig-media-aura" src="${app.esc(mediaSrc)}" alt="" aria-hidden="true" />
+          <img class="ig-media-photo" src="${app.esc(mediaSrc)}" alt="${app.esc(p.title || author.full_name)}" ${imgAttrs} width="640" height="480" />
         </div>
       `;
     } else {
@@ -207,6 +237,8 @@ export async function mount({ root, app, signal }) {
           ? `<a href="${app.esc(p.source_url)}" target="_blank" rel="noopener noreferrer" class="source-pill-box">${app.esc(unitName)}<span class="source-pill-arrow" aria-hidden="true">↗</span></a>`
           : `<span class="source-pill-box">${app.esc(unitName)}</span>`)
       : '';
+
+    const commentsCount = Number(p.comments_count || 0);
 
     return `
       <article class="ig-post${deferClass}${staggerClass}"${staggerAttr} data-post-id="${p.id}">
@@ -237,7 +269,7 @@ export async function mount({ root, app, signal }) {
             </button>
             <button type="button" class="act-btn" data-open-post="${p.id}" aria-label="${app.esc(d.feed.comment)}">
               <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-              <span>${p.comments_count || 0}</span>
+              <span>${commentsCount}</span>
             </button>
           </div>
           <div class="post-act-group">
@@ -252,8 +284,10 @@ export async function mount({ root, app, signal }) {
 
         <div class="ig-caption">
           ${p.title ? `<h2 class="post-title" data-open-post="${p.id}" style="cursor:pointer">${app.esc(p.title)}</h2>` : ''}
-          ${cleanBody ? `<p class="post-excerpt" data-open-post="${p.id}" style="cursor:pointer">${app.esc(cleanBody)}</p>` : ''}
+          ${cleanBody ? `<p class="post-excerpt" data-excerpt-post="${p.id}" data-open-post="${p.id}" style="cursor:pointer">${app.esc(cleanBody)}</p>` : ''}
+          ${isLongBody ? `<button type="button" class="post-more-btn" data-expand-post="${p.id}">… más</button>` : ''}
           ${p.scripture_ref ? `<span class="post-scripture-pill">📖 ${app.esc(p.scripture_ref)}</span>` : ''}
+          ${commentsCount > 0 ? `<button type="button" class="post-comments-teaser" data-open-post="${p.id}">Ver ${commentsCount === 1 ? '1 comentario' : `los ${commentsCount} comentarios`}</button>` : ''}
         </div>
       </article>
     `;
@@ -315,6 +349,15 @@ export async function mount({ root, app, signal }) {
   }
 
   feedList.addEventListener('click', async (e) => {
+    const expandBtn = e.target.closest('[data-expand-post]');
+    if (expandBtn) {
+      const pid = expandBtn.dataset.expandPost;
+      const exEl = feedList.querySelector(`[data-excerpt-post="${pid}"]`);
+      if (exEl) exEl.classList.add('is-expanded');
+      expandBtn.remove();
+      return;
+    }
+
     const plusBtn = e.target.closest('[data-open-plus]');
     if (plusBtn) {
       location.hash = '#/profile';
@@ -345,7 +388,6 @@ export async function mount({ root, app, signal }) {
         lastTap = { id: 0, time: 0 };
         const card = dblEl.closest('.ig-post');
         const btn = card?.querySelector(`[data-react-post="${postId}"]`);
-        triggerButtonDopamine(btn);
         await toggleAmen(postId, btn, { onlyAdd: true });
       } else {
         lastTap = { id: postId, time: now };
@@ -365,15 +407,22 @@ export async function mount({ root, app, signal }) {
         app.openAuthModal();
         return;
       }
+      const prevSaved = saveBtn.classList.contains('is-active');
+      const nextSaved = !prevSaved;
+      saveBtn.classList.toggle('is-active', nextSaved);
+      saveBtn.setAttribute('aria-pressed', String(nextSaved));
+      saveBtn.querySelector('svg')?.setAttribute('fill', nextSaved ? 'currentColor' : 'none');
       try {
         const res = await app.api(`/api/v1/posts/${postId}/save`, { method: 'POST' });
         const saved = Boolean(res.saved);
         saveBtn.classList.toggle('is-active', saved);
         saveBtn.setAttribute('aria-pressed', String(saved));
-        const svg = saveBtn.querySelector('svg');
-        if (svg) svg.setAttribute('fill', saved ? 'currentColor' : 'none');
+        saveBtn.querySelector('svg')?.setAttribute('fill', saved ? 'currentColor' : 'none');
         app.toast(saved ? d.feed.saved : d.feed.save);
       } catch (err) {
+        saveBtn.classList.toggle('is-active', prevSaved);
+        saveBtn.setAttribute('aria-pressed', String(prevSaved));
+        saveBtn.querySelector('svg')?.setAttribute('fill', prevSaved ? 'currentColor' : 'none');
         app.toast(err.message);
       }
       return;
@@ -430,7 +479,7 @@ export async function mount({ root, app, signal }) {
 
 async function openPostDetailModal(post, app, d) {
   const author = post.author || {};
-  const avUrl = author.avatar_url && author.avatar_url.includes('aire96fm.com.do')
+  const avUrl = author.avatar_url && /^https?:\/\/(aire96fm\.com\.do|reflexionandolapalabra\.com)/i.test(author.avatar_url)
     ? `/api/v1/media/proxy?url=${encodeURIComponent(author.avatar_url)}`
     : author.avatar_url;
   const body = `
