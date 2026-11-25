@@ -1374,10 +1374,10 @@ export function createCredoOneController(app) {
         const cardSession = sdkInstance.createCardFieldsOneTimePaymentSession();
         const cfStyle = {
           input: {
-            color: '#FFFFFF',
+            color: '#09090B',
           },
           '.invalid': {
-            color: '#FCA5A5',
+            color: '#DC2626',
           },
         };
 
