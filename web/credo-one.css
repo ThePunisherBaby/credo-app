@@ -55,10 +55,29 @@
   white-space: nowrap !important;
 }
 
-/* --- Native Top-Layer Bottom Sheet <dialog> (MWG dialog + animate-to-from-top-layer) --- */
+/* --- Accessible Non-Top-Layer Bottom Sheet <dialog> (z-index 960 so PayPal v6/v5 modals & 3DS sit unobstructed above!) --- */
+body.co-sheet-open {
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+.co-sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 950;
+  background: rgba(0, 0, 0, 0);
+  backdrop-filter: blur(0px);
+  -webkit-backdrop-filter: blur(0px);
+  transition: background-color 260ms ease, backdrop-filter 260ms ease;
+}
+.co-sheet-backdrop.is-open {
+  background: rgba(0, 0, 0, 0.66);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
 dialog.co-sheet-dialog {
   position: fixed;
   inset: auto 0 0 0;
+  z-index: 960;
   margin: auto auto 0 auto;
   padding: 0;
   border: 0;
@@ -68,54 +87,12 @@ dialog.co-sheet-dialog {
   background: transparent;
   color: #FFFFFF;
   overflow: visible;
-}
-dialog.co-sheet-dialog:modal {
   overscroll-behavior: contain;
 }
-dialog.co-sheet-dialog[open]:not([data-closing]) {
+dialog.co-sheet-dialog[open] {
+  display: block;
   opacity: 1;
   transform: translate3d(0, 0, 0);
-}
-@media (prefers-reduced-motion: no-preference) {
-  dialog.co-sheet-dialog[open]:not([data-closing]) {
-    animation: coSheetEnter 380ms cubic-bezier(0.32, 0.72, 0, 1) both;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  dialog.co-sheet-dialog[open]:not([data-closing]) {
-    animation: coSheetFadeIn 120ms ease both;
-  }
-}
-dialog.co-sheet-dialog[data-closing] {
-  opacity: 0;
-  transform: translate3d(0, 100%, 0);
-  transition: opacity 220ms ease, transform 260ms cubic-bezier(0.32, 0.72, 0, 1);
-}
-dialog.co-sheet-dialog::backdrop {
-  background: rgba(0, 0, 0, 0.62);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
-  overflow: hidden;
-  overscroll-behavior: contain;
-  animation: coBackdropEnter 300ms ease both;
-}
-dialog.co-sheet-dialog[data-closing]::backdrop {
-  background: rgba(0, 0, 0, 0);
-  backdrop-filter: blur(0px);
-  -webkit-backdrop-filter: blur(0px);
-  transition: background-color 220ms ease, backdrop-filter 220ms ease;
-}
-@keyframes coSheetEnter {
-  from { opacity: 0; transform: translate3d(0, 100%, 0); }
-  to { opacity: 1; transform: translate3d(0, 0, 0); }
-}
-@keyframes coSheetFadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-@keyframes coBackdropEnter {
-  from { background: rgba(0, 0, 0, 0); }
-  to { background: rgba(0, 0, 0, 0.62); }
 }
 
 .co-sheet-surface {
@@ -550,11 +527,256 @@ dialog.co-sheet-dialog[data-closing]::backdrop {
   font-size: 0.96rem;
 }
 
+.co-trust-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+.co-trust-pills span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #D1D5DB;
+}
+.co-paybox-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.co-sdk-pill {
+  flex-shrink: 0;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: #D1D5DB;
+  white-space: nowrap;
+}
+.co-sdk-pill.is-v6 {
+  background: rgba(56, 189, 248, 0.16);
+  border-color: rgba(56, 189, 248, 0.44);
+  color: #7DD3FC;
+}
+.co-sdk-pill.is-live {
+  background: rgba(34, 197, 94, 0.16);
+  border-color: rgba(34, 197, 94, 0.42);
+  color: #86EFAC;
+}
+
+.co-flow-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 4px;
+  margin-bottom: 14px;
+  border-radius: 14px;
+  background: rgba(9, 9, 11, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.co-flow-tab {
+  min-height: 36px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: #9CA3AF;
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 180ms ease, color 180ms ease;
+}
+.co-flow-tab.is-active {
+  background: rgba(56, 189, 248, 0.18);
+  color: #FFFFFF;
+  box-shadow: inset 0 0 0 1px rgba(56, 189, 248, 0.35);
+}
+
+.co-pp-msg-slot {
+  margin-bottom: 10px;
+  font-size: 0.8rem;
+  color: #E5E7EB;
+}
+.co-pp-msg-slot:empty {
+  display: none;
+  margin: 0;
+}
+.co-vault-row {
+  margin-bottom: 12px;
+}
+.co-vault-check {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  font-size: 0.78rem;
+  color: #D1D5DB;
+  cursor: pointer;
+}
+.co-vault-check input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: #0A84FF;
+  flex-shrink: 0;
+}
+.co-pp-status {
+  margin-bottom: 10px;
+  padding: 9px 12px;
+  border-radius: 12px;
+  background: rgba(10, 132, 255, 0.14);
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  color: #BAE6FD;
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-align: center;
+}
+
 .co-paypal-host {
   min-height: 110px;
-  padding: 10px;
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.96);
+  padding: 12px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.97);
+}
+.co-paypal-host.co-paypal-host--v6 {
+  min-height: 58px;
+  padding: 0;
+  background: transparent;
+}
+.co-v6-btn-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+}
+.co-v6-el {
+  display: block;
+  width: 100%;
+  min-height: 46px;
+}
+.co-wallet-btn {
+  width: 100%;
+  min-height: 46px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  font-size: 0.94rem;
+  font-weight: 700;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: transform 180ms cubic-bezier(0.32, 0.72, 0, 1), filter 180ms ease;
+}
+.co-wallet-apple {
+  background: #000000;
+  color: #FFFFFF;
+}
+.co-wallet-btn:hover { filter: brightness(1.1); }
+.co-wallet-btn:active { transform: scale(0.98); }
+
+.co-cardfields-wrap {
+  margin-top: 16px;
+}
+.co-cf-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 4px 0 14px;
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: #9CA3AF;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.co-cf-divider::before,
+.co-cf-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.1);
+}
+.co-cf-box {
+  padding: 16px;
+  border-radius: 16px;
+  background: rgba(9, 9, 11, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+.co-cf-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px;
+  font-size: 0.84rem;
+  color: #FFFFFF;
+}
+.co-cf-brand {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #7DD3FC;
+}
+.co-cf-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.co-cf-slot {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.co-cf-slot.co-cf-full {
+  grid-column: 1 / -1;
+}
+.co-cf-slot label {
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: #D1D5DB;
+}
+.co-cf-iframe-slot {
+  height: 44px;
+  padding: 2px 10px;
+  border-radius: 12px;
+  background: rgba(22, 24, 29, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+}
+.co-cf-iframe-slot > * {
+  width: 100%;
+  height: 40px;
+}
+
+.co-pp-notice {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(212, 175, 55, 0.1);
+  border: 1px solid rgba(212, 175, 55, 0.3);
+  color: #F3D97E;
+  font-size: 0.75rem;
+  line-height: 1.48;
+}
+.co-pp-notice code {
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: rgba(0, 0, 0, 0.35);
+  color: #FFFFFF;
 }
 .co-paypal-loading {
   padding: 24px;

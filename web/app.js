@@ -5,7 +5,7 @@ import { detectLocale, getDict } from './i18n.js?v=23';
 import { attachDismissableSheet, createSpringPill, attachSpringPress, attachSegSpringPills } from './springs.mjs?v=23';
 import { enhanceLiquidGlass } from './glass.js?v=23';
 import { audioEngine } from './audio-engine.js?v=23';
-import { createCredoOneController } from './credo-one-sheet.js?v=29';
+import { createCredoOneController } from './credo-one-sheet.js?v=33';
 
 const ICON_PLAY = '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" style="margin-left:2px"><path d="M8 5v14l11-7z"/></svg>';
 const ICON_PAUSE = '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M6 5h4v14H6zm8 0h4v14h-4z"/></svg>';
@@ -459,9 +459,8 @@ class CredoApp {
       navigator.serviceWorker.register('/sw.js').catch(() => {});
     }
 
-    // Wire top-layer dialogs
+    // Wire top-layer dialogs (credoOneDialog uses non-top-layer backdrop so PayPal v6/v5 modals & 3DS sit cleanly above)
     wireDialogAccessibility(document.getElementById('modalDialog'));
-    wireDialogAccessibility(document.getElementById('credoOneDialog'));
     wireDialogAccessibility(document.getElementById('storyDialog'));
     this._credoOne = createCredoOneController(this);
 
@@ -524,6 +523,7 @@ class CredoApp {
             else localStorage.removeItem('credo-user-cache');
           } catch {}
           this.renderChrome();
+          this._credoOne?.handlePayPalReturnIfPresent?.();
         })
         .catch((err) => {
           if (err?.status === 401) {
@@ -536,6 +536,8 @@ class CredoApp {
             this.renderChrome();
           }
         });
+    } else {
+      this._credoOne?.handlePayPalReturnIfPresent?.();
     }
 
     this.prefetchCore();

@@ -62,10 +62,25 @@ app.use(
           "'unsafe-inline'",
           'https://www.paypal.com',
           'https://www.sandbox.paypal.com',
+          'https://*.paypal.com',
           'https://www.paypalobjects.com',
+          'https://*.paypalobjects.com',
+          'https://pay.google.com',
+          'https://applepay.cdn-apple.com',
+          'https://static.cloudflareinsights.com',
         ],
-        styleSrc: ["'self'", "'unsafe-inline'"],
-        fontSrc: ["'self'", 'data:'],
+        styleSrc: [
+          "'self'",
+          "'unsafe-inline'",
+          'https://*.paypal.com',
+          'https://*.paypalobjects.com',
+        ],
+        fontSrc: [
+          "'self'",
+          'data:',
+          'https://*.paypal.com',
+          'https://*.paypalobjects.com',
+        ],
         imgSrc: [
           "'self'",
           'data:',
@@ -78,8 +93,10 @@ app.use(
           'https://i3.ytimg.com',
           'https://i4.ytimg.com',
           'https://www.paypalobjects.com',
+          'https://*.paypalobjects.com',
           'https://www.paypal.com',
           'https://*.paypal.com',
+          'https://pay.google.com',
           'https:',
         ],
         mediaSrc: ["'self'", 'blob:', 'https://paginas.moisespaulino.com'],
@@ -90,6 +107,10 @@ app.use(
           'https://www.paypal.com',
           'https://www.sandbox.paypal.com',
           'https://*.paypal.com',
+          'https://*.paypalobjects.com',
+          'https://*.firebaseapp.com',
+          'https://pay.google.com',
+          'https://*.cardinalcommerce.com',
         ],
         connectSrc: [
           "'self'",
@@ -97,8 +118,22 @@ app.use(
           'https://www.paypal.com',
           'https://www.sandbox.paypal.com',
           'https://*.paypal.com',
+          'https://*.paypalobjects.com',
           'https://api-m.paypal.com',
           'https://api-m.sandbox.paypal.com',
+          'https://payments.braintree-api.com',
+          'https://payments.sandbox.braintree-api.com',
+          'https://*.googleapis.com',
+          'https://*.firebaseio.com',
+          'wss://*.firebaseio.com',
+          'https://pay.google.com',
+          'https://cloudflareinsights.com',
+        ],
+        formAction: [
+          "'self'",
+          'https://www.paypal.com',
+          'https://www.sandbox.paypal.com',
+          'https://*.paypal.com',
         ],
         upgradeInsecureRequests: [],
       },
@@ -305,6 +340,8 @@ async function start() {
     console.log(`[credo] Server listening on http://0.0.0.0:${PORT}`);
     warmUpRosaryCache();
     mediaRoutes.warmUpProxyImages?.();
+    const { bootstrapPayPalAutomation } = require('./services/paypal');
+    bootstrapPayPalAutomation().catch((e) => console.warn('[paypal-boot]', e.message));
   });
 }
 

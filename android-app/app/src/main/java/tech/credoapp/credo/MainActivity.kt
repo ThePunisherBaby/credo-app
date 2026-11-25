@@ -7,9 +7,11 @@ import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Message
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
+import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
@@ -33,10 +35,13 @@ import androidx.core.view.WindowInsetsControllerCompat
 
 class MainActivity : AppCompatActivity() {
 
+    private lateinit var rootLayout: FrameLayout
     private lateinit var webView: WebView
     private lateinit var offlineBox: LinearLayout
     private lateinit var updateEngine: GitHubUpdateEngine
     private lateinit var mediaNotifier: CredoMediaNotifier
+    private var popupContainer: LinearLayout? = null
+    private var popupWebView: WebView? = null
     private var filePathCallback: ValueCallback<Array<Uri>>? = null
     private var pendingMediaJson: String? = null
     private var askedNotifPerm = false
@@ -45,6 +50,8 @@ class MainActivity : AppCompatActivity() {
     private var safeBottomDp = 0f
     private var safeLeftDp = 0f
     private var safeRightDp = 0f
+    private var safeTopPx = 0
+    private var safeBottomPx = 0
     private var lastIsDark = true
 
     private val filePickerLauncher =
@@ -187,15 +194,20 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        val root = FrameLayout(this).apply {
+        rootLayout = FrameLayout(this).apply {
             setBackgroundColor(if (osDark) Color.BLACK else Color.parseColor("#F2F4F8"))
         }
+
+        CookieManager.getInstance().setAcceptCookie(true)
 
         webView = WebView(this).apply {
             setBackgroundColor(if (osDark) Color.BLACK else Color.parseColor("#F2F4F8"))
             overScrollMode = View.OVER_SCROLL_NEVER
+            CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
             settings.apply {
                 javaScriptEnabled = true
+                javaScriptCanOpenWindowsAutomatically = true
+                setSupportMultipleWindows(true)
                 domStorageEnabled = true
                 @Suppress("DEPRECATION")
                 databaseEnabled = true
@@ -216,7 +228,7 @@ class MainActivity : AppCompatActivity() {
                 override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                     val uri = request?.url ?: return false
                     val host = uri.host?.lowercase() ?: ""
-                    if (host == "credoapp.tech" || host == "www.credoapp.tech") {
+                    if (isInAppCheckoutHost(host)) {
                         return false
                     }
                     try {
@@ -244,6 +256,17 @@ class MainActivity : AppCompatActivity() {
             }
 
             webChromeClient = object : WebChromeClient() {
+                override fun onCreateWindow(
+                    view: WebView?,
+                    isDialog: Boolean,
+                    isUserGesture: Boolean,
+                    resultMsg: Message?
+                ): Boolean {
+                    val transport = resultMsg?.obj as? WebView.WebViewTransport ?: return false
+                    openInAppPopupWebView(transport, resultMsg)
+                    return true
+                }
+
                 override fun onShowFileChooser(
                     webView: WebView?,
                     filePathCallback: ValueCallback<Array<Uri>>?,
@@ -295,12 +318,12 @@ class MainActivity : AppCompatActivity() {
             })
         }
 
-        root.addView(webView, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
-        root.addView(offlineBox, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+        rootLayout.addView(webView, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+        rootLayout.addView(offlineBox, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
 
         // True edge-to-edge full screen: ZERO system-bar padding on root.
         // Elevate bottom inset slightly above system gesture handle / 3-button navigation bar so dock feels effortlessly tappable.
-        ViewCompat.setOnApplyWindowInsetsListener(root) { view, insets ->
+        ViewCompat.setOnApplyWindowInsetsListener(rootLayout) { view, insets ->
             val safe = insets.getInsets(
                 WindowInsetsCompat.Type.statusBars() or WindowInsetsCompat.Type.displayCutout()
             )
@@ -310,6 +333,8 @@ class MainActivity : AppCompatActivity() {
             val tappable = insets.getInsets(WindowInsetsCompat.Type.tappableElement())
             val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
             val density = resources.displayMetrics.density.coerceAtLeast(1f)
+            safeTopPx = safe.top
+            safeBottomPx = bars.bottom
             safeTopDp = ((safe.top / density) - 4f).coerceAtLeast(0f)
             val tapBotDp = tappable.bottom / density
             val sysBotDp = bars.bottom / density
@@ -322,11 +347,20 @@ class MainActivity : AppCompatActivity() {
             WindowInsetsCompat.CONSUMED
         }
 
-        setContentView(root)
+        setContentView(rootLayout)
         applySystemBarAppearance(osDark)
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
+                val pv = popupWebView
+                if (pv != null) {
+                    if (pv.canGoBack()) {
+                        pv.goBack()
+                    } else {
+                        closeInAppPopupWebView()
+                    }
+                    return
+                }
                 if (webView.canGoBack()) {
                     webView.goBack()
                 } else {
@@ -350,6 +384,132 @@ class MainActivity : AppCompatActivity() {
         updateEngine.checkForUpdate(silent = true)
     }
 
+    private fun isInAppCheckoutHost(host: String): Boolean {
+        if (host.isEmpty()) return true
+        return host == "credoapp.tech" ||
+            host == "www.credoapp.tech" ||
+            host == "paypal.com" ||
+            host.endsWith(".paypal.com") ||
+            host == "paypalobjects.com" ||
+            host.endsWith(".paypalobjects.com") ||
+            host.endsWith(".braintree-api.com") ||
+            host.endsWith(".cardinalcommerce.com") ||
+            host == "venmo.com" ||
+            host.endsWith(".venmo.com")
+    }
+
+    @SuppressLint("SetJavaScriptEnabled")
+    private fun openInAppPopupWebView(transport: WebView.WebViewTransport, resultMsg: Message) {
+        closeInAppPopupWebView()
+
+        val density = resources.displayMetrics.density.coerceAtLeast(1f)
+        val padH = (14 * density).toInt()
+        val padV = (10 * density).toInt()
+
+        val titleView = TextView(this).apply {
+            text = "🔒 Pago seguro · PayPal"
+            textSize = 14f
+            setTextColor(Color.WHITE)
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+
+        val closeBtn = Button(this).apply {
+            text = "Cerrar"
+            textSize = 13f
+            setTextColor(Color.parseColor("#38BDF8"))
+            setBackgroundColor(Color.TRANSPARENT)
+            setOnClickListener { closeInAppPopupWebView() }
+        }
+
+        val headerBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setBackgroundColor(Color.parseColor("#0F1115"))
+            setPadding(padH, safeTopPx + padV, padH, padV)
+            addView(titleView)
+            addView(closeBtn)
+        }
+
+        val child = WebView(this).apply {
+            setBackgroundColor(Color.WHITE)
+            CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+            settings.apply {
+                javaScriptEnabled = true
+                javaScriptCanOpenWindowsAutomatically = true
+                setSupportMultipleWindows(true)
+                domStorageEnabled = true
+                @Suppress("DEPRECATION")
+                databaseEnabled = true
+                mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
+                useWideViewPort = true
+                loadWithOverviewMode = true
+                // Clean Chrome mobile UA (strip "; wv") so PayPal checkout & 3DS never block Android WebView
+                userAgentString = userAgentString.replace("; wv)", ")")
+            }
+            webViewClient = object : WebViewClient() {
+                override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+                    val uri = request?.url ?: return false
+                    val host = uri.host?.lowercase() ?: ""
+                    if (host == "credoapp.tech" || host == "www.credoapp.tech") {
+                        val urlStr = uri.toString()
+                        if (urlStr.contains("paypal_return=1") || urlStr.contains("paypal_sub_return=1") || urlStr.contains("paypal_cancel=1")) {
+                            closeInAppPopupWebView()
+                            webView.loadUrl(urlStr)
+                            return true
+                        }
+                    }
+                    return false
+                }
+
+                override fun onPageFinished(view: WebView?, url: String?) {
+                    val h = try { Uri.parse(url).host } catch (_: Exception) { null }
+                    if (!h.isNullOrBlank()) {
+                        titleView.text = "🔒 $h"
+                    }
+                }
+            }
+            webChromeClient = object : WebChromeClient() {
+                override fun onCloseWindow(window: WebView?) {
+                    closeInAppPopupWebView()
+                }
+            }
+        }
+
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.parseColor("#0F1115"))
+            setPadding(0, 0, 0, safeBottomPx)
+            addView(headerBar, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+            addView(child, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
+        }
+
+        popupWebView = child
+        popupContainer = container
+        rootLayout.addView(
+            container,
+            FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
+        )
+
+        transport.webView = child
+        resultMsg.sendToTarget()
+    }
+
+    private fun closeInAppPopupWebView() {
+        popupWebView?.let { pv ->
+            try {
+                pv.stopLoading()
+                pv.destroy()
+            } catch (_: Exception) {}
+        }
+        popupWebView = null
+        popupContainer?.let { pc ->
+            try {
+                rootLayout.removeView(pc)
+            } catch (_: Exception) {}
+        }
+        popupContainer = null
+    }
+
     private var lastAutoUpdateCheckMs = System.currentTimeMillis()
 
     override fun onResume() {
@@ -363,6 +523,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        closeInAppPopupWebView()
         if (::mediaNotifier.isInitialized) mediaNotifier.release()
         webView.destroy()
         super.onDestroy()

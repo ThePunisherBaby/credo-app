@@ -8,19 +8,65 @@ const {
 } = require('../config');
 const { pool } = require('../db/pool');
 
-let cachedToken = null;
-let cachedTokenExpiresAt = 0;
+let cachedAccessToken = null;
+let cachedAccessTokenExpiresAt = 0;
+
+// Browser-safe SDK v6 clientToken cache keyed by sorted domain CSV
+const clientTokenCache = new Map();
+
+// Runtime health & auto-provisioned webhook state
+let oauthHealthy = null; // null = untested, true = valid live/sandbox pair, false = auth failed
+let lastOAuthError = '';
+let resolvedWebhookId = PAYPAL_WEBHOOK_ID || '';
+
+const PAYPAL_WEBHOOK_EVENTS = [
+  'BILLING.SUBSCRIPTION.CREATED',
+  'BILLING.SUBSCRIPTION.ACTIVATED',
+  'BILLING.SUBSCRIPTION.UPDATED',
+  'BILLING.SUBSCRIPTION.CANCELLED',
+  'BILLING.SUBSCRIPTION.SUSPENDED',
+  'BILLING.SUBSCRIPTION.EXPIRED',
+  'BILLING.SUBSCRIPTION.PAYMENT.FAILED',
+  'PAYMENT.SALE.COMPLETED',
+  'PAYMENT.CAPTURE.COMPLETED',
+  'PAYMENT.CAPTURE.REFUNDED',
+  'VAULT.PAYMENT-TOKEN.CREATED',
+];
 
 function isPayPalConfigured() {
   return Boolean(PAYPAL_CLIENT_ID && PAYPAL_CLIENT_SECRET);
 }
 
+function getPayPalSdkCoreUrl() {
+  return PAYPAL_MODE === 'live'
+    ? 'https://www.paypal.com/web-sdk/v6/core'
+    : 'https://www.sandbox.paypal.com/web-sdk/v6/core';
+}
+
+function getPayPalStatusSnapshot() {
+  return {
+    mode: PAYPAL_MODE,
+    client_id: PAYPAL_CLIENT_ID || '',
+    configured: Boolean(PAYPAL_CLIENT_ID),
+    rest_configured: isPayPalConfigured(),
+    oauth_healthy: oauthHealthy === true,
+    v6_ready: Boolean(isPayPalConfigured() && oauthHealthy !== false),
+    webhook_ready: Boolean(resolvedWebhookId || PAYPAL_WEBHOOK_ID),
+    webhook_id: resolvedWebhookId || PAYPAL_WEBHOOK_ID || '',
+    sdk_v6_url: getPayPalSdkCoreUrl(),
+    last_oauth_error: oauthHealthy === false ? lastOAuthError : '',
+  };
+}
+
 async function getAccessToken({ forceRefresh = false } = {}) {
   if (!isPayPalConfigured()) {
-    throw new Error('PayPal credentials (PAYPAL_CLIENT_ID / PAYPAL_CLIENT_SECRET) are not configured.');
+    oauthHealthy = false;
+    lastOAuthError = 'PAYPAL_CLIENT_SECRET no configurado en el servidor.';
+    throw new Error(lastOAuthError);
   }
-  if (!forceRefresh && cachedToken && Date.now() < cachedTokenExpiresAt - 60_000) {
-    return cachedToken;
+  if (!forceRefresh && cachedAccessToken && Date.now() < cachedAccessTokenExpiresAt - 60_000) {
+    oauthHealthy = true;
+    return cachedAccessToken;
   }
 
   const basic = Buffer.from(`${PAYPAL_CLIENT_ID}:${PAYPAL_CLIENT_SECRET}`).toString('base64');
@@ -36,13 +82,91 @@ async function getAccessToken({ forceRefresh = false } = {}) {
 
   if (!res.ok) {
     const txt = await res.text().catch(() => '');
-    throw new Error(`PayPal OAuth2 failed (${res.status}): ${txt.slice(0, 240)}`);
+    oauthHealthy = false;
+    lastOAuthError = `PayPal OAuth2 (${res.status}): ${txt.slice(0, 220)}`;
+    throw new Error(lastOAuthError);
   }
 
   const data = await res.json();
-  cachedToken = data.access_token;
-  cachedTokenExpiresAt = Date.now() + Number(data.expires_in || 3600) * 1000;
-  return cachedToken;
+  cachedAccessToken = data.access_token;
+  cachedAccessTokenExpiresAt = Date.now() + Number(data.expires_in || 3600) * 1000;
+  oauthHealthy = true;
+  lastOAuthError = '';
+  return cachedAccessToken;
+}
+
+/**
+ * Generates a short-lived, domain-bound browser-safe clientToken for PayPal Web SDK v6
+ * (POST /v1/oauth2/token with grant_type=client_credentials&response_type=client_token&intent=sdk_init).
+ */
+async function generateBrowserSafeClientToken(domains = ['credoapp.tech']) {
+  if (!isPayPalConfigured()) {
+    oauthHealthy = false;
+    lastOAuthError = 'PAYPAL_CLIENT_SECRET no configurado.';
+    throw new Error(lastOAuthError);
+  }
+
+  const cleanDomains = Array.from(
+    new Set(
+      (Array.isArray(domains) ? domains : [domains])
+        .map((d) => String(d || '').trim().toLowerCase().replace(/^https?:\/\//, '').split('/')[0].split(':')[0])
+        .filter((d) => d && d !== 'localhost' && d !== '127.0.0.1' && d.includes('.'))
+    )
+  ).sort();
+
+  const cacheKey = `${PAYPAL_MODE}:${cleanDomains.join(',') || 'default'}`;
+  const cached = clientTokenCache.get(cacheKey);
+  if (cached && Date.now() < cached.expiresAt - 90_000) {
+    return {
+      client_token: cached.token,
+      expires_in: Math.max(60, Math.floor((cached.expiresAt - Date.now()) / 1000)),
+      domains: cleanDomains,
+    };
+  }
+
+  const basic = Buffer.from(`${PAYPAL_CLIENT_ID}:${PAYPAL_CLIENT_SECRET}`).toString('base64');
+  const params = new URLSearchParams({
+    grant_type: 'client_credentials',
+    response_type: 'client_token',
+    intent: 'sdk_init',
+  });
+  for (const dom of cleanDomains) {
+    params.append('domains[]', dom);
+  }
+
+  const res = await fetch(`${PAYPAL_API_BASE}/v1/oauth2/token`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Basic ${basic}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+      Accept: 'application/json',
+    },
+    body: params.toString(),
+  });
+
+  if (!res.ok) {
+    const txt = await res.text().catch(() => '');
+    oauthHealthy = false;
+    lastOAuthError = `PayPal SDK v6 clientToken (${res.status}): ${txt.slice(0, 220)}`;
+    throw new Error(lastOAuthError);
+  }
+
+  const data = await res.json();
+  const token = data.access_token || data.client_token;
+  if (!token) {
+    throw new Error('PayPal no devolvió access_token al solicitar client_token');
+  }
+  const expiresIn = Number(data.expires_in || 900);
+  const expiresAt = Date.now() + expiresIn * 1000;
+  clientTokenCache.set(cacheKey, { token, expiresAt });
+  oauthHealthy = true;
+  lastOAuthError = '';
+
+  return {
+    client_token: token,
+    expires_in: expiresIn,
+    domains: cleanDomains,
+  };
 }
 
 async function paypalRequest(method, apiPath, body = null, { requestId = null } = {}) {
@@ -72,13 +196,178 @@ async function paypalRequest(method, apiPath, body = null, { requestId = null } 
   }
 
   if (!res.ok) {
-    const msg = parsed?.message || parsed?.error_description || text.slice(0, 240);
-    const err = new Error(`PayPal ${method} ${apiPath} failed (${res.status}): ${msg}`);
+    const detail = parsed?.details?.[0]?.description || parsed?.message || parsed?.error_description || text.slice(0, 240);
+    const err = new Error(`PayPal ${method} ${apiPath} (${res.status}): ${detail}`);
     err.status = res.status;
     err.payload = parsed;
     throw err;
   }
   return parsed;
+}
+
+/**
+ * Creates a server-side PayPal Orders v2 order using the exact F# 8 PricingKernel amount.
+ * Supports PayPal Wallet, Pay Later, Venmo, Guest Card, PCI Card Fields, Apple Pay, Google Pay,
+ * Redirect presentation return URLs, and optional PayPal Vaulting for 1-click returning buyers.
+ */
+async function createOrderV2({
+  plan,
+  cycle = 'monthly',
+  userId,
+  returnUrl = 'https://credoapp.tech/?paypal_return=1',
+  cancelUrl = 'https://credoapp.tech/?paypal_cancel=1',
+  vault = false,
+  paymentSource = 'paypal',
+  requestId = null,
+}) {
+  const isAnnual = cycle === 'annual';
+  const cents = isAnnual ? plan.price_annual_cents : plan.price_monthly_cents;
+  const valueStr = (Number(cents) / 100).toFixed(2);
+  const cycleLabel = isAnnual ? 'Anual' : 'Mensual';
+  const customId = `${userId || 0}:${plan.sku}:${isAnnual ? 'annual' : 'monthly'}`;
+
+  const payload = {
+    intent: 'CAPTURE',
+    purchase_units: [
+      {
+        reference_id: plan.sku,
+        custom_id: customId,
+        description: `${plan.display_name} (${cycleLabel}) · Credo One`,
+        amount: {
+          currency_code: 'USD',
+          value: valueStr,
+          breakdown: {
+            item_total: {
+              currency_code: 'USD',
+              value: valueStr,
+            },
+          },
+        },
+        items: [
+          {
+            name: `${plan.display_name} (${cycleLabel})`,
+            sku: plan.sku,
+            quantity: '1',
+            category: 'DIGITAL_GOODS',
+            unit_amount: {
+              currency_code: 'USD',
+              value: valueStr,
+            },
+          },
+        ],
+      },
+    ],
+  };
+
+  if (paymentSource === 'paypal') {
+    payload.payment_source = {
+      paypal: {
+        experience_context: {
+          brand_name: 'Credo One',
+          locale: 'es-DO',
+          landing_page: 'LOGIN',
+          shipping_preference: 'NO_SHIPPING',
+          user_action: 'PAY_NOW',
+          return_url: returnUrl,
+          cancel_url: cancelUrl,
+        },
+      },
+    };
+    if (vault) {
+      payload.payment_source.paypal.attributes = {
+        vault: {
+          store_in_vault: 'ON_SUCCESS',
+          usage_type: 'MERCHANT',
+          customer_type: 'CONSUMER',
+        },
+      };
+    }
+  } else if (paymentSource === 'card') {
+    payload.payment_source = {
+      card: {
+        attributes: {
+          verification: {
+            method: 'SCA_WHEN_REQUIRED',
+          },
+          ...(vault
+            ? {
+                vault: {
+                  store_in_vault: 'ON_SUCCESS',
+                },
+              }
+            : {}),
+        },
+      },
+    };
+  }
+
+  return paypalRequest('POST', '/v2/checkout/orders', payload, {
+    requestId: requestId || `ord-${userId || 0}-${plan.sku}-${crypto.randomUUID().slice(0, 12)}`,
+  });
+}
+
+async function getOrderV2(orderId) {
+  return paypalRequest('GET', `/v2/checkout/orders/${encodeURIComponent(orderId)}`);
+}
+
+async function captureOrderV2(orderId, { requestId = null } = {}) {
+  return paypalRequest(
+    'POST',
+    `/v2/checkout/orders/${encodeURIComponent(orderId)}/capture`,
+    {},
+    { requestId: requestId || `cap-${orderId}` }
+  );
+}
+
+/**
+ * Creates a server-side PayPal Subscription v1 for SDK v6 createPayPalSubscriptionPaymentSession.
+ */
+async function createSubscriptionV1({
+  paypalPlanId,
+  plan,
+  cycle = 'monthly',
+  userId,
+  userEmail = '',
+  userName = '',
+  returnUrl = 'https://credoapp.tech/?paypal_sub_return=1',
+  cancelUrl = 'https://credoapp.tech/?paypal_cancel=1',
+}) {
+  const safeCycle = cycle === 'annual' ? 'annual' : 'monthly';
+  const payload = {
+    plan_id: paypalPlanId,
+    custom_id: `${userId || 0}:${plan.sku}:${safeCycle}`,
+    application_context: {
+      brand_name: 'Credo One',
+      locale: 'es-DO',
+      shipping_preference: 'NO_SHIPPING',
+      user_action: 'SUBSCRIBE_NOW',
+      payment_method: {
+        payer_selected: 'PAYPAL',
+        payee_preferred: 'IMMEDIATE_PAYMENT_REQUIRED',
+      },
+      return_url: returnUrl,
+      cancel_url: cancelUrl,
+    },
+  };
+
+  if (userEmail) {
+    const parts = String(userName || '').trim().split(/\s+/);
+    payload.subscriber = {
+      email_address: userEmail,
+      ...(parts[0]
+        ? {
+            name: {
+              given_name: parts[0].slice(0, 140),
+              surname: (parts.slice(1).join(' ') || 'Credo').slice(0, 140),
+            },
+          }
+        : {}),
+    };
+  }
+
+  return paypalRequest('POST', '/v1/billing/subscriptions', payload, {
+    requestId: `sub-${userId || 0}-${plan.sku}-${crypto.randomUUID().slice(0, 12)}`,
+  });
 }
 
 /**
@@ -91,7 +380,6 @@ async function setupPayPalProductsAndPlans() {
     `SELECT * FROM subscription_plans WHERE is_enterprise = FALSE ORDER BY sort_order ASC`
   );
 
-  // List existing products & plans first for strict idempotency
   const existingProductsRes = await paypalRequest('GET', '/v1/catalogs/products?page_size=20&page=1').catch(() => ({
     products: [],
   }));
@@ -205,6 +493,66 @@ async function setupPayPalProductsAndPlans() {
   return summary;
 }
 
+/**
+ * Idempotently ensures the Credo One PayPal Webhook is registered on PayPal REST API
+ * for all subscription, capture, refund, and vault events.
+ */
+async function ensureWebhookRegistered(webhookUrl = 'https://credoapp.tech/api/webhooks/paypal') {
+  const listRes = await paypalRequest('GET', '/v1/notifications/webhooks').catch(() => ({ webhooks: [] }));
+  const webhooks = listRes?.webhooks || [];
+  const existing = webhooks.find((w) => String(w.url || '').replace(/\/+$/, '') === webhookUrl.replace(/\/+$/, ''));
+
+  if (existing?.id) {
+    resolvedWebhookId = existing.id;
+    return { webhook_id: existing.id, url: existing.url, created: false };
+  }
+
+  const created = await paypalRequest(
+    'POST',
+    '/v1/notifications/webhooks',
+    {
+      url: webhookUrl,
+      event_types: PAYPAL_WEBHOOK_EVENTS.map((name) => ({ name })),
+    },
+    { requestId: `wh-credo-one-${PAYPAL_MODE}` }
+  );
+
+  if (created?.id) {
+    resolvedWebhookId = created.id;
+  }
+  return { webhook_id: created?.id || '', url: webhookUrl, created: true };
+}
+
+/**
+ * Auto-runs on server startup whenever PAYPAL_CLIENT_ID + PAYPAL_CLIENT_SECRET are configured.
+ * Verifies OAuth2 credentials, provisions all 4 products + 8 plans, and registers the live webhook.
+ */
+async function bootstrapPayPalAutomation() {
+  if (!isPayPalConfigured()) {
+    oauthHealthy = false;
+    lastOAuthError = 'PAYPAL_CLIENT_SECRET no configurado (modo v5 Smart Checkout activo).';
+    console.log(`[paypal] Mode=${PAYPAL_MODE} · ClientID=${PAYPAL_CLIENT_ID ? 'set' : 'missing'} · Secret=missing (SDK v6 awaits paired PAYPAL_CLIENT_SECRET)`);
+    return { ok: false, reason: 'missing_secret' };
+  }
+
+  try {
+    await getAccessToken({ forceRefresh: true });
+    const plansSummary = await setupPayPalProductsAndPlans();
+    const webhookRes = await ensureWebhookRegistered('https://credoapp.tech/api/webhooks/paypal').catch((e) => ({
+      error: e.message,
+    }));
+    console.log(
+      `[paypal] SDK v6 READY (${PAYPAL_MODE}) · ${plansSummary.length} products / ${plansSummary.length * 2} plans synced · webhook=${webhookRes.webhook_id || webhookRes.error || 'n/a'}`
+    );
+    return { ok: true, plans: plansSummary, webhook: webhookRes };
+  } catch (err) {
+    oauthHealthy = false;
+    lastOAuthError = err.message;
+    console.warn(`[paypal] Automation deferred (${PAYPAL_MODE}): ${err.message}`);
+    return { ok: false, error: err.message };
+  }
+}
+
 async function getSubscriptionDetails(subscriptionId) {
   return paypalRequest('GET', `/v1/billing/subscriptions/${encodeURIComponent(subscriptionId)}`);
 }
@@ -216,7 +564,8 @@ async function cancelPayPalSubscription(subscriptionId, reason = 'Cancelado por 
 }
 
 async function verifyWebhookSignature(headers, webhookEventBody) {
-  if (!isPayPalConfigured() || !PAYPAL_WEBHOOK_ID) {
+  const effectiveWebhookId = PAYPAL_WEBHOOK_ID || resolvedWebhookId;
+  if (!isPayPalConfigured() || !effectiveWebhookId) {
     return { verified: false, reason: 'PAYPAL_WEBHOOK_ID or PayPal API credentials not configured' };
   }
 
@@ -236,7 +585,7 @@ async function verifyWebhookSignature(headers, webhookEventBody) {
     transmission_id: transmissionId,
     transmission_sig: transmissionSig,
     transmission_time: transmissionTime,
-    webhook_id: PAYPAL_WEBHOOK_ID,
+    webhook_id: effectiveWebhookId,
     webhook_event: webhookEventBody,
   };
 
@@ -252,9 +601,18 @@ async function verifyWebhookSignature(headers, webhookEventBody) {
 
 module.exports = {
   isPayPalConfigured,
+  getPayPalSdkCoreUrl,
+  getPayPalStatusSnapshot,
   getAccessToken,
+  generateBrowserSafeClientToken,
   paypalRequest,
+  createOrderV2,
+  getOrderV2,
+  captureOrderV2,
+  createSubscriptionV1,
   setupPayPalProductsAndPlans,
+  ensureWebhookRegistered,
+  bootstrapPayPalAutomation,
   getSubscriptionDetails,
   cancelPayPalSubscription,
   verifyWebhookSignature,

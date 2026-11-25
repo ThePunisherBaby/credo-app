@@ -1,14 +1,14 @@
-// sw.js — Credo Offline-First Shell & Zero-Latency Local Image Cache (v29)
-const SHELL_CACHE = 'credo-shell-v29';
+// sw.js — Credo Offline-First Shell & Zero-Latency Local Image Cache (v33)
+const SHELL_CACHE = 'credo-shell-v33';
 const IMG_CACHE = 'credo-img-v2';
 const MAX_IMG_ENTRIES = 160;
 
 const SHELL_ASSETS = [
   '/',
   '/styles.css?v=25',
-  '/credo-one.css?v=28',
-  '/app.js?v=29',
-  '/credo-one-sheet.js?v=29',
+  '/credo-one.css?v=33',
+  '/app.js?v=33',
+  '/credo-one-sheet.js?v=33',
   '/springs.mjs?v=23',
   '/glass.js?v=23',
   '/audio-engine.js?v=23',
@@ -98,18 +98,17 @@ self.addEventListener('fetch', (event) => {
   // Never intercept JSON API calls (handled by app.js 2-tier Memory + localStorage SWR cache)
   if (url.pathname.startsWith('/api/')) return;
 
-  // 2. Navigation / HTML -> Stale-While-Revalidate (0ms instant cold start!)
+  // 2. Navigation / HTML -> Network-First (instant updates on first open, offline cache fallback)
   if (req.mode === 'navigate' || url.pathname === '/' || url.pathname === '/index.html') {
     event.respondWith(
       caches.open(SHELL_CACHE).then(async (cache) => {
-        const cached = await cache.match('/');
-        const netPromise = fetch(req)
-          .then((res) => {
-            if (res && res.ok) cache.put('/', res.clone());
-            return res;
-          })
-          .catch(() => cached);
-        return cached || netPromise;
+        try {
+          const net = await fetch(req, { cache: 'no-cache' });
+          if (net && net.ok) cache.put('/', net.clone());
+          return net;
+        } catch {
+          return (await cache.match('/')) || new Response('Offline', { status: 503 });
+        }
       })
     );
     return;
