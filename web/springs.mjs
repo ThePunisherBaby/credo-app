@@ -113,41 +113,53 @@ export const MOTION = {
   microSnappy: fromDurationBounce(0.3, 0.18),
   large: fromDurationBounce(0.56, 0),
   island: fromDurationBounce(0.24, 0.22),
+  ios26Pill: fromDurationBounce(0.32, 0.24),
+  ios26Droplet: fromDurationBounce(0.36, 0.28),
+  ios26Zoom: fromDurationBounce(0.38, 0.14),
+  ios26Button: fromDurationBounce(0.26, 0.22),
 };
 
 /**
- * Apple Dynamic Island Sliding Pill Indicator.
- * Pure GPU compositor transform (translate3d + velocity scale3d) with static width
- * so border-radius: 999px never flashes rectangular during layout/texture reallocation.
+ * Apple iOS 26 Liquid Glass Sliding Droplet Indicator.
+ * Pure GPU compositor transform (translate3d + velocity droplet scale3d) with static width
+ * so border-radius: 9999px never flashes rectangular during layout/texture reallocation.
  */
-export function createSpringPill(containerEl, indicatorEl) {
+export function createSpringPill(containerEl, indicatorEl, opts = {}) {
   const reduceMQ = window.matchMedia('(prefers-reduced-motion: reduce)');
-  const sx = new SpringValue(0, MOTION.island);
-  const sw = new SpringValue(0, MOTION.island);
+  const springSpec = opts.spring || MOTION.ios26Pill;
+  const sx = new SpringValue(0, springSpec);
+  const sw = new SpringValue(0, springSpec);
   let initialized = false;
   let lastTargetX = null;
   let lastTargetW = null;
   let staticBaseW = 0;
   let raf = 0;
+  let pressed = false;
 
   const paint = (x, w, vX = 0) => {
     if (w <= 0 || staticBaseW <= 0) return;
-    // Set CSS width only on initialization or real resize — NEVER per-frame during motion
     const widthRatio = w / staticBaseW;
-    const velStretch = Math.min(0.14, Math.abs(vX) / 2800);
-    const scaleX = widthRatio * (1 + velStretch);
-    const scaleY = 1 - Math.min(0.06, Math.abs(vX) / 5600);
-    // Keep visual center aligned with spring position when stretched
+    const normVel = Math.min(1, Math.abs(vX) / 2100);
+    // Elastic droplet elongation along velocity vector (conserves area smoothly)
+    const velStretch = normVel * 0.2;
+    const pressPop = pressed ? 1.045 : 1;
+    const scaleX = widthRatio * (1 + velStretch) * pressPop;
+    const scaleY = (1 - normVel * 0.085) * (pressed ? 1.06 : 1);
     const stretchOffset = (w * (1 - (1 + velStretch))) * 0.5;
     indicatorEl.style.transform = `translate3d(${(x + stretchOffset).toFixed(2)}px, 0, 0) scale3d(${scaleX.toFixed(4)}, ${scaleY.toFixed(4)}, 1)`;
     indicatorEl.style.opacity = '1';
+    if (normVel > 0.04) {
+      indicatorEl.dataset.moving = '1';
+    } else {
+      delete indicatorEl.dataset.moving;
+    }
   };
 
   const tick = (ms) => {
     const now = ms / 1000;
     const xS = sx.sample(now);
     const wS = sw.sample(now);
-    if (sx.isSettled(now, 0.12, 0.6) && sw.isSettled(now, 0.12, 0.6)) {
+    if (sx.isSettled(now, 0.1, 0.5) && sw.isSettled(now, 0.1, 0.5)) {
       paint(sx.target, sw.target, 0);
       raf = 0;
       return;
@@ -202,8 +214,8 @@ export function createSpringPill(containerEl, indicatorEl) {
         return;
       }
 
-      sx.retarget(targetX, now, MOTION.island);
-      sw.retarget(targetW, now, MOTION.island);
+      sx.retarget(targetX, now, springSpec);
+      sw.retarget(targetW, now, springSpec);
       if (!raf) raf = requestAnimationFrame(tick);
       settleFallback = setTimeout(() => {
         if (raf) {
@@ -213,7 +225,21 @@ export function createSpringPill(containerEl, indicatorEl) {
           sw.set(targetW, performance.now() / 1000);
           paint(targetX, targetW, 0);
         }
-      }, 360);
+      }, 420);
+    },
+    setPressed(isPressed) {
+      pressed = !!isPressed;
+      if (!initialized || raf || reduceMQ.matches) return;
+      paint(sx.target, sw.target, 0);
+    },
+    scrubToX(clientX) {
+      if (!initialized || !containerEl || staticBaseW <= 0) return;
+      const cRect = containerEl.getBoundingClientRect();
+      const maxX = Math.max(0, cRect.width - staticBaseW - 4);
+      const clampedX = Math.max(4, Math.min(maxX, clientX - cRect.left - staticBaseW * 0.5));
+      const now = performance.now() / 1000;
+      sx.retarget(clampedX, now, MOTION.interactive);
+      if (!raf) raf = requestAnimationFrame(tick);
     },
     isReady() {
       return initialized;
@@ -227,28 +253,89 @@ export function createSpringPill(containerEl, indicatorEl) {
 }
 
 /**
- * Delegated 120Hz Apple touch-down tactile micro-spring compression.
- * Instant frame-0 press feedback without layout thrash.
+ * Automatically upgrades any `.seg-tabs` or `.segmented` pill container
+ * with an iOS 26 sliding Liquid Glass droplet indicator.
+ */
+export function attachSegSpringPills(rootEl = document) {
+  const containers = rootEl.querySelectorAll('.seg-tabs, .segmented');
+  containers.forEach((container) => {
+    let pill = container.querySelector(':scope > .seg-pill-indicator');
+    if (!pill) {
+      pill = document.createElement('span');
+      pill.className = 'seg-pill-indicator';
+      pill.setAttribute('aria-hidden', 'true');
+      container.prepend(pill);
+    }
+    const ctrl = container._segPillCtrl || createSpringPill(container, pill, { spring: MOTION.ios26Droplet });
+    container._segPillCtrl = ctrl;
+
+    const sync = (immediate = false) => {
+      const active = container.querySelector('.seg-tab.is-active, .seg-btn.is-active, .seg-tab.active, .seg-btn.active');
+      if (active) ctrl.moveTo(active, immediate);
+    };
+
+    requestAnimationFrame(() => sync(!ctrl.isReady()));
+
+    if (!container._segPillBound) {
+      container._segPillBound = true;
+      container.addEventListener('click', () => {
+        requestAnimationFrame(() => sync(false));
+      });
+      if ('ResizeObserver' in window) {
+        const ro = new ResizeObserver(() => sync(true));
+        ro.observe(container);
+      }
+    }
+  });
+}
+
+/**
+ * Delegated 120Hz Apple touch-down tactile micro-spring compression,
+ * live fingertip specular coordinates (--glow-x / --glow-y), and elastic rebound.
  */
 export function attachSpringPress(rootEl = document.body) {
   const reduceMQ = window.matchMedia('(prefers-reduced-motion: reduce)');
-  const selector = '.btn, .chip, .station-card, .entity-row, .story-item, .pray-candle-btn, .act-btn';
+  const selector =
+    '.btn, .chip, .station-card, .entity-row, .story-item, .pray-candle-btn, .act-btn, .dock-btn, .seg-tab, .segmented-btn, .prog-hcard, .icon-pill, .media-action-btn, .explore-pill';
   let activeEl = null;
+
+  const setGlowCoords = (el, clientX, clientY) => {
+    const r = el.getBoundingClientRect();
+    if (!r.width || !r.height) return;
+    const gx = Math.max(0, Math.min(100, ((clientX - r.left) / r.width) * 100));
+    const gy = Math.max(0, Math.min(100, ((clientY - r.top) / r.height) * 100));
+    el.style.setProperty('--glow-x', `${gx.toFixed(1)}%`);
+    el.style.setProperty('--glow-y', `${gy.toFixed(1)}%`);
+  };
 
   const release = () => {
     if (!activeEl) return;
-    activeEl.classList.remove('is-pressed');
+    const released = activeEl;
     activeEl = null;
+    released.classList.remove('is-pressed');
+    if (!reduceMQ.matches) {
+      released.classList.add('is-rebound');
+      setTimeout(() => released.classList.remove('is-rebound'), 240);
+    }
   };
 
   rootEl.addEventListener(
     'pointerdown',
     (e) => {
-      if (reduceMQ.matches || (e.button && e.button !== 0)) return;
+      if (e.button && e.button !== 0) return;
       const el = e.target.closest(selector);
       if (!el) return;
       activeEl = el;
-      el.classList.add('is-pressed');
+      setGlowCoords(el, e.clientX, e.clientY);
+      if (!reduceMQ.matches) el.classList.add('is-pressed');
+    },
+    { passive: true }
+  );
+  rootEl.addEventListener(
+    'pointermove',
+    (e) => {
+      if (!activeEl) return;
+      setGlowCoords(activeEl, e.clientX, e.clientY);
     },
     { passive: true }
   );

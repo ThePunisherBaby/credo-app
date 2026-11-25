@@ -13,6 +13,7 @@ const path = require('path');
 const os = require('os');
 const { spawn } = require('child_process');
 const { pool } = require('../db/pool');
+const { formatTextForSpeech } = require('../utils/speechText');
 
 const CACHE_DIR = path.join(os.tmpdir(), 'credo-rosary-v2');
 const BUNDLED_BG_MUSIC = path.join(__dirname, '..', 'assets', 'bg_music.mp3');
@@ -299,23 +300,41 @@ function getLiturgicalContext() {
   const secondsUntilNext = Math.max(0, nextStartSec - nowSecOfDay);
 
   const fmtHour = (h) => (h === 0 ? '12:00 AM' : h < 12 ? `${h}:00 AM` : h === 12 ? '12:00 PM' : `${h - 12}:00 PM`);
+  const weeklyCalendar = [
+    { dow: 1, short: 'Lun', day: 'Lunes', mysteryKey: 'joyful', mysteryName: 'Gozosos' },
+    { dow: 2, short: 'Mar', day: 'Martes', mysteryKey: 'sorrowful', mysteryName: 'Dolorosos' },
+    { dow: 3, short: 'Mié', day: 'Miércoles', mysteryKey: 'glorious', mysteryName: 'Gloriosos' },
+    { dow: 4, short: 'Jue', day: 'Jueves', mysteryKey: 'luminous', mysteryName: 'Luminosos' },
+    { dow: 5, short: 'Vie', day: 'Viernes', mysteryKey: 'sorrowful', mysteryName: 'Dolorosos' },
+    { dow: 6, short: 'Sáb', day: 'Sábado', mysteryKey: 'joyful', mysteryName: 'Gozosos' },
+    {
+      dow: 0,
+      short: 'Dom',
+      day: 'Domingo',
+      mysteryKey: seasonCode === 'lent' ? 'sorrowful' : seasonCode === 'advent' || seasonCode === 'christmas' ? 'joyful' : 'glorious',
+      mysteryName: seasonCode === 'lent' ? 'Dolorosos' : seasonCode === 'advent' || seasonCode === 'christmas' ? 'Gozosos' : 'Gloriosos',
+    },
+  ].map((item) => ({ ...item, is_today: item.dow === sd.dow }));
 
   return {
     timezone: 'America/Santo_Domingo (UTC-4)',
     local_time: `${String(sd.hour).padStart(2, '0')}:${String(sd.minute).padStart(2, '0')}`,
+    today_dow: sd.dow,
     liturgical_season: season,
     season_code: seasonCode,
     use_regina_caeli: seasonCode === 'easter',
+    available_anytime: true,
     mystery: MYSTERIES[mysteryKey],
     all_mysteries: MYSTERIES,
     repertoire: YOUTUBE_REPERTOIRE,
+    weekly_calendar: weeklyCalendar,
     is_live_rosary: isRosaryHour,
     mode: isRosaryHour ? 'rosary' : 'interlude',
-    active_slot_label: isRosaryHour ? `${fmtHour(sd.hour)} · Santo Rosario en Vivo` : 'Música Católica de Fondo y Avisos',
+    active_slot_label: `${MYSTERIES[mysteryKey].name} · Disponible a cualquier hora`,
     next_rosary_label: fmtHour(nextHour),
     seconds_until_next: secondsUntilNext,
     schedule_hours: SCHEDULE_HOURS.map(fmtHour),
-    stream_url: '/api/v1/rosary/stream',
+    audio_url: '/api/v1/rosary/audio/today',
   };
 }
 
@@ -344,11 +363,13 @@ function runProcess(cmd, args, timeoutMs = 45000) {
 // Falls back to Google Translate TTS only if edge-tts fails.
 async function synthesizeSpeechToFile(text, outPath, voice = VOICE_LEADER) {
   if (fs.existsSync(outPath) && fs.statSync(outPath).size > 512) return outPath;
+  const spokenText = formatTextForSpeech(text);
+  if (!spokenText) throw new Error('Empty speech text');
   try {
     await runProcess('edge-tts', [
       '--voice', voice,
       '--rate=-6%',
-      '--text', text,
+      '--text', spokenText,
       '--write-media', outPath,
     ], 25000);
     if (fs.existsSync(outPath) && fs.statSync(outPath).size > 512) return outPath;
@@ -357,7 +378,7 @@ async function synthesizeSpeechToFile(text, outPath, voice = VOICE_LEADER) {
   }
 
   // Fallback to Google Translate TTS chunked
-  const parts = text.match(/.{1,175}(?:\s|$)/g) || [text];
+  const parts = spokenText.match(/.{1,175}(?:\s|$)/g) || [spokenText];
   const bufs = [];
   for (const p of parts) {
     const clean = p.trim();

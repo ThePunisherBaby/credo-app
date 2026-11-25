@@ -9,9 +9,10 @@ const rateLimit = require('express-rate-limit');
 const { PORT, CLERGY_RANKS } = require('./config');
 const { pool, initDatabase } = require('./db/pool');
 const { seedIfEmpty, purgeMockDataAndSyncReal } = require('./db/seed');
-const { syncOfficialSources, getLiveCatholicReels } = require('./utils/officialSync');
+const { syncOfficialSources } = require('./utils/officialSync');
 const { warmUpRosaryCache } = require('./services/rosaryRadio');
 const { optionalAuth } = require('./middleware/auth');
+const { apiCache } = require('./utils/fastCache');
 
 const authRoutes = require('./routes/auth');
 const unitsRoutes = require('./routes/units');
@@ -124,30 +125,24 @@ app.use('/api/v1/live', liveRoutes);
 app.use('/api/v1/prayers', prayersRoutes);
 app.use('/api/v1/rosary', rosaryRoutes);
 
-// Real Catholic Video Reels endpoint (merges user/clergy Credo reels + live Vatican News & EWTN feeds)
-app.get(['/api/v1/vids', '/api/v1/reels'], optionalAuth, async (req, res) => {
+// Credo Official Video Reels endpoint (internal clergy/church videos only — zero external EWTN/Vatican feeds)
+app.get(['/api/v1/vids', '/api/v1/reels'], optionalAuth, async (_req, res) => {
   try {
-    const [dbRes, liveReels] = await Promise.all([
-      pool.query(
+    const reels = await apiCache.getOrLoad('vids:global', 15000, async () => {
+      const dbRes = await pool.query(
         `SELECT p.id, p.title, p.content, p.image_url, p.youtube_id, p.video_duration,
                 p.channel_name, p.source_url, p.scripture_ref, p.created_at,
+                p.amen_count, p.comments_count,
                 u.id AS author_id, u.full_name AS author_full_name, u.title_prefix AS author_title_prefix,
-                u.avatar_color AS author_avatar_color, u.avatar_url AS author_avatar_url, u.is_ceo AS author_is_ceo,
-                (SELECT COUNT(*)::int FROM post_reactions pr WHERE pr.post_id = p.id AND pr.reaction_type = 'amen') AS amen_count,
-                (SELECT COUNT(*)::int FROM post_comments pc WHERE pc.post_id = p.id) AS comments_count
+                u.avatar_color AS author_avatar_color, u.avatar_url AS author_avatar_url, u.is_ceo AS author_is_ceo
            FROM posts p
            JOIN users u ON u.id = p.author_id
           WHERE p.media_kind = 'video' OR (p.youtube_id IS NOT NULL AND p.youtube_id <> '')
           ORDER BY p.created_at DESC
-          LIMIT 25`
-      ),
-      getLiveCatholicReels(),
-    ]);
+          LIMIT 30`
+      );
 
-    const seenYt = new Set();
-    const internalReels = dbRes.rows.map((r) => {
-      if (r.youtube_id) seenYt.add(r.youtube_id);
-      return {
+      return dbRes.rows.map((r) => ({
         id: `post-${r.id}`,
         post_id: r.id,
         is_external: false,
@@ -165,48 +160,42 @@ app.get(['/api/v1/vids', '/api/v1/reels'], optionalAuth, async (req, res) => {
         accent_color: r.author_avatar_color || '#0F1E36',
         amen_count: r.amen_count || 0,
         comments_count: r.comments_count || 0,
-      };
+      }));
     });
 
-    const merged = [
-      ...internalReels,
-      ...liveReels.filter((r) => !seenYt.has(r.youtube_id)),
-    ];
-
-    res.setHeader('Cache-Control', 'public, max-age=60, stale-while-revalidate=300');
-    return res.json({ reels: merged });
+    res.setHeader('Cache-Control', 'public, max-age=15, stale-while-revalidate=60');
+    return res.json({ reels });
   } catch (err) {
     console.error('[reels/list]', err);
     return res.status(500).json({ error: 'Failed to load reels' });
   }
 });
 
-// Global statistics endpoint
+// Global statistics endpoint (singleflight cached for massive concurrency)
 app.get('/api/v1/stats', async (_req, res) => {
   try {
-    const [unitsRes, countriesRes, clergyRes, membersRes, postsRes, liveRes, prayersRes] = await Promise.all([
-      pool.query('SELECT COUNT(*)::int AS cnt FROM ecclesiastical_units'),
-      pool.query(
-        "SELECT COUNT(DISTINCT country_code)::int AS cnt FROM ecclesiastical_units WHERE country_code IS NOT NULL AND country_code <> ''"
-      ),
-      pool.query('SELECT COUNT(*)::int AS cnt FROM users WHERE ecclesiastical_rank = ANY($1::text[])', [
-        [...CLERGY_RANKS],
-      ]),
-      pool.query('SELECT COUNT(*)::int AS cnt FROM users'),
-      pool.query('SELECT COUNT(*)::int AS cnt FROM posts'),
-      pool.query('SELECT COUNT(*)::int AS cnt FROM live_channels WHERE is_live = TRUE'),
-      pool.query('SELECT COALESCE(SUM(prayers_count), 0)::int AS cnt FROM prayer_intentions'),
-    ]);
+    const stats = await apiCache.getOrLoad('stats:global', 30000, async () => {
+      const [clergyRes, membersRes, postsRes, liveRes, prayersRes] = await Promise.all([
+        pool.query('SELECT COUNT(*)::int AS cnt FROM users WHERE ecclesiastical_rank = ANY($1::text[])', [
+          [...CLERGY_RANKS],
+        ]),
+        pool.query('SELECT COUNT(*)::int AS cnt FROM users'),
+        pool.query('SELECT COUNT(*)::int AS cnt FROM posts'),
+        pool.query('SELECT COUNT(*)::int AS cnt FROM live_channels WHERE is_live = TRUE'),
+        pool.query('SELECT COALESCE(SUM(prayers_count), 0)::int AS cnt FROM prayer_intentions'),
+      ]);
 
-    return res.json({
-      units: unitsRes.rows[0].cnt,
-      countries: countriesRes.rows[0].cnt,
-      clergy: clergyRes.rows[0].cnt,
-      members: membersRes.rows[0].cnt,
-      posts: postsRes.rows[0].cnt,
-      live_channels: liveRes.rows[0].cnt,
-      prayers_total: prayersRes.rows[0].cnt,
+      return {
+        clergy: clergyRes.rows[0].cnt,
+        members: membersRes.rows[0].cnt,
+        posts: postsRes.rows[0].cnt,
+        live_channels: liveRes.rows[0].cnt,
+        prayers_total: prayersRes.rows[0].cnt,
+      };
     });
+
+    res.setHeader('Cache-Control', 'public, max-age=30, stale-while-revalidate=60');
+    return res.json(stats);
   } catch (err) {
     console.error('[stats]', err);
     return res.status(500).json({ error: 'Failed to load stats' });

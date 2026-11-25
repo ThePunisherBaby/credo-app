@@ -30,7 +30,6 @@ export const CREDO_I18N = {
         video: 'Videos',
         article: 'Artículos',
         following: 'Siguiendo',
-        my_diocese: 'Mi Diócesis',
       },
       officialChannel: 'Canal Oficial',
       watchInline: 'Ver en Credo',
@@ -51,7 +50,7 @@ export const CREDO_I18N = {
       clergyOnlyDesc:
         'Para garantizar un feed curado y fiable, solo cuentas oficiales verificadas (sacerdotes, diáconos, obispos, cardenales y medios oficiales) publican en el feed. Como fiel puedes reaccionar, guardar, comentar y pedir oraciones en el Muro de Intenciones.',
       publishBtn: 'Publicar',
-      searchPlaceholder: 'Buscar homilías, sacerdotes, parroquias…',
+      searchPlaceholder: 'Buscar homilías, presbíteros, radios o videos…',
     },
     live: {
       title: 'En Vivo',

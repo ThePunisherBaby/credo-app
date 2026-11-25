@@ -10,20 +10,22 @@ const {
   resolveActiveAudioSource,
   synthesizeSpeechToFile,
 } = require('../services/rosaryRadio');
+const { formatTextForSpeech } = require('../utils/speechText');
 
 const router = express.Router();
 
 // GET /api/v1/rosary/tts — Real Human Neural Voice (es-DO-EmilioNeural / es-DO-RamonaNeural) MP3 generator
 router.get('/tts', async (req, res) => {
   try {
-    const text = String(req.query.text || '').trim().slice(0, 3500);
-    if (!text) return res.status(400).json({ error: 'text required' });
+    const rawText = String(req.query.text || '').trim().slice(0, 3800);
+    const spoken = formatTextForSpeech(rawText);
+    if (!spoken) return res.status(400).json({ error: 'text required' });
     const voice = req.query.voice === 'female' ? 'es-DO-RamonaNeural' : 'es-DO-EmilioNeural';
-    const hash = crypto.createHash('sha1').update(`${voice}:${text}`).digest('hex').slice(0, 20);
+    const hash = crypto.createHash('sha1').update(`${voice}:v2:${spoken}`).digest('hex').slice(0, 20);
     const ttsDir = path.join(CACHE_DIR, 'tts_cache');
     fs.mkdirSync(ttsDir, { recursive: true });
-    const outPath = path.join(ttsDir, `tts_${hash}.mp3`);
-    await synthesizeSpeechToFile(text, outPath, voice);
+    const outPath = path.join(ttsDir, `tts_v2_${hash}.mp3`);
+    await synthesizeSpeechToFile(spoken, outPath, voice);
     res.setHeader('Content-Type', 'audio/mpeg');
     res.setHeader('Cache-Control', 'public, max-age=86400, no-transform');
     return res.sendFile(outPath);

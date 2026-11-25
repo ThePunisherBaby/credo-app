@@ -1,21 +1,23 @@
-// views/prayer.js — Oración: Rosario 24/7 (7am/2pm/4pm/8pm) + Repertorio Completo por Día (Voz Humana y YouTube) + Música de Fondo + Oraciones + Muro
+// views/prayer.js — Oración: Santo Rosario a cualquier hora + Música + Evangelio (Voz Humana) + Muro
 
-import { audioEngine } from '../audio-engine.js?v=21';
-import { enhanceLiquidGlass } from '../glass.js?v=21';
+import { audioEngine } from '../audio-engine.js?v=22';
+import { enhanceLiquidGlass } from '../glass.js?v=22';
+import { attachSegSpringPills } from '../springs.mjs?v=22';
 
-function formatCountdown(sec) {
-  const s = Math.max(0, Number(sec) || 0);
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  const rem = s % 60;
-  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(rem).padStart(2, '0')}`;
-}
+const ART_BY_KEY = {
+  rosary: '/icons/art_rosary.png',
+  music: '/icons/art_music.png',
+  joyful: '/icons/art_morning.png',
+  luminous: '/icons/art_gospel.png',
+  sorrowful: '/icons/art_sorrow.png',
+  glorious: '/icons/art_glory.png',
+};
 
 const MYSTERY_DAYS_ORDER = [
-  { key: 'joyful', badge: 'Lunes y Sábado', title: 'Misterios Gozosos', yt: '5L5WfZIrUhQ' },
-  { key: 'sorrowful', badge: 'Martes y Viernes', title: 'Misterios Dolorosos', yt: 'I4oqxPybPgU' },
-  { key: 'glorious', badge: 'Miércoles y Domingo', title: 'Misterios Gloriosos', yt: 'Ojvu3uBzsXM' },
-  { key: 'luminous', badge: 'Jueves', title: 'Misterios Luminosos', yt: 'wZIFINvqbJw' },
+  { key: 'joyful', badge: 'Lunes y Sábado', title: 'Misterios Gozosos' },
+  { key: 'luminous', badge: 'Jueves', title: 'Misterios Luminosos' },
+  { key: 'sorrowful', badge: 'Martes y Viernes', title: 'Misterios Dolorosos' },
+  { key: 'glorious', badge: 'Miércoles y Domingo', title: 'Misterios Gloriosos' },
 ];
 
 const CATHOLIC_PRAYERS = {
@@ -53,11 +55,8 @@ export async function mount({ root, app, signal }) {
   let liturgy = null;
   let rosaryStatus = null;
   let rosaryTracks = [];
-  let countdownSec = 0;
   let intentions = [];
-  let activeYtEmbed = '';
   let audioUnsub = null;
-  let countdownTimer = null;
 
   root.innerHTML = `
     <div class="explore-sticky-top">
@@ -66,14 +65,17 @@ export async function mount({ root, app, signal }) {
         <span class="t-caption" style="color:var(--label-2);font-weight:700">${app.esc(d.prayer.subtitle)}</span>
       </div>
       <div class="seg-tabs" id="prayerTabs" role="tablist" style="margin-bottom:2px">
-        <button type="button" class="seg-tab is-active" data-ptab="rosary" role="tab" aria-selected="true">Rosario 24/7</button>
+        <button type="button" class="seg-tab is-active" data-ptab="rosary" role="tab" aria-selected="true">Rosario</button>
         <button type="button" class="seg-tab" data-ptab="prayers" role="tab" aria-selected="false">Oraciones</button>
         <button type="button" class="seg-tab" data-ptab="wall" role="tab" aria-selected="false">Muro</button>
       </div>
     </div>
 
     <div id="prayerTabRosary">
-      <div class="card"><div class="skeleton" style="height:240px"></div></div>
+      <div class="prog-hlist">
+        <div class="skeleton" style="height:92px;border-radius:24px"></div>
+        <div class="skeleton" style="height:92px;border-radius:24px"></div>
+      </div>
     </div>
 
     <div id="prayerTabPrayers" hidden>
@@ -84,7 +86,6 @@ export async function mount({ root, app, signal }) {
       <div class="chip-row" id="prayerFilterChips" role="tablist">
         <button type="button" class="chip is-active" data-pf="recent">${app.esc(d.prayer.filters.recent)}</button>
         <button type="button" class="chip" data-pf="urgent">${app.esc(d.prayer.filters.urgent)}</button>
-        <button type="button" class="chip" data-pf="parish">${app.esc(d.prayer.filters.parish)}</button>
         <button type="button" class="chip" data-pf="mine">${app.esc(d.prayer.filters.mine)}</button>
       </div>
       <section class="prayer-list" id="prayerList">
@@ -109,6 +110,7 @@ export async function mount({ root, app, signal }) {
   `;
 
   enhanceLiquidGlass(root.querySelector('#prayerFabGlass'));
+  attachSegSpringPills(root);
 
   const rosaryHost = root.querySelector('#prayerTabRosary');
   const prayersHost = root.querySelector('#prayerTabPrayers');
@@ -116,39 +118,20 @@ export async function mount({ root, app, signal }) {
   const prayerList = root.querySelector('#prayerList');
   const fabWrap = root.querySelector('#prayerFabWrap');
 
-  function makeLiveRosaryChannel(st) {
-    return {
-      id: 9001,
-      slug: 'credo-rosario',
-      name: 'Credo Radio Rosario 24/7',
-      tagline: `${st?.liturgical_season || 'Liturgia Católica'} · 7am · 2pm · 4pm · 8pm`,
-      current_program: st?.is_live_rosary
-        ? `EN VIVO: ${st?.mystery?.name || 'Santo Rosario'}`
-        : `Música Católica de Fondo y Avisos · Próximo: ${st?.next_rosary_label || '7:00 AM'}`,
-      frequency: st?.is_live_rosary ? 'ROSARIO EN VIVO' : '24/7 AUTOMÁTICO',
-      city: 'República Dominicana (UTC-4)',
-      accent_color: '#007AFF',
-      cover_url: '/icons/credo-512.png',
-      stream_url: '/api/v1/rosary/stream',
-      direct_stream_url: '/api/v1/rosary/audio/interlude',
-    };
-  }
-
-  function makeSlotChannel(slotKey, label, subLabel, ytId = '') {
+  function makeSlotChannel(slotKey, label, subLabel) {
     const idMap = { today: 9010, joyful: 9011, sorrowful: 9012, glorious: 9013, luminous: 9014, music: 9002 };
-    const qs = ytId ? `?yt=${encodeURIComponent(ytId)}` : '';
+    const cover = ART_BY_KEY[slotKey] || ART_BY_KEY.rosary;
     return {
       id: idMap[slotKey] || 9015,
-      slug: `rosario-${slotKey}${ytId ? '-' + ytId : ''}`,
+      slug: `rosario-${slotKey}`,
       name: label,
-      tagline: subLabel || 'Santo Rosario Completo · Voz Humana y Música Católica',
+      tagline: subLabel || 'Disponible a cualquier hora · Voz humana y música',
       current_program: subLabel || label,
       frequency: slotKey === 'music' ? 'MÚSICA DE ORACIÓN' : 'SANTO ROSARIO',
       city: 'Credo Oración',
       accent_color: '#007AFF',
-      cover_url: '/icons/credo-512.png',
-      stream_url: `/api/v1/rosary/audio/${encodeURIComponent(slotKey)}${qs}`,
-      direct_stream_url: `/api/v1/rosary/stream?slot=${encodeURIComponent(slotKey)}${ytId ? '&yt=' + encodeURIComponent(ytId) : ''}`,
+      cover_url: cover,
+      stream_url: `/api/v1/rosary/audio/${encodeURIComponent(slotKey)}`,
     };
   }
 
@@ -156,110 +139,120 @@ export async function mount({ root, app, signal }) {
     if (!rosaryStatus) return;
     const audioSt = audioEngine.getState();
     const curSlug = audioSt.channel?.slug || '';
-    const isPlayingLive247 = audioSt.playing && curSlug === 'credo-rosario';
-    const isPlayingTodayNow = audioSt.playing && (curSlug === 'rosario-today' || curSlug === `rosario-${rosaryStatus.mystery?.key}`);
-    const isPlayingBgMusic = audioSt.playing && (curSlug === 'rosario-music' || curSlug === 'credo-musica-oracion');
-
     const mystery = rosaryStatus.mystery || {};
+    const todayKey = mystery.key || 'joyful';
+    const isPlayingTodayNow =
+      audioSt.playing && (curSlug === 'rosario-today' || curSlug === `rosario-${todayKey}`);
+    const isPlayingBgMusic =
+      audioSt.playing && (curSlug === 'rosario-music' || curSlug === 'credo-musica-oracion');
+
     const schedule = rosaryStatus.schedule_hours || ['7:00 AM', '2:00 PM', '4:00 PM', '8:00 PM'];
-    const repertoire = rosaryStatus.repertoire || {};
     const canManageAudio = Boolean(app.user?.is_ceo || app.user?.ecclesiastical_rank === 'admin');
+    const calendar = rosaryStatus.weekly_calendar || [
+      { day: 'Lunes y Sábado', mystery: 'Misterios Gozosos' },
+      { day: 'Martes y Viernes', mystery: 'Misterios Dolorosos' },
+      { day: 'Miércoles y Domingo', mystery: 'Misterios Gloriosos' },
+      { day: 'Jueves', mystery: 'Misterios Luminosos' },
+    ];
+
+    const playOrExpand = (channel, isSameActive) => {
+      if (isSameActive) {
+        audioEngine.togglePlay();
+      } else {
+        app.playLive(channel, { expandPlayer: true });
+      }
+    };
+
+    const hPlayIcon = (playing) =>
+      playing
+        ? '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="5" width="4.5" height="14" rx="1.6"/><rect x="13.5" y="5" width="4.5" height="14" rx="1.6"/></svg>'
+        : '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5.5v13l11-6.5-11-6.5Z"/></svg>';
 
     rosaryHost.innerHTML = `
-      <article class="rosary-hero">
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
-          <span class="live-pill-lg"><span class="live-dot" aria-hidden="true"></span>${rosaryStatus.is_live_rosary ? 'ROSARIO EN VIVO' : 'RADIO ROSARIO 24/7'}</span>
-          <span style="font-size:0.76rem;color:rgba(255,255,255,0.82);font-weight:600">${app.esc(rosaryStatus.liturgical_season)} · ${app.esc(rosaryStatus.local_time || '')} RD</span>
-        </div>
+      <div class="prog-hlist" style="margin-bottom:var(--s-4)">
+        <button type="button" class="prog-hcard stagger-in${isPlayingTodayNow ? ' is-playing' : ''}" id="playTodayRosaryNowBtn" style="--stagger-i:0">
+          <img class="prog-hcard-bg" src="${ART_BY_KEY[todayKey] || ART_BY_KEY.rosary}" alt="" aria-hidden="true" />
+          <div class="prog-hcard-scrim" aria-hidden="true"></div>
+          <div class="prog-hcard-meta">
+            <div class="prog-hcard-top">
+              <span class="prog-hcard-pill is-today">Hoy · ${app.esc(mystery.daysLabel || rosaryStatus.liturgical_season || 'Rosario')}</span>
+              <span class="prog-hcard-pill">A cualquier hora</span>
+            </div>
+            <strong class="prog-hcard-title">Santo Rosario · ${app.esc(mystery.name || 'Misterios de Hoy')}</strong>
+            <span class="prog-hcard-sub">${isPlayingTodayNow ? 'Reproduciendo ahora · Toca para pausar' : 'Toca para rezar ahora con voz humana y música de paz'}</span>
+          </div>
+          <span class="prog-hcard-play" aria-hidden="true">${hPlayIcon(isPlayingTodayNow)}</span>
+        </button>
 
+        <button type="button" class="prog-hcard stagger-in${isPlayingBgMusic ? ' is-playing' : ''}" id="playBgMusicBtn" style="--stagger-i:1">
+          <img class="prog-hcard-bg" src="${ART_BY_KEY.music}" alt="" aria-hidden="true" />
+          <div class="prog-hcard-scrim" aria-hidden="true"></div>
+          <div class="prog-hcard-meta">
+            <div class="prog-hcard-top">
+              <span class="prog-hcard-pill">Instrumental</span>
+              <span class="prog-hcard-pill">Para meditar</span>
+            </div>
+            <strong class="prog-hcard-title">Música de Oración</strong>
+            <span class="prog-hcard-sub">${isPlayingBgMusic ? 'Reproduciendo ahora · Piano e instrumental sacro' : 'Toca para escuchar melodías contemplativas en paz'}</span>
+          </div>
+          <span class="prog-hcard-play" aria-hidden="true">${hPlayIcon(isPlayingBgMusic)}</span>
+        </button>
+      </div>
+
+      <div class="section-bar" style="margin-top:0;margin-bottom:10px">
         <div>
-          <h2 class="t-title-2" style="color:#FFFFFF;margin:0">Hoy: ${app.esc(mystery.name || 'Santo Rosario')}</h2>
-          <p style="margin:4px 0 0;font-size:0.84rem;color:rgba(255,255,255,0.82)">${app.esc(mystery.daysLabel || '')}</p>
+          <h3 class="t-title-3" style="margin:0">Elegir Misterios del Rosario</h3>
+          <p class="t-caption" style="margin:2px 0 0">Puedes rezar cualquiera en el momento del día que prefieras</p>
         </div>
+      </div>
 
-        <div class="rosary-times-grid">
-          ${schedule.map((slot) => {
-            const liveNow = rosaryStatus.is_live_rosary && String(rosaryStatus.active_slot_label || '').startsWith(slot);
-            return `<div class="rosary-time-chip${liveNow ? ' is-live' : ''}">${app.esc(slot)}</div>`;
-          }).join('')}
-        </div>
-
-        <div style="font-size:0.82rem;color:rgba(255,255,255,0.9)">
-          ${rosaryStatus.is_live_rosary
-            ? '<strong>Transmitiendo el Santo Rosario en comunidad ahora mismo</strong>'
-            : `Música católica de fondo activa · Próximo rosario grupal (${app.esc(rosaryStatus.next_rosary_label)}) en <strong id="rosaryCountdown">${formatCountdown(countdownSec)}</strong>`}
-        </div>
-
-        <div style="display:flex;flex-direction:column;gap:8px;padding-top:4px">
-          <button type="button" class="btn btn-gold btn-sm btn-block" id="playTodayRosaryNowBtn">
-            ${isPlayingTodayNow ? '⏸ Pausar Rosario de Hoy' : `▶ Rezar ${app.esc(mystery.name || 'Rosario')} Ahora`}
-          </button>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-            <button type="button" class="btn btn-sm" style="background:rgba(255,255,255,0.16);color:#fff" id="playRosaryStreamBtn">
-              ${isPlayingLive247 ? '⏸ Radio 24/7' : '📻 Radio 24/7'}
-            </button>
-            <button type="button" class="btn btn-sm" style="background:rgba(255,255,255,0.12);color:#fff" id="playBgMusicBtn">
-              ${isPlayingBgMusic ? '⏸ Música' : '🎵 Música Fondo'}
-            </button>
-          </div>
-        </div>
-      </article>
-
-      <!-- Repertorio Completo de los 4 Misterios del Santo Rosario por Día (Voz Humana Neuronal + YouTube) -->
-      <div class="card" style="margin-bottom:var(--s-4)">
-        <div class="section-bar" style="margin-top:0">
-          <div>
-            <h3 class="t-title-3" style="margin:0">Repertorio Completo del Santo Rosario por Día</h3>
-            <p class="t-caption" style="margin:2px 0 0">Voz humana natural + música católica de fondo y repertorio de YouTube según el día</p>
-          </div>
-        </div>
-
-        <div style="display:flex;flex-direction:column;gap:10px">
-          ${MYSTERY_DAYS_ORDER.map((item) => {
-            const isToday = mystery.key === item.key;
-            const slotSlug = `rosario-${item.key}`;
-            const isSlotPlaying = audioSt.playing && curSlug.startsWith(slotSlug);
-            const ytList = repertoire[item.key] || [];
-            const ytOpen = activeYtEmbed === item.key;
-
-            return `
-              <div style="padding:14px;border-radius:12px;background:var(--surface-2);border:1px solid ${isToday ? 'rgba(10,132,255,0.48)' : 'var(--sep)'}">
-                <div style="display:flex;flex-direction:column;gap:10px">
-                  <div>
-                    <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-                      <span class="t-caption" style="color:var(--gold-text);font-weight:800">${app.esc(item.badge)}</span>
-                      ${isToday ? '<span class="rank-tag" style="padding:2px 7px;font-size:0.68rem">HOY</span>' : ''}
-                    </div>
-                    <strong style="font-size:1rem;display:block;margin-top:3px">${app.esc(item.title)}</strong>
-                  </div>
-                  <div style="display:grid;grid-template-columns:1fr auto;gap:8px">
-                    <button type="button" class="btn btn-sm ${isSlotPlaying ? 'btn-soft' : 'btn-gold'}" data-play-mystery="${app.esc(item.key)}" data-mystery-title="${app.esc(item.title)}" data-mystery-days="${app.esc(item.badge)}">
-                      ${isSlotPlaying ? '⏸ En reproducción' : '▶ Escuchar Audio'}
-                    </button>
-                    <button type="button" class="btn btn-sm btn-soft" data-toggle-yt="${app.esc(item.key)}">
-                      ${ytOpen ? 'Cerrar ▴' : 'YouTube ▾'}
-                    </button>
-                  </div>
+      <div class="prog-hgrid" style="margin-bottom:var(--s-4)">
+        ${MYSTERY_DAYS_ORDER.map((item, idx) => {
+          const isToday = todayKey === item.key;
+          const isSlotPlaying = audioSt.playing && curSlug === `rosario-${item.key}`;
+          const art = ART_BY_KEY[item.key] || ART_BY_KEY.rosary;
+          return `
+            <button
+              type="button"
+              class="prog-hcard prog-hcard--compact stagger-in${isSlotPlaying ? ' is-playing' : ''}"
+              data-play-mystery="${app.esc(item.key)}"
+              data-mystery-title="${app.esc(item.title)}"
+              data-mystery-days="${app.esc(item.badge)}"
+              style="--stagger-i:${idx + 2}"
+            >
+              <img class="prog-hcard-bg" src="${art}" alt="" aria-hidden="true" />
+              <div class="prog-hcard-scrim" aria-hidden="true"></div>
+              <div class="prog-hcard-meta">
+                <div class="prog-hcard-top">
+                  <span class="prog-hcard-pill${isToday ? ' is-today' : ''}">${isToday ? 'HOY' : app.esc(item.badge)}</span>
                 </div>
+                <strong class="prog-hcard-title">${app.esc(item.title)}</strong>
+                <span class="prog-hcard-sub">${isToday ? app.esc(item.badge) : 'Rezar ahora'}</span>
+              </div>
+              <span class="prog-hcard-play" aria-hidden="true">${hPlayIcon(isSlotPlaying)}</span>
+            </button>
+          `;
+        }).join('')}
+      </div>
 
-                ${ytOpen ? `
-                  <div style="margin-top:12px;display:flex;flex-direction:column;gap:10px;border-top:1px solid var(--sep);padding-top:10px">
-                    <div style="aspect-ratio:16/9;border-radius:10px;overflow:hidden;background:#000">
-                      <iframe src="https://www.youtube.com/embed/${app.esc(item.yt)}?autoplay=1&playsinline=1&rel=0" style="width:100%;height:100%;border:0" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe>
-                    </div>
-                    ${ytList.map((v) => `
-                      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:0.82rem">
-                        <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">🎧 ${app.esc(v.title)} (${app.esc(v.duration_label)})</span>
-                        <button type="button" class="btn btn-sm btn-soft" data-play-yt-audio="${app.esc(v.youtube_id)}" data-yt-slot="${app.esc(item.key)}" data-yt-title="${app.esc(v.title)}">▶ Audio</button>
-                      </div>
-                    `).join('')}
-                  </div>
-                ` : ''}
+      <section class="mystery-cal stagger-in" style="--stagger-i:6;margin-bottom:var(--s-4)">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
+          <strong class="t-headline" style="margin:0">Calendario semanal y horarios sugeridos</strong>
+          <span class="t-caption" style="color:var(--gold-text);font-weight:700">${app.esc(schedule.join(' · '))}</span>
+        </div>
+        <div class="mystery-cal-rows">
+          ${calendar.map((row) => {
+            const label = row.mysteryName ? `Misterios ${row.mysteryName}` : (row.mystery || '');
+            const isTodayRow = Boolean(row.is_today) || String(label).toLowerCase() === String(mystery.name || '').toLowerCase();
+            return `
+              <div class="mystery-cal-row${isTodayRow ? ' is-today' : ''}">
+                <span>${app.esc(row.day)}</span>
+                <span>${app.esc(label)}</span>
               </div>
             `;
           }).join('')}
         </div>
-      </div>
+      </section>
 
       <div class="card" style="margin-bottom:var(--s-4)">
         <div class="section-bar" style="margin-top:0">
@@ -281,30 +274,29 @@ export async function mount({ root, app, signal }) {
       ${canManageAudio ? `
         <div class="card">
           <div class="section-bar" style="margin-top:0">
-            <h3 class="t-title-3">Estudio CEO · Audio y Publicidad 24/7</h3>
+            <h3 class="t-title-3">Estudio CEO · Audio de Oración</h3>
           </div>
-          <p class="t-footnote" style="margin-bottom:12px">Sube grabaciones personalizadas del Rosario o promos/avisos en MP3 para rotación automática en vivo.</p>
+          <p class="t-footnote" style="margin-bottom:12px">Sube grabaciones del Rosario o música contemplativa en MP3.</p>
           <form id="rosaryUploadForm" style="display:flex;flex-direction:column;gap:10px">
             <div class="field">
               <label for="ruSlot">Franja de emisión</label>
               <select id="ruSlot" name="slot_type">
-                <option value="promo">Aviso / Publicidad entre horas</option>
-                <option value="interlude">Cortina / Reflexión continua</option>
+                <option value="music">Música de Oración</option>
                 <option value="joyful">Misterios Gozosos</option>
+                <option value="luminous">Misterios Luminosos</option>
                 <option value="sorrowful">Misterios Dolorosos</option>
                 <option value="glorious">Misterios Gloriosos</option>
-                <option value="luminous">Misterios Luminosos</option>
               </select>
             </div>
             <div class="field">
               <label for="ruTitle">Título de la pista</label>
-              <input id="ruTitle" name="title" required placeholder="Ej. Aviso Misa Dominical · Aire 96 FM" />
+              <input id="ruTitle" name="title" required placeholder="Ej. Santo Rosario · Misterios Gozosos" />
             </div>
             <div class="field">
               <label for="ruFile">Archivo MP3 (máx. 15 MB)</label>
               <input id="ruFile" type="file" accept="audio/mpeg,audio/mp3,.mp3" required />
             </div>
-            <button type="submit" class="btn btn-gold btn-sm">Subir a Radio Rosario 24/7</button>
+            <button type="submit" class="btn btn-gold btn-sm">Subir audio</button>
           </form>
           ${rosaryTracks.length > 0 ? `
             <div style="margin-top:14px;display:flex;flex-direction:column;gap:8px">
@@ -323,41 +315,25 @@ export async function mount({ root, app, signal }) {
     `;
 
     rosaryHost.querySelector('#playTodayRosaryNowBtn')?.addEventListener('click', () => {
-      if (isPlayingTodayNow) {
-        audioEngine.togglePlay();
-      } else {
-        app.playLive(
-          makeSlotChannel(
-            mystery.key || 'today',
-            `Santo Rosario · ${mystery.name || 'Misterios de Hoy'}`,
-            `${mystery.daysLabel || 'Hoy'} · Voz Humana y Música de Fondo`
-          ),
-          { expandPlayer: true }
-        );
-      }
-    });
-
-    rosaryHost.querySelector('#playRosaryStreamBtn')?.addEventListener('click', () => {
-      if (isPlayingLive247) {
-        audioEngine.togglePlay();
-      } else {
-        app.playLive(makeLiveRosaryChannel(rosaryStatus), { expandPlayer: true });
-      }
+      playOrExpand(
+        makeSlotChannel(
+          todayKey,
+          `Santo Rosario · ${mystery.name || 'Misterios de Hoy'}`,
+          `${mystery.daysLabel || 'Hoy'} · Voz Humana y Música de Paz`
+        ),
+        isPlayingTodayNow
+      );
     });
 
     rosaryHost.querySelector('#playBgMusicBtn')?.addEventListener('click', () => {
-      if (isPlayingBgMusic) {
-        audioEngine.togglePlay();
-      } else {
-        app.playLive(
-          makeSlotChannel(
-            'music',
-            'Credo Música Católica de Oración',
-            'Piano e Instrumental Católico 24/7 para Meditar'
-          ),
-          { expandPlayer: true }
-        );
-      }
+      playOrExpand(
+        makeSlotChannel(
+          'music',
+          'Música de Oración',
+          'Instrumental y Cantos Contemplativos · Credo'
+        ),
+        isPlayingBgMusic
+      );
     });
 
     rosaryHost.querySelectorAll('[data-play-mystery]').forEach((btn) => {
@@ -366,33 +342,10 @@ export async function mount({ root, app, signal }) {
         const title = btn.dataset.mysteryTitle;
         const days = btn.dataset.mysteryDays;
         const cur = audioEngine.getState();
-        if (cur.playing && cur.channel?.slug === `rosario-${key}`) {
-          audioEngine.togglePlay();
-        } else {
-          app.playLive(
-            makeSlotChannel(key, `Santo Rosario · ${title}`, `${days} · Voz Humana y Música Católica`),
-            { expandPlayer: true }
-          );
-        }
-      });
-    });
-
-    rosaryHost.querySelectorAll('[data-toggle-yt]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const key = btn.dataset.toggleYt;
-        activeYtEmbed = activeYtEmbed === key ? '' : key;
-        renderRosary();
-      });
-    });
-
-    rosaryHost.querySelectorAll('[data-play-yt-audio]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const ytId = btn.dataset.playYtAudio;
-        const slot = btn.dataset.ytSlot;
-        const title = btn.dataset.ytTitle;
-        app.playLive(
-          makeSlotChannel(slot, title, 'Repertorio Santo Rosario · Audio Continuo', ytId),
-          { expandPlayer: true }
+        const activeThis = cur.playing && cur.channel?.slug === `rosario-${key}`;
+        playOrExpand(
+          makeSlotChannel(key, `Santo Rosario · ${title}`, `${days} · Voz Humana y Música de Paz`),
+          activeThis
         );
       });
     });
@@ -403,8 +356,13 @@ export async function mount({ root, app, signal }) {
         const text = (mystery.list || [])[idx];
         if (text) {
           audioEngine.toggleGospelSpeech(
-            `${text} Padre nuestro, que estás en el cielo, santificado sea tu Nombre; venga a nosotros tu Reino; hágase tu voluntad en la tierra como en el cielo. Danos hoy nuestro pan de cada día; perdona nuestras ofensas, como también nosotros perdonamos a los que nos ofenden; no nos dejes caer en la tentación, y líbranos del mal. Amén.`,
-            app.locale
+            `${text}. Padre nuestro, que estás en el cielo, santificado sea tu Nombre; venga a nosotros tu Reino; hágase tu voluntad en la tierra como en el cielo. Danos hoy nuestro pan de cada día; perdona nuestras ofensas, como también nosotros perdonamos a los que nos ofenden; no nos dejes caer en la tentación, y líbranos del mal. Amén.`,
+            app.locale,
+            {
+              title: `Misterio ${idx + 1} · ${mystery.name || 'Santo Rosario'}`,
+              artist: 'Credo · Lectura del Santo Rosario',
+              cover_url: ART_BY_KEY[todayKey] || ART_BY_KEY.rosary,
+            }
           );
         }
       });
@@ -513,7 +471,12 @@ export async function mount({ root, app, signal }) {
     prayersHost.querySelector('#gospelSpeakBtn')?.addEventListener('click', () => {
       audioEngine.toggleGospelSpeech(
         `${liturgy.gospel_ref}. ${liturgy.gospel_title}. ${liturgy.gospel_text}. ${liturgy.reflection || ''}`,
-        app.locale
+        app.locale,
+        {
+          title: liturgy.gospel_title || 'Evangelio del Día',
+          artist: liturgy.gospel_ref || 'Lectura Orante · Credo',
+          cover_url: ART_BY_KEY.gospel,
+        }
       );
     });
 
@@ -521,7 +484,11 @@ export async function mount({ root, app, signal }) {
       btn.addEventListener('click', () => {
         const pr = dailyList[Number(btn.dataset.speakPrayer)];
         if (pr) {
-          audioEngine.toggleGospelSpeech(`${pr.title}. ${pr.body}`, app.locale);
+          audioEngine.toggleGospelSpeech(`${pr.title}. ${pr.body}`, app.locale, {
+            title: pr.title,
+            artist: pr.badge || 'Oración Católica · Credo',
+            cover_url: ART_BY_KEY.morning,
+          });
         }
       });
     });
@@ -541,7 +508,7 @@ export async function mount({ root, app, signal }) {
             <div class="prayer-head">
               <div>
                 <strong style="font-size:0.93rem">${app.esc(it.author_display)}</strong>
-                <div class="t-caption">${it.unit_name ? `${app.esc(it.unit_name)} · ` : ''}${app.relTime(it.created_at)}</div>
+                <div class="t-caption">${app.relTime(it.created_at)}</div>
               </div>
               <span class="cat-pill${it.is_urgent ? ' is-urgent' : ''}">${it.is_urgent ? '● ' : ''}${app.esc(catLabel)}</span>
             </div>
@@ -677,7 +644,6 @@ export async function mount({ root, app, signal }) {
             content: fd.get('content'),
             is_anonymous: fd.get('is_anonymous') === 'on',
             is_urgent: fd.get('is_urgent') === 'on',
-            unit_id: app.linkedParishId || undefined,
           },
         });
         if (res.intention) {
@@ -697,20 +663,11 @@ export async function mount({ root, app, signal }) {
     renderLiturgyAndPrayers();
   });
 
-  countdownTimer = setInterval(() => {
-    if (countdownSec > 0) {
-      countdownSec -= 1;
-      const el = root.querySelector('#rosaryCountdown');
-      if (el) el.textContent = formatCountdown(countdownSec);
-    }
-  }, 1000);
-
   app.api('/api/v1/rosary/status', { signal })
     .then((val) => {
       if (signal.aborted) return;
       rosaryStatus = val.status;
       rosaryTracks = val.tracks || [];
-      countdownSec = Number(rosaryStatus?.seconds_until_next || 0);
       renderRosary();
     })
     .catch((err) => {
@@ -734,7 +691,6 @@ export async function mount({ root, app, signal }) {
   return {
     cleanup() {
       if (audioUnsub) audioUnsub();
-      if (countdownTimer) clearInterval(countdownTimer);
     },
   };
 }

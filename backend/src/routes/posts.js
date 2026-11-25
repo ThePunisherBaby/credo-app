@@ -2,66 +2,33 @@ const express = require('express');
 const { pool } = require('../db/pool');
 const { POST_TYPES } = require('../config');
 const { optionalAuth, requireAuth, requireClergy } = require('../middleware/auth');
-const {
-  getUnitLineage,
-  getUnitLineagesMap,
-  getDescendantUnitIds,
-  serializeUserSummary,
-} = require('../utils/hierarchy');
+const { getUnitLineage, serializeUserSummary } = require('../utils/hierarchy');
+const { apiCache } = require('../utils/fastCache');
 
 const router = express.Router();
 
 async function hydratePosts(rows, viewerId) {
   if (rows.length === 0) return [];
 
-  const postIds = rows.map((r) => r.id);
-  const unitIds = [
-    ...rows.map((r) => r.scope_unit_id),
-    ...rows.map((r) => r.author_primary_unit_id),
-  ];
+  let viewerReactionsRes = { rows: [] };
+  let viewerSavedRes = { rows: [] };
 
-  const [lineages, reactionsRes, commentsCountRes, viewerReactionsRes, viewerSavedRes] =
-    await Promise.all([
-      getUnitLineagesMap(unitIds),
+  if (viewerId) {
+    const postIds = rows.map((r) => r.id);
+    [viewerReactionsRes, viewerSavedRes] = await Promise.all([
       pool.query(
-        `SELECT post_id, reaction_type, COUNT(*)::int AS cnt
+        `SELECT post_id, reaction_type
            FROM post_reactions
-          WHERE post_id = ANY($1::int[])
-          GROUP BY post_id, reaction_type`,
-        [postIds]
+          WHERE post_id = ANY($1::int[]) AND user_id = $2`,
+        [postIds, viewerId]
       ),
       pool.query(
-        `SELECT post_id, COUNT(*)::int AS cnt
-           FROM post_comments
-          WHERE post_id = ANY($1::int[])
-          GROUP BY post_id`,
-        [postIds]
+        `SELECT post_id FROM saved_posts WHERE post_id = ANY($1::int[]) AND user_id = $2`,
+        [postIds, viewerId]
       ),
-      viewerId
-        ? pool.query(
-            `SELECT post_id, reaction_type
-               FROM post_reactions
-              WHERE post_id = ANY($1::int[]) AND user_id = $2`,
-            [postIds, viewerId]
-          )
-        : Promise.resolve({ rows: [] }),
-      viewerId
-        ? pool.query(
-            `SELECT post_id FROM saved_posts WHERE post_id = ANY($1::int[]) AND user_id = $2`,
-            [postIds, viewerId]
-          )
-        : Promise.resolve({ rows: [] }),
     ]);
-
-  const reactionMap = new Map();
-  for (const r of reactionsRes.rows) {
-    if (!reactionMap.has(r.post_id)) {
-      reactionMap.set(r.post_id, { amen: 0, pray: 0, gratitude: 0 });
-    }
-    reactionMap.get(r.post_id)[r.reaction_type] = r.cnt;
   }
 
-  const commentCountMap = new Map(commentsCountRes.rows.map((c) => [c.post_id, c.cnt]));
   const viewerMap = new Map();
   for (const vr of viewerReactionsRes.rows) {
     if (!viewerMap.has(vr.post_id)) viewerMap.set(vr.post_id, []);
@@ -88,16 +55,7 @@ async function hydratePosts(rows, viewerId) {
     is_pinned: Boolean(r.is_pinned),
     is_saved: savedSet.has(r.id),
     created_at: r.created_at,
-    scope_unit: r.scope_unit_id
-      ? {
-          id: r.scope_unit_id,
-          name: r.scope_unit_name,
-          unit_type: r.scope_unit_type,
-          country_code: r.scope_unit_country_code,
-          accent_color: r.scope_unit_accent_color,
-          lineage: lineages.get(r.scope_unit_id) || [],
-        }
-      : null,
+    scope_unit: null,
     author: serializeUserSummary(
       {
         id: r.author_id,
@@ -106,7 +64,7 @@ async function hydratePosts(rows, viewerId) {
         title_prefix: r.author_title_prefix,
         ecclesiastical_rank: r.author_rank,
         religious_order_initials: r.author_order_initials,
-        primary_unit_id: r.author_primary_unit_id,
+        primary_unit_id: null,
         current_office_title: r.author_office_title,
         avatar_color: r.author_avatar_color,
         avatar_url: r.author_avatar_url,
@@ -114,138 +72,128 @@ async function hydratePosts(rows, viewerId) {
         country_code: r.author_country_code,
         is_ceo: r.author_is_ceo,
       },
-      lineages.get(r.author_primary_unit_id) || []
+      []
     ),
-    reactions: reactionMap.get(r.id) || { amen: 0, pray: 0, gratitude: 0 },
+    reactions: {
+      amen: Number(r.amen_count || 0),
+      pray: Number(r.pray_count || 0),
+      gratitude: Number(r.gratitude_count || 0),
+    },
     my_reactions: viewerMap.get(r.id) || [],
-    comments_count: commentCountMap.get(r.id) || 0,
+    comments_count: Number(r.comments_count || 0),
   }));
 }
 
 const POST_SELECT = `
-  SELECT p.*,
+  SELECT p.id, p.author_id, p.post_type, p.title, p.content, p.image_url, p.visual_theme,
+         p.media_kind, p.youtube_id, p.video_duration, p.channel_name, p.source_url,
+         p.scripture_ref, p.event_date, p.event_location, p.language, p.is_pinned, p.created_at,
+         p.amen_count, p.pray_count, p.gratitude_count, p.comments_count,
          u.username AS author_username,
          u.full_name AS author_full_name,
          u.title_prefix AS author_title_prefix,
          u.ecclesiastical_rank AS author_rank,
          u.religious_order_initials AS author_order_initials,
-         u.primary_unit_id AS author_primary_unit_id,
          u.current_office_title AS author_office_title,
          u.avatar_color AS author_avatar_color,
          u.avatar_url AS author_avatar_url,
          u.verification_status AS author_verification_status,
          u.country_code AS author_country_code,
-         u.is_ceo AS author_is_ceo,
-         eu.name AS scope_unit_name,
-         eu.unit_type AS scope_unit_type,
-         eu.country_code AS scope_unit_country_code,
-         eu.accent_color AS scope_unit_accent_color
+         u.is_ceo AS author_is_ceo
     FROM posts p
     JOIN users u ON u.id = p.author_id
-    LEFT JOIN ecclesiastical_units eu ON eu.id = p.scope_unit_id
 `;
 
-// Hierarchical Visual Feed
+// High-speed Feed endpoint with cursor/offset pagination, O(1) denormalized counts & singleflight cache
 router.get('/', optionalAuth, async (req, res) => {
   try {
     const {
       scope = 'global',
-      unit_id,
       author_id,
       post_type,
       media_kind,
       q,
       limit = 40,
       offset = 0,
+      before_ts,
+      before_id,
     } = req.query;
 
-    const clauses = [];
-    const params = [];
+    const safeLimit = Math.min(Math.max(Number(limit) || 40, 1), 100);
+    const safeOffset = Math.max(Number(offset) || 0, 0);
+    const viewerId = req.user ? req.user.id : null;
 
-    if (author_id) {
-      params.push(Number(author_id));
-      clauses.push(`p.author_id = $${params.length}`);
-    }
+    const runFeedQuery = async () => {
+      const clauses = [];
+      const params = [];
 
-    if (post_type && POST_TYPES.includes(String(post_type))) {
-      params.push(String(post_type));
-      clauses.push(`p.post_type = $${params.length}`);
-    }
+      if (author_id) {
+        params.push(Number(author_id));
+        clauses.push(`p.author_id = $${params.length}`);
+      }
 
-    if (media_kind && ['article', 'video', 'photo'].includes(String(media_kind))) {
-      params.push(String(media_kind));
-      clauses.push(`p.media_kind = $${params.length}`);
-    }
+      if (post_type && POST_TYPES.includes(String(post_type))) {
+        params.push(String(post_type));
+        clauses.push(`p.post_type = $${params.length}`);
+      }
 
-    if (q && String(q).trim()) {
-      params.push(`%${String(q).trim()}%`);
-      const idx = params.length;
-      clauses.push(`(p.title ILIKE $${idx} OR p.content ILIKE $${idx} OR p.scripture_ref ILIKE $${idx})`);
-    }
+      if (media_kind && ['article', 'video', 'photo'].includes(String(media_kind))) {
+        params.push(String(media_kind));
+        clauses.push(`p.media_kind = $${params.length}`);
+      }
 
-    let resolvedScopeUnit = null;
+      if (q && String(q).trim()) {
+        params.push(`%${String(q).trim()}%`);
+        const idx = params.length;
+        clauses.push(`(p.title ILIKE $${idx} OR p.content ILIKE $${idx} OR p.scripture_ref ILIKE $${idx})`);
+      }
 
-    if (scope === 'saved' && req.user) {
-      params.push(req.user.id);
-      clauses.push(`p.id IN (SELECT post_id FROM saved_posts WHERE user_id = $${params.length})`);
-    } else if (scope === 'following' && req.user) {
-      params.push(req.user.id);
-      const idx = params.length;
-      clauses.push(
-        `(p.author_id IN (SELECT target_user_id FROM follows WHERE follower_id = $${idx} AND target_user_id IS NOT NULL)
-          OR p.scope_unit_id IN (SELECT target_unit_id FROM follows WHERE follower_id = $${idx} AND target_unit_id IS NOT NULL))`
+      if (scope === 'saved' && viewerId) {
+        params.push(viewerId);
+        clauses.push(`p.id IN (SELECT post_id FROM saved_posts WHERE user_id = $${params.length})`);
+      } else if (scope === 'following' && viewerId) {
+        params.push(viewerId);
+        clauses.push(
+          `p.author_id IN (SELECT target_user_id FROM follows WHERE follower_id = $${params.length} AND target_user_id IS NOT NULL)`
+        );
+      }
+
+      if (before_ts && before_id) {
+        params.push(before_ts, Number(before_id));
+        clauses.push(`(p.created_at, p.id) < ($${params.length - 1}::timestamptz, $${params.length}::int)`);
+      }
+
+      const whereSql = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+      params.push(safeLimit);
+      const limitIdx = params.length;
+      const offsetSql = before_ts && before_id ? '' : `OFFSET $${params.push(safeOffset)}`;
+
+      const { rows } = await pool.query(
+        `${POST_SELECT}
+          ${whereSql}
+          ORDER BY p.is_pinned DESC, p.created_at DESC, p.id DESC
+          LIMIT $${limitIdx} ${offsetSql}`,
+        params
       );
-    } else if (scope === 'unit' && unit_id) {
-      const uid = Number(unit_id);
-      const descendants = await getDescendantUnitIds(uid);
-      const ancestors = (await getUnitLineage(uid)).map((u) => u.id);
-      const relevantIds = [...new Set([...descendants, ...ancestors])];
-      if (relevantIds.length > 0) {
-        params.push(relevantIds);
-        clauses.push(`p.scope_unit_id = ANY($${params.length}::int[])`);
-      }
-    } else if (
-      ['my_country', 'my_archdiocese', 'my_diocese', 'my_parish'].includes(String(scope)) &&
-      req.user &&
-      req.user.primary_unit_id
-    ) {
-      const lineage = await getUnitLineage(req.user.primary_unit_id);
-      const targetTypesByScope = {
-        my_country: ['episcopal_conference'],
-        my_archdiocese: ['archdiocese'],
-        my_diocese: ['diocese', 'archdiocese'],
-        my_parish: ['parish', 'seminary', 'religious_order'],
+
+      const posts = await hydratePosts(rows, viewerId);
+      const last = posts[posts.length - 1];
+      return {
+        posts,
+        next_cursor: last ? { before_ts: last.created_at, before_id: last.id } : null,
       };
-      const wantedTypes = targetTypesByScope[scope] || [];
-      const match = [...lineage].reverse().find((u) => wantedTypes.includes(u.unit_type));
-      if (match) {
-        resolvedScopeUnit = match;
-        const descendants = await getDescendantUnitIds(match.id);
-        params.push(descendants);
-        clauses.push(`p.scope_unit_id = ANY($${params.length}::int[])`);
-      } else {
-        const descendants = await getDescendantUnitIds(req.user.primary_unit_id);
-        params.push(descendants);
-        clauses.push(`p.scope_unit_id = ANY($${params.length}::int[])`);
-      }
+    };
+
+    // Anonymous / public feed reads coalesce into one shared PostgreSQL query via singleflight cache
+    if (!viewerId && scope === 'global' && !q) {
+      const cacheKey = `posts:pub:${author_id || ''}:${post_type || ''}:${media_kind || ''}:${safeLimit}:${safeOffset}:${before_id || ''}`;
+      const cached = await apiCache.getOrLoad(cacheKey, 12000, runFeedQuery);
+      res.setHeader('Cache-Control', 'public, max-age=12, stale-while-revalidate=45');
+      return res.json(cached);
     }
 
-    const whereSql = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
-    params.push(Math.min(Number(limit) || 40, 100));
-    const limitIdx = params.length;
-    params.push(Math.max(Number(offset) || 0, 0));
-    const offsetIdx = params.length;
-
-    const { rows } = await pool.query(
-      `${POST_SELECT}
-        ${whereSql}
-        ORDER BY p.is_pinned DESC, p.created_at DESC
-        LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
-      params
-    );
-
-    const posts = await hydratePosts(rows, req.user ? req.user.id : null);
-    return res.json({ posts, resolved_scope_unit: resolvedScopeUnit });
+    const data = await runFeedQuery();
+    return res.json(data);
   } catch (err) {
     console.error('[posts/list]', err);
     return res.status(500).json({ error: 'Failed to load feed' });
@@ -310,17 +258,15 @@ router.post('/', requireAuth, requireClergy, async (req, res) => {
     const ytId = extractYouTubeId(youtube_url || youtube_id);
     const safeMediaKind = ytId ? 'video' : (['article', 'video', 'photo'].includes(media_kind) ? media_kind : 'article');
     const resolvedImage = String(image_url).trim() || (ytId ? `https://i.ytimg.com/vi/${ytId}/hqdefault.jpg` : '');
-    const targetUnitId = scope_unit_id ? Number(scope_unit_id) : req.user.primary_unit_id;
     const { rows } = await pool.query(
       `INSERT INTO posts (
          author_id, scope_unit_id, post_type, title, content,
          image_url, visual_theme, media_kind, youtube_id, video_duration, channel_name,
          scripture_ref, event_date, event_location, language
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+       ) VALUES ($1,NULL,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
        RETURNING id`,
       [
         req.user.id,
-        targetUnitId || null,
         post_type,
         String(title).trim().slice(0, 200),
         String(content).trim().slice(0, 8000),
@@ -338,6 +284,11 @@ router.post('/', requireAuth, requireClergy, async (req, res) => {
     );
 
     const createdId = rows[0].id;
+    apiCache.invalidate('posts:');
+    apiCache.invalidate('vids:');
+    apiCache.invalidate('users:');
+    apiCache.invalidate('stats:');
+
     const fullRes = await pool.query(`${POST_SELECT} WHERE p.id = $1`, [createdId]);
     const hydrated = await hydratePosts(fullRes.rows, req.user.id);
     return res.status(201).json({ post: hydrated[0] });
@@ -356,6 +307,10 @@ router.delete('/:id', requireAuth, async (req, res) => {
       return res.status(403).json({ error: 'Not allowed to delete this post' });
     }
     await pool.query('DELETE FROM posts WHERE id = $1', [postId]);
+    apiCache.invalidate('posts:');
+    apiCache.invalidate('vids:');
+    apiCache.invalidate('users:');
+    apiCache.invalidate('stats:');
     return res.json({ deleted: true });
   } catch (err) {
     console.error('[posts/delete]', err);
@@ -408,20 +363,33 @@ router.post('/:id/react', requireAuth, async (req, res) => {
       await pool.query('DELETE FROM post_reactions WHERE id = $1', [existing.rows[0].id]);
     } else {
       await pool.query(
-        `INSERT INTO post_reactions (post_id, user_id, reaction_type) VALUES ($1,$2,$3)`,
+        `INSERT INTO post_reactions (post_id, user_id, reaction_type) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING`,
         [postId, req.user.id, reaction_type]
       );
       active = true;
     }
 
-    const countsRes = await pool.query(
-      `SELECT reaction_type, COUNT(*)::int AS cnt FROM post_reactions WHERE post_id = $1 GROUP BY reaction_type`,
+    const { rows: postCounts } = await pool.query(
+      `SELECT amen_count, pray_count, gratitude_count FROM posts WHERE id = $1 LIMIT 1`,
       [postId]
     );
-    const counts = { amen: 0, pray: 0, gratitude: 0 };
-    for (const r of countsRes.rows) counts[r.reaction_type] = r.cnt;
+    const { rows: myRows } = await pool.query(
+      `SELECT reaction_type FROM post_reactions WHERE post_id = $1 AND user_id = $2`,
+      [postId, req.user.id]
+    );
+    apiCache.invalidate('posts:');
+    apiCache.invalidate('vids:');
 
-    return res.json({ active, reactions: counts });
+    const c = postCounts[0] || { amen_count: 0, pray_count: 0, gratitude_count: 0 };
+    return res.json({
+      active,
+      my_reactions: myRows.map((m) => m.reaction_type),
+      reactions: {
+        amen: Number(c.amen_count || 0),
+        pray: Number(c.pray_count || 0),
+        gratitude: Number(c.gratitude_count || 0),
+      },
+    });
   } catch (err) {
     console.error('[posts/react]', err);
     return res.status(500).json({ error: 'Failed to toggle reaction' });
@@ -431,43 +399,46 @@ router.post('/:id/react', requireAuth, async (req, res) => {
 router.get('/:id/comments', async (req, res) => {
   try {
     const postId = Number(req.params.id);
-    const { rows } = await pool.query(
-      `SELECT c.id, c.post_id, c.content, c.created_at,
-              u.id AS author_id, u.username, u.full_name, u.title_prefix,
-              u.ecclesiastical_rank, u.religious_order_initials,
-              u.primary_unit_id, u.current_office_title, u.avatar_color, u.avatar_url,
-              u.verification_status, u.country_code
-         FROM post_comments c
-         JOIN users u ON u.id = c.author_id
-        WHERE c.post_id = $1
-        ORDER BY c.created_at ASC`,
-      [postId]
-    );
+    const comments = await apiCache.getOrLoad(`comments:${postId}`, 10000, async () => {
+      const { rows } = await pool.query(
+        `SELECT c.id, c.post_id, c.content, c.created_at,
+                u.id AS author_id, u.username, u.full_name, u.title_prefix,
+                u.ecclesiastical_rank, u.religious_order_initials,
+                u.current_office_title, u.avatar_color, u.avatar_url,
+                u.verification_status, u.country_code, u.is_ceo
+           FROM post_comments c
+           JOIN users u ON u.id = c.author_id
+          WHERE c.post_id = $1
+          ORDER BY c.created_at ASC, c.id ASC
+          LIMIT 250`,
+        [postId]
+      );
 
-    const lineages = await getUnitLineagesMap(rows.map((r) => r.primary_unit_id));
-    const comments = rows.map((r) => ({
-      id: r.id,
-      post_id: r.post_id,
-      content: r.content,
-      created_at: r.created_at,
-      author: serializeUserSummary(
-        {
-          id: r.author_id,
-          username: r.username,
-          full_name: r.full_name,
-          title_prefix: r.title_prefix,
-          ecclesiastical_rank: r.ecclesiastical_rank,
-          religious_order_initials: r.religious_order_initials,
-          primary_unit_id: r.primary_unit_id,
-          current_office_title: r.current_office_title,
-          avatar_color: r.avatar_color,
-          avatar_url: r.avatar_url,
-          verification_status: r.verification_status,
-          country_code: r.country_code,
-        },
-        lineages.get(r.primary_unit_id) || []
-      ),
-    }));
+      return rows.map((r) => ({
+        id: r.id,
+        post_id: r.post_id,
+        content: r.content,
+        created_at: r.created_at,
+        author: serializeUserSummary(
+          {
+            id: r.author_id,
+            username: r.username,
+            full_name: r.full_name,
+            title_prefix: r.title_prefix,
+            ecclesiastical_rank: r.ecclesiastical_rank,
+            religious_order_initials: r.religious_order_initials,
+            primary_unit_id: null,
+            current_office_title: r.current_office_title,
+            avatar_color: r.avatar_color,
+            avatar_url: r.avatar_url,
+            verification_status: r.verification_status,
+            country_code: r.country_code,
+            is_ceo: Boolean(r.is_ceo),
+          },
+          []
+        ),
+      }));
+    });
 
     return res.json({ comments });
   } catch (err) {
@@ -491,11 +462,14 @@ router.post('/:id/comments', requireAuth, async (req, res) => {
       [postId, req.user.id, String(content).trim().slice(0, 2000)]
     );
 
-    const lineage = await getUnitLineage(req.user.primary_unit_id);
+    apiCache.invalidate(`comments:${postId}`);
+    apiCache.invalidate('posts:');
+    apiCache.invalidate('vids:');
+
     return res.status(201).json({
       comment: {
         ...rows[0],
-        author: serializeUserSummary(req.user, lineage),
+        author: serializeUserSummary(req.user, []),
       },
     });
   } catch (err) {

@@ -36,7 +36,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var webView: WebView
     private lateinit var offlineBox: LinearLayout
     private lateinit var updateEngine: GitHubUpdateEngine
+    private lateinit var mediaNotifier: CredoMediaNotifier
     private var filePathCallback: ValueCallback<Array<Uri>>? = null
+    private var pendingMediaJson: String? = null
+    private var askedNotifPerm = false
 
     private var safeTopDp = 0f
     private var safeBottomDp = 0f
@@ -49,6 +52,14 @@ class MainActivity : AppCompatActivity() {
             val uris = WebChromeClient.FileChooserParams.parseResult(result.resultCode, result.data)
             filePathCallback?.onReceiveValue(uris)
             filePathCallback = null
+        }
+
+    private val notifPermLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (granted) {
+                pendingMediaJson?.let { mediaNotifier.updateFromJson(it) }
+            }
+            pendingMediaJson = null
         }
 
     inner class CredoJsBridge {
@@ -79,6 +90,24 @@ class MainActivity : AppCompatActivity() {
         fun setImmersive(enabled: Boolean) {
             runOnUiThread {
                 applyImmersiveMode(enabled)
+            }
+        }
+
+        @JavascriptInterface
+        fun updateMediaNotification(json: String) {
+            runOnUiThread {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                    checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
+                    android.content.pm.PackageManager.PERMISSION_GRANTED
+                ) {
+                    if (!askedNotifPerm && !json.contains("\"clear\":true")) {
+                        askedNotifPerm = true
+                        pendingMediaJson = json
+                        notifPermLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                    }
+                    return@runOnUiThread
+                }
+                mediaNotifier.updateFromJson(json)
             }
         }
     }
@@ -150,6 +179,13 @@ class MainActivity : AppCompatActivity() {
         val osDark = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
         lastIsDark = osDark
         updateEngine = GitHubUpdateEngine(this)
+        mediaNotifier = CredoMediaNotifier(this) { action ->
+            runOnUiThread {
+                if (::webView.isInitialized) {
+                    webView.evaluateJavascript("window.__CREDO_AUDIO__?.handleNativeMediaAction('$action')", null)
+                }
+            }
+        }
 
         val root = FrameLayout(this).apply {
             setBackgroundColor(if (osDark) Color.BLACK else Color.parseColor("#F2F4F8"))
@@ -262,7 +298,7 @@ class MainActivity : AppCompatActivity() {
         root.addView(offlineBox, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
 
         // True edge-to-edge full screen: ZERO system-bar padding on root.
-        // Trim status-bar internal slack and use tappableElement() for bottom so gesture-nav phones place the dock right at the bottom edge.
+        // Elevate bottom inset slightly above system gesture handle / 3-button navigation bar so dock feels effortlessly tappable.
         ViewCompat.setOnApplyWindowInsetsListener(root) { view, insets ->
             val safe = insets.getInsets(
                 WindowInsetsCompat.Type.statusBars() or WindowInsetsCompat.Type.displayCutout()
@@ -274,9 +310,9 @@ class MainActivity : AppCompatActivity() {
             val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
             val density = resources.displayMetrics.density.coerceAtLeast(1f)
             safeTopDp = ((safe.top / density) - 4f).coerceAtLeast(0f)
-            // Only offset bottom when 3-button tappable nav bar (>= 28dp) is active; gesture bar gets 0dp so dock hugs bottom
             val tapBotDp = tappable.bottom / density
-            safeBottomDp = if (tapBotDp >= 28f) tapBotDp else 0f
+            val sysBotDp = bars.bottom / density
+            safeBottomDp = if (tapBotDp >= 28f) (tapBotDp + 6f) else sysBotDp.coerceIn(14f, 24f)
             safeLeftDp = bars.left / density
             safeRightDp = bars.right / density
 
@@ -327,6 +363,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        if (::mediaNotifier.isInitialized) mediaNotifier.release()
         webView.destroy()
         super.onDestroy()
     }

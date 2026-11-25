@@ -197,7 +197,7 @@ export async function mount({ root, app, signal }) {
 
   function postCardHTML(p, globalIndex) {
     const author = p.author || {};
-    const unitName = p.channel_name || p.scope_unit?.name || author.lineage?.[author.lineage.length - 1]?.name || '';
+    const unitName = p.channel_name || '';
     const isVideo = p.media_kind === 'video' && p.youtube_id;
     const isAmen = (p.my_reactions || []).includes('amen');
     const isSaved = Boolean(p.is_saved);
@@ -208,6 +208,7 @@ export async function mount({ root, app, signal }) {
     const imgAttrs = globalIndex === 0 ? 'fetchpriority="high"' : 'loading="lazy"';
     const avUrl = proxyImg(author.avatar_url);
     const mediaSrc = proxyImg(p.image_url);
+    const authorDisplay = `${author.title_prefix ? `${author.title_prefix} ` : ''}${author.full_name || 'Credo'}`;
 
     const cleanBody = String(p.content || '')
       .replace(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g, '')
@@ -219,7 +220,7 @@ export async function mount({ root, app, signal }) {
     let mediaBlock = '';
     if (isVideo) {
       mediaBlock = `
-        <div class="ig-media" data-video-box="${p.id}" data-yt="${app.esc(p.youtube_id)}">
+        <div class="ig-media" data-video-box="${p.id}" data-yt="${app.esc(p.youtube_id)}" data-yt-title="${app.esc(p.title || authorDisplay)}" data-yt-artist="${app.esc(unitName || authorDisplay)}" data-yt-thumb="${app.esc(mediaSrc)}">
           <img class="ig-media-photo" src="${app.esc(mediaSrc)}" alt="${app.esc(p.title || d.feed.officialChannel)}" ${imgAttrs} width="640" height="640" />
           ${p.video_duration ? `<span class="video-duration-pill">${app.esc(p.video_duration)}</span>` : ''}
           <button type="button" class="video-play-overlay" data-play-video="${p.id}" aria-label="${app.esc(d.feed.watchInline)}">
@@ -233,12 +234,14 @@ export async function mount({ root, app, signal }) {
       mediaBlock = `
         <div class="ig-media" data-dbltap="${p.id}" style="cursor:pointer">
           <img class="ig-media-photo" src="${app.esc(mediaSrc)}" alt="${app.esc(p.title || author.full_name)}" ${imgAttrs} width="640" height="640" />
+          <span class="ig-heart-burst" aria-hidden="true">🙏</span>
         </div>
       `;
     } else {
       mediaBlock = `
         <div class="ig-quote-canvas" data-dbltap="${p.id}" style="cursor:pointer;position:relative">
           “${app.esc(cleanBody.slice(0, 220))}${cleanBody.length > 220 ? '…' : ''}”
+          <span class="ig-heart-burst" aria-hidden="true">🙏</span>
         </div>
       `;
     }
@@ -254,12 +257,12 @@ export async function mount({ root, app, signal }) {
     return `
       <article class="ig-post${deferClass}${staggerClass}"${staggerAttr} data-post-id="${p.id}">
         <header class="ig-post-head">
-          <a href="#/user/${author.id}" class="avatar" style="--av-bg:${app.esc(author.avatar_color || '#0F1E36')}" aria-label="${app.esc(author.full_name)}">
+          <a href="#/user/${author.id}" class="avatar" data-zoomable data-zoom-name="${app.esc(authorDisplay)}" data-zoom-src="${app.esc(avUrl)}" data-zoom-bg="${app.esc(author.avatar_color || '#0F1E36')}" style="--av-bg:${app.esc(author.avatar_color || '#0F1E36')}" aria-label="${app.esc(author.full_name)}">
             ${avUrl ? `<img src="${app.esc(avUrl)}" alt="" loading="lazy" />` : app.initials(author.full_name)}
           </a>
           <div class="post-author-info">
             <div class="post-author-row">
-              <a href="#/user/${author.id}" class="post-author-name">${app.esc(author.title_prefix ? `${author.title_prefix} ` : '')}${app.esc(author.full_name)}</a>
+              <a href="#/user/${author.id}" class="post-author-name">${app.esc(authorDisplay)}</a>
               ${author.is_ceo ? '<span class="rank-tag">CEO</span>' : ''}
             </div>
             <div class="post-meta-line">
@@ -392,6 +395,12 @@ export async function mount({ root, app, signal }) {
       const yt = box?.dataset.yt;
       if (!yt) return;
       box.innerHTML = `<iframe src="https://www.youtube-nocookie.com/embed/${encodeURIComponent(yt)}?autoplay=1&rel=0&modestbranding=1" title="Video oficial de Credo" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe>`;
+      window.__CREDO_AUDIO__?.notifyExternalMedia?.({
+        title: box.dataset.ytTitle || 'Video en Credo',
+        artist: box.dataset.ytArtist || 'Credo Católica',
+        coverUrl: box.dataset.ytThumb || '/icons/credo-192.png',
+        playing: true,
+      });
       return;
     }
 
@@ -408,6 +417,12 @@ export async function mount({ root, app, signal }) {
       if (lastTap.id === postId && now - lastTap.time < 280) {
         clearTimeout(tapTimer);
         lastTap = { id: 0, time: 0 };
+        const burst = dblEl.querySelector('.ig-heart-burst');
+        if (burst) {
+          burst.classList.remove('is-burst');
+          void burst.offsetWidth;
+          burst.classList.add('is-burst');
+        }
         const card = dblEl.closest('.ig-post');
         const btn = card?.querySelector(`[data-react-post="${postId}"]`);
         await toggleAmen(postId, btn, { onlyAdd: true });

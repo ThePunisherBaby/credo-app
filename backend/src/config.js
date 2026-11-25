@@ -8,6 +8,8 @@ const CLERGY_RANKS = new Set([
   'monsignor',
   'priest',
   'deacon',
+  'church',
+  'parish',
 ]);
 
 const ALL_RANKS = [
@@ -18,6 +20,8 @@ const ALL_RANKS = [
   'monsignor',
   'priest',
   'deacon',
+  'church',
+  'parish',
   'religious',
   'seminarian',
   'catechist',

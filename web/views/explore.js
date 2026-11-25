@@ -1,6 +1,6 @@
-// views/explore.js — Explorar: Búsqueda Universal, Filtro "● En Vivo" (Radios, TV, Misas), Presbíteros, Parroquias y Vids
+// views/explore.js — Explorar: Búsqueda Universal, Radios Católicas En Vivo, Presbíteros, Vids y Publicaciones
 
-import { audioEngine } from '../audio-engine.js?v=21';
+import { audioEngine } from '../audio-engine.js?v=22';
 
 function proxyImg(url) {
   if (!url) return '';
@@ -14,7 +14,6 @@ const FILTERS = [
   { id: 'all', label: 'Todos' },
   { id: 'live', label: '● En Vivo', isLive: true },
   { id: 'clergy', label: 'Presbíteros' },
-  { id: 'parishes', label: 'Parroquias' },
   { id: 'vids', label: 'Vids' },
   { id: 'posts', label: 'Publicaciones' },
 ];
@@ -22,14 +21,12 @@ const FILTERS = [
 export async function mount({ root, app, signal, params }) {
   const d = app.dict();
   let activeFilter = FILTERS.some((f) => f.id === params?.filter) ? params.filter : 'all';
-  let liveSubTab = 'radios';
   let activeVideoSlug = '';
   let searchQ = '';
   let searchTimer = 0;
 
   let liveData = null;
   let clergyList = [];
-  let parishList = [];
   let vidsList = [];
   let postsList = [];
   let loading = true;
@@ -39,12 +36,12 @@ export async function mount({ root, app, signal, params }) {
     <div class="explore-sticky-top">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px">
         <h1 class="t-title-2" style="margin:0;font-size:1.35rem;letter-spacing:-0.025em">${app.esc(d.nav.explore || 'Explorar')}</h1>
-        <span class="t-caption" style="color:var(--label-2);font-weight:700">Radio · Directorio · Vids</span>
+        <span class="t-caption" style="color:var(--label-2);font-weight:700">Radios · Presbíteros · Vids</span>
       </div>
       <div class="explore-search-row">
         <div class="search-field" style="margin:0;min-height:42px;background:var(--surface-2)">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
-          <input type="search" id="exploreSearchInput" placeholder="Buscar presbíteros, parroquias, radios o videos…" />
+          <input type="search" id="exploreSearchInput" placeholder="Buscar presbíteros, radios, videos o publicaciones…" />
         </div>
       </div>
 
@@ -74,52 +71,6 @@ export async function mount({ root, app, signal, params }) {
     return items.filter((item) => extractor(item).toLowerCase().includes(ql));
   }
 
-  function renderLiveVideoCards(items, emptyText) {
-    const filtered = filterByQuery(items || [], (c) => `${c.name} ${c.tagline} ${c.current_program}`);
-    if (filtered.length === 0) {
-      return `<div class="empty-box">${app.esc(emptyText)}</div>`;
-    }
-    return `
-      <div class="tv-list">
-        ${filtered.map((ch) => {
-          const isPlayingVid = activeVideoSlug === ch.slug;
-          const thumb = proxyImg(ch.cover_url) || (ch.youtube_live_id ? `https://i.ytimg.com/vi/${app.esc(ch.youtube_live_id)}/hqdefault.jpg` : '');
-          return `
-            <article class="tv-card">
-              <div class="tv-thumb" style="background:#000">
-                ${isPlayingVid && ch.youtube_live_id
-                  ? `<iframe src="https://www.youtube.com/embed/${app.esc(ch.youtube_live_id)}?autoplay=1&playsinline=1&rel=0" style="width:100%;height:100%;border:0" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe>`
-                  : `
-                    ${thumb ? `<img src="${app.esc(thumb)}" alt="${app.esc(ch.name)}" loading="lazy" />` : ''}
-                    <button type="button" class="video-play-overlay" data-play-vid="${app.esc(ch.slug)}" aria-label="Reproducir ${app.esc(ch.name)}">
-                      <span class="video-play-circle">
-                        <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor" style="margin-left:2px"><path d="M8 5v14l11-7z"/></svg>
-                      </span>
-                    </button>
-                    <span class="station-freq-badge" style="display:inline-flex;align-items:center;gap:5px"><span class="live-dot" style="width:6px;height:6px"></span>${app.esc(ch.frequency || 'VIDEO')}</span>
-                  `}
-              </div>
-              <div class="tv-card-body">
-                <div style="min-width:0;flex:1">
-                  <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">
-                    <span class="t-caption" style="color:var(--gold-text);font-weight:700">${app.esc(ch.tagline || ch.current_program || '')}</span>
-                  </div>
-                  <strong style="font-size:0.95rem;display:block;line-height:1.3">${app.esc(ch.name)}</strong>
-                </div>
-                <div style="display:flex;gap:6px;flex-shrink:0">
-                  <button type="button" class="btn btn-sm ${isPlayingVid ? 'btn-soft' : 'btn-gold'}" data-play-vid="${app.esc(ch.slug)}">
-                    ${isPlayingVid ? 'Cerrar' : 'Ver'}
-                  </button>
-                  ${ch.source_url ? `<a href="${app.esc(ch.source_url)}" target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-soft" aria-label="Abrir fuente original">↗</a>` : ''}
-                </div>
-              </div>
-            </article>
-          `;
-        }).join('')}
-      </div>
-    `;
-  }
-
   function renderLiveFilterSection() {
     if (!liveData) return `<div class="empty-box">Cargando señales en vivo…</div>`;
     const st = audioEngine.getState();
@@ -129,73 +80,65 @@ export async function mount({ root, app, signal, params }) {
     const heroIsPlaying = st.playing && st.channel?.id === hero?.id;
 
     return `
-      <div class="seg-tabs" id="liveSubTabs" role="tablist">
-        <button type="button" class="seg-tab${liveSubTab === 'radios' ? ' is-active' : ''}" data-ltab="radios" role="tab" aria-selected="${liveSubTab === 'radios'}">Radios</button>
-        <button type="button" class="seg-tab${liveSubTab === 'tv' ? ' is-active' : ''}" data-ltab="tv" role="tab" aria-selected="${liveSubTab === 'tv'}">Canales TV</button>
-        <button type="button" class="seg-tab${liveSubTab === 'masses' ? ' is-active' : ''}" data-ltab="masses" role="tab" aria-selected="${liveSubTab === 'masses'}">Misas en Vivo</button>
+      ${hero && (!searchQ || `${hero.name} ${hero.tagline} ${hero.current_program}`.toLowerCase().includes(searchQ.toLowerCase())) ? `
+        <article class="hero-live-card" data-channel-id="${hero.id}">
+          ${heroArt ? `<img class="hero-live-bg" src="${app.esc(heroArt)}" alt="" aria-hidden="true" />` : ''}
+          <div class="hero-live-scrim" aria-hidden="true"></div>
+          <div class="hero-live-content">
+            <div class="hero-live-top">
+              <span class="live-badge-pill"><span class="live-dot" style="background:#fff" aria-hidden="true"></span>${app.esc(d.live.onAir)}</span>
+              <span class="listeners-pill">${app.esc(hero.frequency || 'RADIO')}</span>
+            </div>
+
+            <div class="hero-live-row">
+              ${heroArt ? `<img class="hero-live-art" src="${app.esc(heroArt)}" alt="${app.esc(hero.name)}" fetchpriority="high" />` : ''}
+              <div style="flex:1;min-width:0">
+                <p style="margin:0;font-size:0.72rem;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#66B2FF">${app.esc(hero.tagline)}</p>
+                <h2 class="t-title-2" style="color:#fff;margin-top:4px">${app.esc(hero.name)}</h2>
+                <p style="margin:4px 0 0;font-size:0.86rem;color:rgba(255,255,255,0.85)">${app.esc(hero.current_program || '')}</p>
+                ${hero.city ? `<p style="margin:3px 0 0;font-size:0.74rem;color:rgba(255,255,255,0.65)">${app.esc(hero.city)}</p>` : ''}
+              </div>
+            </div>
+
+            <div style="display:flex;gap:10px;flex-wrap:wrap">
+              <button type="button" class="btn btn-gold btn-sm" id="heroListenBtn">
+                ${heroIsPlaying ? '⏸ ' + app.esc(d.live.pauseNow) : '▶ ' + app.esc(d.live.listenNow)}
+              </button>
+              <button type="button" class="btn btn-sm" style="background:rgba(255,255,255,0.14);color:#fff" id="heroOpenSheetBtn">
+                Reproductor
+              </button>
+            </div>
+          </div>
+        </article>
+      ` : ''}
+
+      <div class="section-bar">
+        <h2 class="t-title-2">Emisoras Católicas</h2>
+        <span class="t-footnote">${radios.length} en vivo</span>
       </div>
-
-      ${liveSubTab === 'tv'
-        ? renderLiveVideoCards(liveData.tv_channels, 'No hay canales TV que coincidan con tu búsqueda.')
-        : liveSubTab === 'masses'
-          ? renderLiveVideoCards(liveData.live_masses, 'No hay Misas transmitiéndose con ese filtro.')
-          : `
-            ${hero && (!searchQ || `${hero.name} ${hero.tagline} ${hero.current_program}`.toLowerCase().includes(searchQ.toLowerCase())) ? `
-              <article class="hero-live-card" data-channel-id="${hero.id}">
-                ${heroArt ? `<img class="hero-live-bg" src="${app.esc(heroArt)}" alt="" aria-hidden="true" />` : ''}
-                <div class="hero-live-scrim" aria-hidden="true"></div>
-                <div class="hero-live-content">
-                  <div class="hero-live-top">
-                    <span class="live-badge-pill"><span class="live-dot" style="background:#fff" aria-hidden="true"></span>${app.esc(d.live.onAir)}</span>
-                    <span class="listeners-pill">${app.esc(hero.frequency || 'RADIO')}</span>
+      ${radios.length === 0
+        ? `<div class="empty-box">No hay emisoras que coincidan con tu búsqueda.</div>`
+        : `
+          <div class="radio-grid">
+            ${radios.map((ch) => {
+              const isCur = st.channel?.id === ch.id;
+              const active = isCur && st.playing;
+              const art = proxyImg(ch.cover_url);
+              return `
+                <button type="button" class="station-card${isCur ? ' is-playing' : ''}" data-play-ch="${ch.id}">
+                  <div class="station-art-wrap" style="--st-accent:${app.esc(ch.accent_color || '#0A84FF')}">
+                    ${art ? `<img src="${app.esc(art)}" alt="${app.esc(ch.name)}" loading="lazy" />` : ''}
+                    <div class="station-art-scrim"></div>
+                    <span class="station-freq-badge">${app.esc(ch.frequency || 'EN VIVO')}</span>
+                    <span class="station-play-fab" aria-hidden="true">${active ? '⏸' : '▶'}</span>
                   </div>
-
-                  <div class="hero-live-row">
-                    ${heroArt ? `<img class="hero-live-art" src="${app.esc(heroArt)}" alt="${app.esc(hero.name)}" fetchpriority="high" />` : ''}
-                    <div style="flex:1;min-width:0">
-                      <p style="margin:0;font-size:0.72rem;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#66B2FF">${app.esc(hero.tagline)}</p>
-                      <h2 class="t-title-2" style="color:#fff;margin-top:4px">${app.esc(hero.name)}</h2>
-                      <p style="margin:4px 0 0;font-size:0.86rem;color:rgba(255,255,255,0.85)">${app.esc(hero.current_program || '')}</p>
-                      ${hero.city ? `<p style="margin:3px 0 0;font-size:0.74rem;color:rgba(255,255,255,0.65)">${app.esc(hero.city)}</p>` : ''}
-                    </div>
-                  </div>
-
-                  <div style="display:flex;gap:10px;flex-wrap:wrap">
-                    <button type="button" class="btn btn-gold btn-sm" id="heroListenBtn">
-                      ${heroIsPlaying ? '⏸ ' + app.esc(d.live.pauseNow) : '▶ ' + app.esc(d.live.listenNow)}
-                    </button>
-                    <button type="button" class="btn btn-sm" style="background:rgba(255,255,255,0.14);color:#fff" id="heroOpenSheetBtn">
-                      Reproductor
-                    </button>
-                  </div>
-                </div>
-              </article>
-            ` : ''}
-
-            <div class="section-bar">
-              <h2 class="t-title-2">Emisoras Católicas</h2>
-              <span class="t-footnote">${radios.length} en vivo</span>
-            </div>
-            <div class="radio-grid">
-              ${radios.map((ch) => {
-                const isCur = st.channel?.id === ch.id;
-                const active = isCur && st.playing;
-                const art = proxyImg(ch.cover_url);
-                return `
-                  <button type="button" class="station-card${isCur ? ' is-playing' : ''}" data-play-ch="${ch.id}">
-                    <div class="station-art-wrap" style="--st-accent:${app.esc(ch.accent_color || '#0A84FF')}">
-                      ${art ? `<img src="${app.esc(art)}" alt="${app.esc(ch.name)}" loading="lazy" />` : ''}
-                      <div class="station-art-scrim"></div>
-                      <span class="station-freq-badge">${app.esc(ch.frequency || 'EN VIVO')}</span>
-                      <span class="station-play-fab" aria-hidden="true">${active ? '⏸' : '▶'}</span>
-                    </div>
-                    <strong class="station-name">${app.esc(ch.name)}</strong>
-                    <span class="station-prog">${app.esc(ch.current_program || ch.tagline || '')}</span>
-                  </button>
-                `;
-              }).join('')}
-            </div>
-          `}
+                  <strong class="station-name">${app.esc(ch.name)}</strong>
+                  <span class="station-prog">${app.esc(ch.current_program || ch.tagline || '')}</span>
+                </button>
+              `;
+            }).join('')}
+          </div>
+        `}
     `;
   }
 
@@ -206,10 +149,9 @@ export async function mount({ root, app, signal, params }) {
         ${users.map((u) => {
           const av = proxyImg(u.avatar_url);
           const rank = d.ranks[u.ecclesiastical_rank] || u.ecclesiastical_rank;
-          const loc = u.lineage?.[u.lineage.length - 1]?.name || '';
           return `
             <a href="#/user/${u.id}" class="entity-row">
-              <span class="avatar" style="--av-bg:${app.esc(u.avatar_color || '#0F1E36')}">
+              <span class="avatar" data-zoomable data-zoom-name="${app.esc(`${u.title_prefix ? `${u.title_prefix} ` : ''}${u.full_name}`)}" data-zoom-src="${app.esc(av)}" style="--av-bg:${app.esc(u.avatar_color || '#0F1E36')}">
                 ${av ? `<img src="${app.esc(av)}" alt="" />` : app.initials(u.full_name)}
               </span>
               <div class="entity-main">
@@ -217,30 +159,12 @@ export async function mount({ root, app, signal, params }) {
                   <span>${app.esc(u.title_prefix ? `${u.title_prefix} ` : '')}${app.esc(u.full_name)}</span>
                   ${u.is_ceo ? '<span class="rank-tag" style="background:#0A84FF;color:#FFFFFF">CEO</span>' : ''}
                 </div>
-                <div class="entity-sub">${app.esc(rank)}${loc ? ` · ${app.esc(loc)}` : ''}</div>
+                <div class="entity-sub">${app.esc(rank)}</div>
               </div>
               <span class="t-caption">›</span>
             </a>
           `;
         }).join('')}
-      </div>
-    `;
-  }
-
-  function renderParishRows(units) {
-    if (!units || units.length === 0) return `<div class="empty-box">No se encontraron parroquias o diócesis.</div>`;
-    return `
-      <div class="entity-list">
-        ${units.map((u) => `
-          <a href="#/unit/${u.id}" class="entity-row">
-            <span class="avatar" style="--av-bg:${app.esc(u.accent_color || '#0F1E36')}">⛪</span>
-            <div class="entity-main">
-              <div class="entity-title">${app.esc(u.name)}</div>
-              <div class="entity-sub">${app.esc(d.unitTypes?.[u.unit_type] || u.unit_type)}${u.city ? ` · ${app.esc(u.city)}` : ''}${u.country_name ? `, ${app.esc(u.country_name)}` : ''}</div>
-            </div>
-            <span class="t-caption">›</span>
-          </a>
-        `).join('')}
       </div>
     `;
   }
@@ -316,24 +240,14 @@ export async function mount({ root, app, signal, params }) {
       return;
     }
 
-    const fClergy = filterByQuery(clergyList, (u) => `${u.full_name} ${u.username} ${u.current_office_title || ''}`);
-    const fParishes = filterByQuery(parishList, (u) => `${u.name} ${u.city || ''} ${u.country_name || ''}`);
+    const fClergy = filterByQuery(clergyList, (u) => `${u.full_name} ${u.username}`);
     const fVids = filterByQuery(vidsList, (v) => `${v.title || ''} ${v.channel_name || ''} ${v.description || ''}`);
     const fPosts = filterByQuery(postsList, (p) => `${p.title || ''} ${p.content || ''} ${p.channel_name || ''}`);
 
     if (activeFilter === 'clergy') {
       bodyEl.innerHTML = `
-        <div class="section-bar"><h2 class="t-title-2">Presbíteros y Clero</h2><span class="t-footnote">${fClergy.length}</span></div>
+        <div class="section-bar"><h2 class="t-title-2">Presbíteros</h2><span class="t-footnote">${fClergy.length}</span></div>
         ${renderClergyRows(fClergy)}
-      `;
-      bindHandlers();
-      return;
-    }
-
-    if (activeFilter === 'parishes') {
-      bodyEl.innerHTML = `
-        <div class="section-bar"><h2 class="t-title-2">Parroquias y Diócesis</h2><span class="t-footnote">${fParishes.length}</span></div>
-        ${renderParishRows(fParishes)}
       `;
       bindHandlers();
       return;
@@ -364,7 +278,7 @@ export async function mount({ root, app, signal, params }) {
     bodyEl.innerHTML = `
       ${quickRadios.length > 0 ? `
         <div class="section-bar">
-          <h2 class="t-title-3" style="display:flex;align-items:center;gap:7px"><span class="live-dot"></span>Señales En Vivo</h2>
+          <h2 class="t-title-3" style="display:flex;align-items:center;gap:7px"><span class="live-dot"></span>Emisoras En Vivo</h2>
           <button type="button" class="btn btn-sm btn-soft" data-jump-filter="live">Ver todas</button>
         </div>
         <div class="explore-quick-live">
@@ -385,22 +299,18 @@ export async function mount({ root, app, signal, params }) {
       ` : ''}
 
       <div class="section-bar">
-        <h2 class="t-title-3">Presbíteros y Direcciones</h2>
+        <h2 class="t-title-3">Presbíteros</h2>
         <button type="button" class="btn btn-sm btn-soft" data-jump-filter="clergy">Ver más</button>
       </div>
       ${renderClergyRows(fClergy.slice(0, 4))}
 
-      <div class="section-bar" style="margin-top:20px">
-        <h2 class="t-title-3">Vids Recientes</h2>
-        <button type="button" class="btn btn-sm btn-soft" data-jump-filter="vids">Explorar Vids</button>
-      </div>
-      ${renderVidsGrid(fVids.slice(0, 4))}
-
-      <div class="section-bar" style="margin-top:20px">
-        <h2 class="t-title-3">Parroquias y Diócesis</h2>
-        <button type="button" class="btn btn-sm btn-soft" data-jump-filter="parishes">Directorio</button>
-      </div>
-      ${renderParishRows(fParishes.slice(0, 5))}
+      ${fVids.length > 0 ? `
+        <div class="section-bar" style="margin-top:20px">
+          <h2 class="t-title-3">Vids Recientes</h2>
+          <button type="button" class="btn btn-sm btn-soft" data-jump-filter="vids">Explorar Vids</button>
+        </div>
+        ${renderVidsGrid(fVids.slice(0, 4))}
+      ` : ''}
 
       ${fPosts.length > 0 ? `
         <div class="section-bar" style="margin-top:20px">
@@ -417,14 +327,6 @@ export async function mount({ root, app, signal, params }) {
     root.querySelectorAll('[data-jump-filter]').forEach((btn) => {
       btn.addEventListener('click', () => {
         activeFilter = btn.dataset.jumpFilter;
-        render();
-      });
-    });
-
-    root.querySelectorAll('#liveSubTabs [data-ltab]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        liveSubTab = btn.dataset.ltab;
-        activeVideoSlug = '';
         render();
       });
     });
@@ -454,7 +356,27 @@ export async function mount({ root, app, signal, params }) {
     root.querySelectorAll('[data-play-vid]').forEach((btn) => {
       btn.addEventListener('click', () => {
         const slug = btn.dataset.playVid;
-        activeVideoSlug = activeVideoSlug === slug ? '' : slug;
+        const opening = activeVideoSlug !== slug;
+        activeVideoSlug = opening ? slug : '';
+        if (opening) {
+          const vidId = slug.replace(/^vid-/, '');
+          const v = vidsList.find((item) => String(item.id) === vidId);
+          audioEngine.notifyExternalMedia({
+            title: v?.title || 'Video Católico',
+            artist: v?.channel_name || 'Credo · Vids',
+            coverUrl: v?.thumbnail_url || '/icons/credo-192.png',
+            playing: true,
+            onAction: (act) => {
+              if (act === 'stop' || act === 'pause') {
+                activeVideoSlug = '';
+                audioEngine.notifyExternalMedia({ playing: false });
+                render();
+              }
+            },
+          });
+        } else {
+          audioEngine.notifyExternalMedia({ playing: false });
+        }
         render();
       });
     });
@@ -479,10 +401,9 @@ export async function mount({ root, app, signal, params }) {
   audioUnsub = audioEngine.subscribe(() => render());
 
   try {
-    const [liveRes, clergyRes, unitRes, vidsRes, postsRes] = await Promise.allSettled([
+    const [liveRes, clergyRes, vidsRes, postsRes] = await Promise.allSettled([
       app.api('/api/v1/live', { signal }),
       app.api('/api/v1/users?clergy_only=true&limit=25', { signal }),
-      app.api('/api/v1/units?limit=25', { signal }),
       app.api('/api/v1/vids', { signal }),
       app.api('/api/v1/posts?scope=global&limit=20', { signal }),
     ]);
@@ -493,7 +414,6 @@ export async function mount({ root, app, signal, params }) {
       app.setLiveQueue(liveData.all || []);
     }
     if (clergyRes.status === 'fulfilled') clergyList = clergyRes.value.users || [];
-    if (unitRes.status === 'fulfilled') parishList = unitRes.value.units || [];
     if (vidsRes.status === 'fulfilled') vidsList = vidsRes.value.reels || vidsRes.value.vids || vidsRes.value.items || [];
     if (postsRes.status === 'fulfilled') postsList = postsRes.value.posts || [];
     loading = false;

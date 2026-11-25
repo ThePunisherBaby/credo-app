@@ -321,3 +321,185 @@ CREATE INDEX IF NOT EXISTS idx_rosary_tracks_slot ON rosary_audio_tracks(slot_ty
 
 ALTER TABLE stories ADD COLUMN IF NOT EXISTS video_url TEXT DEFAULT '';
 ALTER TABLE stories ADD COLUMN IF NOT EXISTS youtube_id TEXT DEFAULT '';
+
+-- ============================================================================
+-- MASSIVE-SCALE PERFORMANCE OPTIMIZATION: INDEXES, COUNTERS & FTS
+-- ============================================================================
+
+-- Allow church/parish user accounts for direct document-based church onboarding
+ALTER TABLE users DROP CONSTRAINT IF EXISTS users_ecclesiastical_rank_check;
+ALTER TABLE users ADD CONSTRAINT users_ecclesiastical_rank_check CHECK (ecclesiastical_rank IN (
+  'pope',
+  'cardinal',
+  'archbishop',
+  'bishop',
+  'monsignor',
+  'priest',
+  'deacon',
+  'church',
+  'parish',
+  'religious',
+  'seminarian',
+  'catechist',
+  'lay'
+));
+
+-- Case-insensitive O(log N) login & lookup indexes
+CREATE INDEX IF NOT EXISTS idx_users_email_lower ON users(LOWER(email));
+CREATE INDEX IF NOT EXISTS idx_users_username_lower ON users(LOWER(username));
+CREATE INDEX IF NOT EXISTS idx_users_fts ON users USING GIN (
+  to_tsvector('simple', COALESCE(full_name, '') || ' ' || COALESCE(username, '') || ' ' || COALESCE(current_office_title, ''))
+);
+
+-- Hot-path composite, partial & covering indexes for instant feed/vids/profile queries
+CREATE INDEX IF NOT EXISTS idx_posts_feed_order ON posts(is_pinned DESC, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_posts_author_created ON posts(author_id, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_posts_type_created ON posts(post_type, is_pinned DESC, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_posts_media_kind_created ON posts(media_kind, is_pinned DESC, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_posts_videos_created ON posts(created_at DESC, id DESC) WHERE media_kind = 'video' OR youtube_id <> '';
+CREATE INDEX IF NOT EXISTS idx_posts_fts ON posts USING GIN (
+  to_tsvector('spanish', COALESCE(title, '') || ' ' || COALESCE(content, '') || ' ' || COALESCE(scripture_ref, ''))
+);
+
+-- Fast lookups for reactions, comments, saves, follows, stories & prayers
+CREATE INDEX IF NOT EXISTS idx_comments_post_created ON post_comments(post_id, created_at ASC, id ASC);
+CREATE INDEX IF NOT EXISTS idx_reactions_user_post ON post_reactions(user_id, post_id, reaction_type);
+CREATE INDEX IF NOT EXISTS idx_saved_posts_post ON saved_posts(post_id, user_id);
+CREATE INDEX IF NOT EXISTS idx_follows_target_user ON follows(target_user_id) WHERE target_user_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_follows_follower ON follows(follower_id);
+CREATE INDEX IF NOT EXISTS idx_stories_active ON stories(expires_at DESC, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_prayers_cat_created ON prayer_intentions(category, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_prayer_logs_user_int ON prayer_logs(user_id, intention_id) WHERE user_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_prayer_logs_dev_int ON prayer_logs(device_key, intention_id) WHERE user_id IS NULL AND device_key <> '';
+
+-- Safe optional pg_trgm acceleration for instant substring ILIKE search
+DO $$
+BEGIN
+  CREATE EXTENSION IF NOT EXISTS pg_trgm;
+  CREATE INDEX IF NOT EXISTS idx_posts_title_trgm ON posts USING GIN (title gin_trgm_ops);
+  CREATE INDEX IF NOT EXISTS idx_posts_content_trgm ON posts USING GIN (content gin_trgm_ops);
+  CREATE INDEX IF NOT EXISTS idx_users_name_trgm ON users USING GIN (full_name gin_trgm_ops);
+  CREATE INDEX IF NOT EXISTS idx_users_uname_trgm ON users USING GIN (username gin_trgm_ops);
+EXCEPTION
+  WHEN OTHERS THEN NULL;
+END $$;
+
+-- Denormalized O(1) counters (eliminates per-page GROUP BY and COUNT(*) full scans)
+ALTER TABLE posts ADD COLUMN IF NOT EXISTS amen_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE posts ADD COLUMN IF NOT EXISTS pray_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE posts ADD COLUMN IF NOT EXISTS gratitude_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE posts ADD COLUMN IF NOT EXISTS comments_count INTEGER NOT NULL DEFAULT 0;
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS followers_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS following_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS posts_count INTEGER NOT NULL DEFAULT 0;
+
+-- Trigger: maintain post reaction counters in O(1)
+CREATE OR REPLACE FUNCTION credo_sync_post_reaction_counts() RETURNS TRIGGER AS $$
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    UPDATE posts SET
+      amen_count = amen_count + CASE WHEN NEW.reaction_type = 'amen' THEN 1 ELSE 0 END,
+      pray_count = pray_count + CASE WHEN NEW.reaction_type = 'pray' THEN 1 ELSE 0 END,
+      gratitude_count = gratitude_count + CASE WHEN NEW.reaction_type = 'gratitude' THEN 1 ELSE 0 END
+    WHERE id = NEW.post_id;
+    RETURN NEW;
+  ELSIF TG_OP = 'DELETE' THEN
+    UPDATE posts SET
+      amen_count = GREATEST(0, amen_count - CASE WHEN OLD.reaction_type = 'amen' THEN 1 ELSE 0 END),
+      pray_count = GREATEST(0, pray_count - CASE WHEN OLD.reaction_type = 'pray' THEN 1 ELSE 0 END),
+      gratitude_count = GREATEST(0, gratitude_count - CASE WHEN OLD.reaction_type = 'gratitude' THEN 1 ELSE 0 END)
+    WHERE id = OLD.post_id;
+    RETURN OLD;
+  END IF;
+  RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_credo_post_reactions ON post_reactions;
+CREATE TRIGGER trg_credo_post_reactions
+  AFTER INSERT OR DELETE ON post_reactions
+  FOR EACH ROW EXECUTE FUNCTION credo_sync_post_reaction_counts();
+
+-- Trigger: maintain post comment count in O(1)
+CREATE OR REPLACE FUNCTION credo_sync_post_comment_counts() RETURNS TRIGGER AS $$
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    UPDATE posts SET comments_count = comments_count + 1 WHERE id = NEW.post_id;
+    RETURN NEW;
+  ELSIF TG_OP = 'DELETE' THEN
+    UPDATE posts SET comments_count = GREATEST(0, comments_count - 1) WHERE id = OLD.post_id;
+    RETURN OLD;
+  END IF;
+  RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_credo_post_comments ON post_comments;
+CREATE TRIGGER trg_credo_post_comments
+  AFTER INSERT OR DELETE ON post_comments
+  FOR EACH ROW EXECUTE FUNCTION credo_sync_post_comment_counts();
+
+-- Trigger: maintain user posts_count in O(1)
+CREATE OR REPLACE FUNCTION credo_sync_user_posts_count() RETURNS TRIGGER AS $$
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    UPDATE users SET posts_count = posts_count + 1 WHERE id = NEW.author_id;
+    RETURN NEW;
+  ELSIF TG_OP = 'DELETE' THEN
+    UPDATE users SET posts_count = GREATEST(0, posts_count - 1) WHERE id = OLD.author_id;
+    RETURN OLD;
+  END IF;
+  RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_credo_user_posts ON posts;
+CREATE TRIGGER trg_credo_user_posts
+  AFTER INSERT OR DELETE ON posts
+  FOR EACH ROW EXECUTE FUNCTION credo_sync_user_posts_count();
+
+-- Trigger: maintain user followers/following counts in O(1)
+CREATE OR REPLACE FUNCTION credo_sync_follow_counts() RETURNS TRIGGER AS $$
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    UPDATE users SET following_count = following_count + 1 WHERE id = NEW.follower_id;
+    IF NEW.target_user_id IS NOT NULL THEN
+      UPDATE users SET followers_count = followers_count + 1 WHERE id = NEW.target_user_id;
+    END IF;
+    RETURN NEW;
+  ELSIF TG_OP = 'DELETE' THEN
+    UPDATE users SET following_count = GREATEST(0, following_count - 1) WHERE id = OLD.follower_id;
+    IF OLD.target_user_id IS NOT NULL THEN
+      UPDATE users SET followers_count = GREATEST(0, followers_count - 1) WHERE id = OLD.target_user_id;
+    END IF;
+    RETURN OLD;
+  END IF;
+  RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_credo_follows ON follows;
+CREATE TRIGGER trg_credo_follows
+  AFTER INSERT OR DELETE ON follows
+  FOR EACH ROW EXECUTE FUNCTION credo_sync_follow_counts();
+
+-- Reconcile denormalized counters once if any mismatch exists
+UPDATE posts p SET
+  amen_count = COALESCE((SELECT COUNT(*)::int FROM post_reactions pr WHERE pr.post_id = p.id AND pr.reaction_type = 'amen'), 0),
+  pray_count = COALESCE((SELECT COUNT(*)::int FROM post_reactions pr WHERE pr.post_id = p.id AND pr.reaction_type = 'pray'), 0),
+  gratitude_count = COALESCE((SELECT COUNT(*)::int FROM post_reactions pr WHERE pr.post_id = p.id AND pr.reaction_type = 'gratitude'), 0),
+  comments_count = COALESCE((SELECT COUNT(*)::int FROM post_comments pc WHERE pc.post_id = p.id), 0)
+WHERE
+  p.amen_count <> COALESCE((SELECT COUNT(*)::int FROM post_reactions pr WHERE pr.post_id = p.id AND pr.reaction_type = 'amen'), 0)
+  OR p.comments_count <> COALESCE((SELECT COUNT(*)::int FROM post_comments pc WHERE pc.post_id = p.id), 0);
+
+UPDATE users u SET
+  posts_count = COALESCE((SELECT COUNT(*)::int FROM posts p WHERE p.author_id = u.id), 0),
+  followers_count = COALESCE((SELECT COUNT(*)::int FROM follows f WHERE f.target_user_id = u.id), 0),
+  following_count = COALESCE((SELECT COUNT(*)::int FROM follows f WHERE f.follower_id = u.id), 0)
+WHERE
+  u.posts_count <> COALESCE((SELECT COUNT(*)::int FROM posts p WHERE p.author_id = u.id), 0)
+  OR u.followers_count <> COALESCE((SELECT COUNT(*)::int FROM follows f WHERE f.target_user_id = u.id), 0)
+  OR u.following_count <> COALESCE((SELECT COUNT(*)::int FROM follows f WHERE f.follower_id = u.id), 0);
+

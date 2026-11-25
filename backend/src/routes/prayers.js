@@ -2,6 +2,7 @@ const express = require('express');
 const { pool } = require('../db/pool');
 const { optionalAuth } = require('../middleware/auth');
 const { getLiveDailyLiturgy } = require('../utils/officialSync');
+const { apiCache } = require('../utils/fastCache');
 
 const router = express.Router();
 
@@ -17,11 +18,10 @@ router.get('/liturgy', async (req, res) => {
   });
 });
 
-// GET /api/v1/prayers/intentions?filter=recent|urgent|parish|mine&unit_id=&device_key=&limit=12&offset=0
+// GET /api/v1/prayers/intentions?filter=recent|urgent|mine&device_key=&limit=20&offset=0
 router.get('/intentions', optionalAuth, async (req, res) => {
   try {
     const filter = String(req.query.filter || 'recent');
-    const unitId = req.query.unit_id ? Number(req.query.unit_id) : null;
     const deviceKey = String(req.query.device_key || '').trim().slice(0, 64);
     const limit = Math.min(Math.max(Number(req.query.limit) || 12, 1), 50);
     const offset = Math.max(Number(req.query.offset) || 0, 0);
@@ -31,12 +31,6 @@ router.get('/intentions', optionalAuth, async (req, res) => {
 
     if (filter === 'urgent') {
       clauses.push('(pi.is_urgent = TRUE OR pi.category = \'urgent\')');
-    } else if (filter === 'parish') {
-      const targetUnit = unitId || req.user?.primary_unit_id;
-      if (targetUnit) {
-        params.push(targetUnit);
-        clauses.push(`pi.unit_id = $${params.length}`);
-      }
     } else if (filter === 'mine') {
       if (req.user) {
         params.push(req.user.id);
@@ -52,19 +46,26 @@ router.get('/intentions', optionalAuth, async (req, res) => {
         ? 'ORDER BY pi.is_urgent DESC, pi.prayers_count DESC, pi.created_at DESC'
         : 'ORDER BY pi.created_at DESC';
 
-    params.push(limit, offset);
-    const limitIdx = params.length - 1;
-    const offsetIdx = params.length;
+    const runQuery = async () => {
+      const qParams = [...params, limit, offset];
+      const limitIdx = qParams.length - 1;
+      const offsetIdx = qParams.length;
+      const { rows } = await pool.query(
+        `SELECT pi.id, pi.author_display, pi.is_anonymous, pi.category, pi.is_urgent,
+                pi.content, pi.prayers_count, pi.created_at
+           FROM prayer_intentions pi
+          ${whereSql}
+          ${orderSql}
+          LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
+        qParams
+      );
+      return rows;
+    };
 
-    const { rows } = await pool.query(
-      `SELECT pi.*, u.name AS unit_name, u.city AS unit_city, u.country_code AS unit_country
-         FROM prayer_intentions pi
-         LEFT JOIN ecclesiastical_units u ON u.id = pi.unit_id
-        ${whereSql}
-        ${orderSql}
-        LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
-      params
-    );
+    const rows =
+      filter !== 'mine'
+        ? await apiCache.getOrLoad(`prayers:list:${filter}:${limit}:${offset}`, 10000, runQuery)
+        : await runQuery();
 
     let prayedSet = new Set();
     if (rows.length > 0 && (req.user || deviceKey)) {
@@ -75,7 +76,7 @@ router.get('/intentions', optionalAuth, async (req, res) => {
             [ids, req.user.id]
           )
         : await pool.query(
-            'SELECT intention_id FROM prayer_logs WHERE intention_id = ANY($1::int[]) AND device_key = $2',
+            'SELECT intention_id FROM prayer_logs WHERE intention_id = ANY($1::int[]) AND user_id IS NULL AND device_key = $2',
             [ids, deviceKey]
           );
       prayedSet = new Set(logRes.rows.map((r) => r.intention_id));
@@ -91,9 +92,9 @@ router.get('/intentions', optionalAuth, async (req, res) => {
         content: r.content,
         prayers_count: r.prayers_count,
         i_prayed: prayedSet.has(r.id),
-        unit_id: r.unit_id,
-        unit_name: r.unit_name || '',
-        unit_city: r.unit_city || '',
+        unit_id: null,
+        unit_name: '',
+        unit_city: '',
         created_at: r.created_at,
       })),
     });
@@ -111,7 +112,6 @@ router.post('/intentions', optionalAuth, async (req, res) => {
       category = 'family',
       is_anonymous = false,
       is_urgent = false,
-      unit_id,
       author_name,
     } = req.body || {};
 
@@ -128,14 +128,15 @@ router.post('/intentions', optionalAuth, async (req, res) => {
       ? 'Fiel anónimo'
       : String(author_name || req.user?.full_name || 'Fiel en oración').trim().slice(0, 80);
 
-    const targetUnitId = unit_id ? Number(unit_id) : req.user?.primary_unit_id || null;
-
     const { rows } = await pool.query(
       `INSERT INTO prayer_intentions (user_id, unit_id, author_display, is_anonymous, category, is_urgent, content, prayers_count)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, 1)
+       VALUES ($1, NULL, $2, $3, $4, $5, $6, 1)
        RETURNING *`,
-      [req.user?.id || null, targetUnitId, display, anonFlag, safeCategory, urgentFlag, clean]
+      [req.user?.id || null, display, anonFlag, safeCategory, urgentFlag, clean]
     );
+
+    apiCache.invalidate('prayers:');
+    apiCache.invalidate('stats:');
 
     const created = rows[0];
     return res.status(201).json({
@@ -148,7 +149,7 @@ router.post('/intentions', optionalAuth, async (req, res) => {
         content: created.content,
         prayers_count: created.prayers_count,
         i_prayed: true,
-        unit_id: created.unit_id,
+        unit_id: null,
         unit_name: '',
         created_at: created.created_at,
       },
@@ -206,6 +207,11 @@ router.post('/intentions/:id/pray', optionalAuth, async (req, res) => {
 
     if (!rows[0]) {
       return res.status(404).json({ error: 'Prayer intention not found' });
+    }
+
+    if (!already) {
+      apiCache.invalidate('prayers:');
+      apiCache.invalidate('stats:');
     }
 
     return res.json({

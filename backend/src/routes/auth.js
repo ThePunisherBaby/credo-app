@@ -3,7 +3,8 @@ const bcrypt = require('bcryptjs');
 const { pool } = require('../db/pool');
 const { ALL_RANKS, isClergyRank } = require('../config');
 const { requireAuth, signToken } = require('../middleware/auth');
-const { getUnitLineage, serializeUserSummary } = require('../utils/hierarchy');
+const { serializeUserSummary } = require('../utils/hierarchy');
+const { apiCache } = require('../utils/fastCache');
 
 const router = express.Router();
 
@@ -15,6 +16,8 @@ const DEFAULT_PREFIX_BY_RANK = {
   monsignor: 'Mons.',
   priest: 'P.',
   deacon: 'Diác.',
+  church: '',
+  parish: '',
   religious: 'Hno./Hna.',
   seminarian: 'Sem.',
   catechist: '',
@@ -27,25 +30,18 @@ const DEFAULT_COLOR_BY_RANK = {
   archbishop: '#6B2D5C',
   bishop: '#5B2C6F',
   monsignor: '#8E3A59',
-  priest: '#2C3038',
+  priest: '#0F1E36',
   deacon: '#355070',
+  church: '#0A84FF',
+  parish: '#0A84FF',
   religious: '#5C4033',
   seminarian: '#4A5568',
   catechist: '#2F6F6D',
-  lay: '#2A6F6B',
+  lay: '#007AFF',
 };
 
 async function enrichUser(userRow) {
-  const lineage = await getUnitLineage(userRow.primary_unit_id);
-  let orderUnit = null;
-  if (userRow.religious_order_id) {
-    const { rows } = await pool.query(
-      'SELECT id, slug, name, unit_type, country_code, accent_color FROM ecclesiastical_units WHERE id = $1',
-      [userRow.religious_order_id]
-    );
-    orderUnit = rows[0] || null;
-  }
-  return serializeUserSummary(userRow, lineage, orderUnit);
+  return serializeUserSummary(userRow, [], null);
 }
 
 router.post('/register', async (req, res) => {
@@ -57,13 +53,10 @@ router.post('/register', async (req, res) => {
       full_name,
       ecclesiastical_rank = 'lay',
       title_prefix,
-      primary_unit_id,
-      religious_order_id,
-      religious_order_initials = '',
       current_office_title = '',
       bio = '',
       motto = '',
-      country_code = 'VA',
+      country_code = 'DO',
       preferred_locale = 'es',
     } = req.body || {};
 
@@ -76,7 +69,6 @@ router.post('/register', async (req, res) => {
     if (!ALL_RANKS.includes(ecclesiastical_rank)) {
       return res.status(400).json({ error: 'Invalid ecclesiastical_rank' });
     }
-    // Public registration cannot self-assign pope
     if (ecclesiastical_rank === 'pope') {
       return res.status(400).json({ error: 'Rank not available for self-registration' });
     }
@@ -89,7 +81,7 @@ router.post('/register', async (req, res) => {
     const finalUsername = baseUsername || `user_${Date.now()}`;
 
     const existing = await pool.query(
-      'SELECT id FROM users WHERE email = $1 OR username = $2',
+      'SELECT id FROM users WHERE LOWER(email) = $1 OR LOWER(username) = $2 LIMIT 1',
       [cleanEmail, finalUsername]
     );
     if (existing.rows.length > 0) {
@@ -101,7 +93,7 @@ router.post('/register', async (req, res) => {
       title_prefix !== undefined
         ? String(title_prefix).trim()
         : DEFAULT_PREFIX_BY_RANK[ecclesiastical_rank] || '';
-    const avatarColor = DEFAULT_COLOR_BY_RANK[ecclesiastical_rank] || '#2A6F6B';
+    const avatarColor = DEFAULT_COLOR_BY_RANK[ecclesiastical_rank] || '#007AFF';
     const verificationStatus = isClergyRank(ecclesiastical_rank) ? 'pending' : 'unverified';
 
     const { rows } = await pool.query(
@@ -111,7 +103,7 @@ router.post('/register', async (req, res) => {
          religious_order_id, current_office_title, bio, motto,
          country_code, languages, preferred_locale, avatar_color,
          verification_status
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+       ) VALUES ($1,$2,$3,$4,$5,$6,'',NULL,NULL,$7,$8,$9,$10,$11,$12,$13,$14)
        RETURNING *`,
       [
         cleanEmail,
@@ -120,9 +112,6 @@ router.post('/register', async (req, res) => {
         String(full_name).trim(),
         prefix,
         ecclesiastical_rank,
-        String(religious_order_initials).trim().toUpperCase().slice(0, 12),
-        primary_unit_id ? Number(primary_unit_id) : null,
-        religious_order_id ? Number(religious_order_id) : null,
         String(current_office_title).trim(),
         String(bio).trim(),
         String(motto).trim(),
@@ -135,33 +124,8 @@ router.post('/register', async (req, res) => {
     );
 
     const user = rows[0];
-
-    // Record initial primary assignment if a unit was chosen
-    if (user.primary_unit_id) {
-      await pool.query(
-        `INSERT INTO user_assignments (user_id, unit_id, role_title, start_year, is_current, is_primary)
-         VALUES ($1, $2, $3, EXTRACT(YEAR FROM NOW())::int, TRUE, TRUE)`,
-        [
-          user.id,
-          user.primary_unit_id,
-          user.current_office_title || (isClergyRank(user.ecclesiastical_rank) ? 'Clero adscrito' : 'Miembro de comunidad'),
-        ]
-      );
-
-      // Auto-join pastoral groups along the user's lineage (if any exist)
-      const lineage = await getUnitLineage(user.primary_unit_id);
-      const lineageIds = lineage.map((u) => u.id);
-      if (lineageIds.length > 0) {
-        await pool.query(
-          `INSERT INTO conversation_members (conversation_id, user_id, role)
-           SELECT id, $1, 'member'
-             FROM conversations
-            WHERE kind = 'pastoral_group' AND unit_id = ANY($2::int[])
-           ON CONFLICT DO NOTHING`,
-          [user.id, lineageIds]
-        );
-      }
-    }
+    apiCache.invalidate('users:');
+    apiCache.invalidate('stats:');
 
     const token = signToken(user);
     const enriched = await enrichUser(user);

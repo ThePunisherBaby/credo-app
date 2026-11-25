@@ -1,17 +1,18 @@
 const express = require('express');
 const { pool } = require('../db/pool');
 const { requireAuth, requireClergy } = require('../middleware/auth');
-const { getUnitLineagesMap, serializeUserSummary } = require('../utils/hierarchy');
-const { getLiveCatholicReels } = require('../utils/officialSync');
+const { serializeUserSummary } = require('../utils/hierarchy');
+const { apiCache } = require('../utils/fastCache');
 
 const router = express.Router();
 
-// List active clergy & video stories (Instagram-style Video Stories, NO audio radios)
+// List active Credo stories (singleflight cached for massive concurrent reads)
 router.get('/', async (_req, res) => {
   try {
-    const [{ rows }, videoReels] = await Promise.all([
-      pool.query(
-        `SELECT s.*,
+    const stories = await apiCache.getOrLoad('stories:active', 15000, async () => {
+      const { rows } = await pool.query(
+        `SELECT s.id, s.author_id, s.image_url, s.video_url, s.youtube_id, s.caption,
+                s.scripture_ref, s.bg_gradient, s.created_at, s.expires_at,
                 u.username AS author_username,
                 u.full_name AS author_full_name,
                 u.title_prefix AS author_title_prefix,
@@ -23,88 +24,49 @@ router.get('/', async (_req, res) => {
                 u.avatar_url AS author_avatar_url,
                 u.verification_status AS author_verification_status,
                 u.country_code AS author_country_code,
-                COALESCE(u.is_ceo, FALSE) AS author_is_ceo,
-                eu.name AS scope_unit_name,
-                eu.country_code AS scope_unit_country_code
+                COALESCE(u.is_ceo, FALSE) AS author_is_ceo
            FROM stories s
            JOIN users u ON u.id = s.author_id
-           LEFT JOIN ecclesiastical_units eu ON eu.id = s.scope_unit_id
           WHERE s.expires_at > NOW()
           ORDER BY COALESCE(u.is_ceo, FALSE) DESC, s.created_at DESC
           LIMIT 25`
-      ),
-      getLiveCatholicReels().catch(() => []),
-    ]);
+      );
 
-    const lineages = await getUnitLineagesMap(rows.map((r) => r.author_primary_unit_id));
-    const dbStories = rows.map((r) => ({
-      id: r.id,
-      is_video: Boolean(r.video_url || r.youtube_id),
-      video_url: r.video_url || '',
-      youtube_id: r.youtube_id || '',
-      image_url: r.image_url || (r.youtube_id ? `https://i.ytimg.com/vi/${r.youtube_id}/hqdefault.jpg` : ''),
-      caption: r.caption || '',
-      scripture_ref: r.scripture_ref || '',
-      bg_gradient: r.bg_gradient || 'linear-gradient(145deg,#0A1931,#102542)',
-      created_at: r.created_at,
-      expires_at: r.expires_at,
-      scope_unit: r.scope_unit_id
-        ? {
-            id: r.scope_unit_id,
-            name: r.scope_unit_name,
-            country_code: r.scope_unit_country_code || '',
-          }
-        : null,
-      author: serializeUserSummary(
-        {
-          id: r.author_id,
-          username: r.author_username,
-          full_name: r.author_full_name,
-          title_prefix: r.author_title_prefix,
-          ecclesiastical_rank: r.author_rank,
-          religious_order_initials: r.author_order_initials,
-          primary_unit_id: r.author_primary_unit_id,
-          current_office_title: r.author_office_title,
-          avatar_color: r.author_avatar_color,
-          avatar_url: r.author_avatar_url,
-          verification_status: r.author_verification_status,
-          country_code: r.author_country_code,
-          is_ceo: Boolean(r.author_is_ceo),
-        },
-        lineages.get(r.author_primary_unit_id) || []
-      ),
-    }));
-
-    const seenYt = new Set(dbStories.map((s) => s.youtube_id).filter(Boolean));
-    const videoStories = (videoReels || [])
-      .filter((v) => v.youtube_id && !seenYt.has(v.youtube_id))
-      .slice(0, 8)
-      .map((v) => ({
-        id: `vid-story-${v.youtube_id}`,
-        is_video: true,
-        youtube_id: v.youtube_id,
-        video_url: '',
-        image_url: v.thumbnail_url || `https://i.ytimg.com/vi/${v.youtube_id}/hqdefault.jpg`,
-        caption: v.title || '',
-        scripture_ref: v.channel_name || 'Video Oficial',
-        bg_gradient: 'linear-gradient(145deg,#0B1424,#13233E)',
-        created_at: v.published_at || new Date().toISOString(),
-        source_url: v.source_url || `https://www.youtube.com/watch?v=${v.youtube_id}`,
+      return rows.map((r) => ({
+        id: r.id,
+        is_video: Boolean(r.video_url || r.youtube_id),
+        video_url: r.video_url || '',
+        youtube_id: r.youtube_id || '',
+        image_url: r.image_url || (r.youtube_id ? `https://i.ytimg.com/vi/${r.youtube_id}/hqdefault.jpg` : ''),
+        caption: r.caption || '',
+        scripture_ref: r.scripture_ref || '',
+        bg_gradient: r.bg_gradient || 'linear-gradient(145deg,#0A1931,#102542)',
+        created_at: r.created_at,
+        expires_at: r.expires_at,
         scope_unit: null,
-        author: {
-          id: null,
-          username: (v.channel_handle || 'credo').replace(/^@/, ''),
-          full_name: v.channel_name || 'Credo Video',
-          title_prefix: '',
-          ecclesiastical_rank: 'official_media',
-          can_publish: true,
-          avatar_color: v.accent_color || '#0A84FF',
-          avatar_url: v.thumbnail_url || '',
-          is_ceo: false,
-        },
+        author: serializeUserSummary(
+          {
+            id: r.author_id,
+            username: r.author_username,
+            full_name: r.author_full_name,
+            title_prefix: r.author_title_prefix,
+            ecclesiastical_rank: r.author_rank,
+            religious_order_initials: r.author_order_initials,
+            primary_unit_id: r.author_primary_unit_id,
+            current_office_title: r.author_office_title,
+            avatar_color: r.author_avatar_color,
+            avatar_url: r.author_avatar_url,
+            verification_status: r.author_verification_status,
+            country_code: r.author_country_code,
+            is_ceo: Boolean(r.author_is_ceo),
+          },
+          []
+        ),
       }));
+    });
 
-    return res.json({ stories: [...dbStories, ...videoStories] });
+    res.setHeader('Cache-Control', 'public, max-age=15, stale-while-revalidate=60');
+    return res.json({ stories });
   } catch (err) {
     console.error('[stories/list]', err);
     return res.status(500).json({ error: 'Failed to load stories' });
@@ -130,11 +92,10 @@ router.post('/', requireAuth, requireClergy, async (req, res) => {
 
     const { rows } = await pool.query(
       `INSERT INTO stories (author_id, scope_unit_id, image_url, video_url, youtube_id, caption, scripture_ref, bg_gradient, expires_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8, NOW() + INTERVAL '24 hours')
+       VALUES ($1,NULL,$2,$3,$4,$5,$6,$7, NOW() + INTERVAL '24 hours')
        RETURNING *`,
       [
         req.user.id,
-        scope_unit_id ? Number(scope_unit_id) : req.user.primary_unit_id,
         String(image_url).trim().slice(0, 1000),
         String(video_url).trim().slice(0, 1000),
         String(youtube_id).trim().slice(0, 40),
@@ -144,6 +105,7 @@ router.post('/', requireAuth, requireClergy, async (req, res) => {
       ]
     );
 
+    apiCache.invalidate('stories:');
     return res.status(201).json({ story: rows[0] });
   } catch (err) {
     console.error('[stories/create]', err);
@@ -159,6 +121,7 @@ router.delete('/:id', requireAuth, async (req, res) => {
       req.user.id,
       Boolean(req.user.is_admin),
     ]);
+    apiCache.invalidate('stories:');
     return res.json({ deleted: true });
   } catch (err) {
     console.error('[stories/delete]', err);

@@ -71,7 +71,10 @@ export async function mount({ root, app, signal }) {
     if (img) img.hidden = false;
     const playBtn = card.querySelector('.vid-play-btn');
     if (playBtn) playBtn.hidden = false;
-    if (activeCard === card) activeCard = null;
+    if (activeCard === card) {
+      activeCard = null;
+      window.__CREDO_AUDIO__?.notifyExternalMedia?.({ playing: false });
+    }
   }
 
   function playCard(card, item) {
@@ -97,6 +100,16 @@ export async function mount({ root, app, signal }) {
     iframe.allowFullscreen = true;
     media.appendChild(iframe);
     activeCard = card;
+
+    window.__CREDO_AUDIO__?.notifyExternalMedia?.({
+      title: item.title || 'Credo Vid',
+      artist: item.channel_name || 'Credo · Vids',
+      coverUrl: makeThumbUrl(item) || '/icons/credo-192.png',
+      playing: true,
+      onAction: (act) => {
+        if (act === 'stop' || act === 'pause') stopCard(card);
+      },
+    });
   }
 
   try {

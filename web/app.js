@@ -1,10 +1,10 @@
 // app.js — Credo Apple-Grade Core Router, Persistent Player, Liquid Glass & On-Demand View Loader
 // STRICTLY mounts ONLY the active route's ES module and DOM into #appView.
 
-import { detectLocale, getDict } from './i18n.js?v=21';
-import { attachDismissableSheet, createSpringPill, attachSpringPress } from './springs.mjs?v=21';
-import { enhanceLiquidGlass } from './glass.js?v=21';
-import { audioEngine } from './audio-engine.js?v=21';
+import { detectLocale, getDict } from './i18n.js?v=22';
+import { attachDismissableSheet, createSpringPill, attachSpringPress, attachSegSpringPills } from './springs.mjs?v=22';
+import { enhanceLiquidGlass } from './glass.js?v=22';
+import { audioEngine } from './audio-engine.js?v=22';
 
 const ICON_PLAY = '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" style="margin-left:2px"><path d="M8 5v14l11-7z"/></svg>';
 const ICON_PAUSE = '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M6 5h4v14H6zm8 0h4v14h-4z"/></svg>';
@@ -286,11 +286,12 @@ class CredoApp {
       }
     });
 
-    // Liquid Glass functional chrome + 120Hz Apple tactile spring press
+    // Liquid Glass functional chrome + 120Hz Apple tactile spring press + long-press avatar zoom
     enhanceLiquidGlass(document.getElementById('mobileDockGlass'), 'lg-dock-refract');
     enhanceLiquidGlass(document.getElementById('miniPlayerGlass'), 'lg-mini-refract');
     enhanceLiquidGlass(document.getElementById('desktopRailGlass'));
     attachSpringPress(document.body);
+    this.attachAvatarLongPress();
 
     // Load current session if token exists
     if (this.token) {
@@ -321,6 +322,94 @@ class CredoApp {
     } else {
       this.navigate();
     }
+  }
+
+  attachAvatarLongPress() {
+    if (this._avatarZoomBound) return;
+    this._avatarZoomBound = true;
+    let pressTimer = 0;
+    let suppressClick = false;
+    let startPos = null;
+
+    const clearHold = () => {
+      clearTimeout(pressTimer);
+      pressTimer = 0;
+      startPos = null;
+    };
+
+    document.addEventListener(
+      'pointerdown',
+      (e) => {
+        if (e.button && e.button !== 0) return;
+        const avEl = e.target.closest('.avatar[data-zoomable], .ig-prof-avatar');
+        if (!avEl) return;
+        startPos = { x: e.clientX, y: e.clientY };
+        clearTimeout(pressTimer);
+        pressTimer = setTimeout(() => {
+          pressTimer = 0;
+          suppressClick = true;
+          const img = avEl.querySelector('img');
+          const src = avEl.dataset.zoomSrc || img?.getAttribute('src') || '';
+          const name = avEl.dataset.zoomName || img?.getAttribute('alt') || 'Perfil de Credo';
+          const bg = avEl.dataset.zoomBg || getComputedStyle(avEl).getPropertyValue('--av-bg') || '#0F1E36';
+          const initials = img ? '' : (avEl.textContent || 'C').trim().slice(0, 3);
+          this.openAvatarLightbox({ src, name, bg, initials });
+          setTimeout(() => { suppressClick = false; }, 450);
+        }, 230);
+      },
+      { passive: true }
+    );
+
+    document.addEventListener(
+      'contextmenu',
+      (e) => {
+        if (e.target.closest?.('.avatar[data-zoomable], .ig-prof-avatar')) {
+          e.preventDefault();
+        }
+      }
+    );
+
+    document.addEventListener(
+      'pointermove',
+      (e) => {
+        if (!pressTimer || !startPos) return;
+        if (Math.hypot(e.clientX - startPos.x, e.clientY - startPos.y) > 10) clearHold();
+      },
+      { passive: true }
+    );
+    document.addEventListener('pointerup', clearHold, { passive: true });
+    document.addEventListener('pointercancel', clearHold, { passive: true });
+    document.addEventListener(
+      'click',
+      (e) => {
+        if (!suppressClick) return;
+        suppressClick = false;
+        e.preventDefault();
+        e.stopPropagation();
+      },
+      true
+    );
+  }
+
+  openAvatarLightbox({ src, name, bg, initials }) {
+    document.querySelector('.avatar-lightbox')?.remove();
+    const overlay = document.createElement('div');
+    overlay.className = 'avatar-lightbox';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.setAttribute('aria-label', name || 'Foto de perfil');
+    overlay.innerHTML = `
+      <div class="avatar-lightbox-inner">
+        <div class="avatar-lightbox-ring" style="background:${this.esc(bg || '#0F1E36')}">
+          ${src ? `<img src="${this.esc(src)}" alt="${this.esc(name)}" />` : `<span>${this.esc(initials || '✝')}</span>`}
+        </div>
+        ${name ? `<div class="avatar-lightbox-name">${this.esc(name)}</div>` : ''}
+      </div>
+    `;
+    const dismiss = () => overlay.remove();
+    overlay.addEventListener('click', dismiss);
+    overlay.addEventListener('keydown', (e) => { if (e.key === 'Escape') dismiss(); });
+    document.body.appendChild(overlay);
   }
 
   renderChrome(immediatePill = false) {
@@ -354,23 +443,34 @@ class CredoApp {
       if (!mobileNav.querySelector('.dock-btn')) {
         const linksHtml = NAV_TABS.map(
           (t) => `
-          <a href="${t.hash}" class="dock-btn" data-nav="${t.id}">
+          <button type="button" class="dock-btn" data-nav="${t.id}" data-hash="${t.hash}">
             ${t.icon}
             ${t.livePip ? '<span class="live-pip" aria-hidden="true"></span>' : ''}
             <span class="dock-label">${this.esc(d.nav[t.id])}</span>
-          </a>`
+          </button>`
         ).join('');
         mobileNav.insertAdjacentHTML('beforeend', linksHtml);
         this._dockPill = createSpringPill(mobileNav, indicator);
+        mobileNav.addEventListener('pointerdown', (e) => {
+          if (e.target.closest('.dock-btn')) this._dockPill?.setPressed(true);
+        }, { passive: true });
+        const releaseDock = () => this._dockPill?.setPressed(false);
+        mobileNav.addEventListener('pointerup', releaseDock, { passive: true });
+        mobileNav.addEventListener('pointercancel', releaseDock, { passive: true });
+
         mobileNav.addEventListener('click', (e) => {
           const btn = e.target.closest('.dock-btn[data-nav]');
           if (!btn || !this._dockPill) return;
+          const targetHash = btn.dataset.hash;
           mobileNav.querySelectorAll('.dock-btn').forEach((b) => {
             const on = b === btn;
             b.classList.toggle('is-active', on);
             b.setAttribute('aria-current', on ? 'page' : 'false');
           });
           this._dockPill.moveTo(btn, false);
+          if (targetHash && location.hash !== targetHash) {
+            location.hash = targetHash;
+          }
         });
         if (typeof ResizeObserver === 'function') {
           let lastWidth = mobileNav.getBoundingClientRect().width;
@@ -440,14 +540,15 @@ class CredoApp {
   }
 
   parseRoute() {
-    const raw = (location.hash || '#/feed').replace(/^#\/?/, '');
+    const rawFull = (location.hash || '#/feed').replace(/^#\/?/, '');
+    const [raw, qs = ''] = rawFull.split('?');
+    const sp = new URLSearchParams(qs);
     const [seg, arg] = raw.split('/');
     if (seg === 'vids' || seg === 'reels') return { route: 'vids', tab: 'vids', params: {} };
-    if (seg === 'explore') return { route: 'explore', tab: 'explore', params: { filter: arg || 'all' } };
+    if (seg === 'explore') return { route: 'explore', tab: 'explore', params: { filter: arg || sp.get('filter') || 'all' } };
     if (seg === 'live') return { route: 'explore', tab: 'explore', params: { filter: 'live' } };
     if (seg === 'prayer') return { route: 'prayer', tab: 'prayer', params: {} };
-    if (seg === 'parishes') return { route: 'explore', tab: 'explore', params: { filter: 'parishes' } };
-    if (seg === 'unit' && arg) return { route: 'unit', tab: 'explore', params: { id: arg } };
+    if (seg === 'parishes' || seg === 'unit') return { route: 'explore', tab: 'explore', params: { filter: 'all' } };
     if (seg === 'user' && arg) return { route: 'user', tab: 'explore', params: { id: arg } };
     if (seg === 'settings') return { route: 'settings', tab: 'profile', params: {} };
     if (seg === 'profile') return { route: 'profile', tab: 'profile', params: {} };
@@ -511,14 +612,14 @@ class CredoApp {
     // Lazy-import ONLY the required view module
     let mod;
     try {
-      if (route === 'feed') mod = await import('./views/feed.js?v=21');
-      else if (route === 'vids') mod = await import('./views/vids.js?v=21');
-      else if (route === 'explore') mod = await import('./views/explore.js?v=21');
-      else if (route === 'prayer') mod = await import('./views/prayer.js?v=21');
-      else if (route === 'parishes' || route === 'unit' || route === 'user') mod = await import('./views/parishes.js?v=21');
-      else if (route === 'settings') mod = await import('./views/settings.js?v=21');
-      else if (route === 'profile') mod = await import('./views/profile.js?v=21');
-      else mod = await import('./views/feed.js?v=21');
+      if (route === 'feed') mod = await import('./views/feed.js?v=22');
+      else if (route === 'vids') mod = await import('./views/vids.js?v=22');
+      else if (route === 'explore') mod = await import('./views/explore.js?v=22');
+      else if (route === 'prayer') mod = await import('./views/prayer.js?v=22');
+      else if (route === 'user') mod = await import('./views/parishes.js?v=22');
+      else if (route === 'settings') mod = await import('./views/settings.js?v=22');
+      else if (route === 'profile') mod = await import('./views/profile.js?v=22');
+      else mod = await import('./views/feed.js?v=22');
     } catch (err) {
       root.innerHTML = `<div class="empty-box">Error cargando vista: ${this.esc(err.message)}</div>`;
       return;
@@ -543,6 +644,7 @@ class CredoApp {
         return;
       }
       this._activeCleanup = handle?.cleanup || null;
+      attachSegSpringPills(root);
     } catch (err) {
       if (err?.name !== 'AbortError') {
         root.innerHTML = `<div class="empty-box">Error en vista: ${this.esc(err?.message || String(err))}</div>`;
@@ -590,6 +692,18 @@ class CredoApp {
     });
 
     const syncUI = (st) => {
+      if (!st.channel && st.gospelSpeaking && st.speechMeta) {
+        const sm = st.speechMeta;
+        miniAnchor.hidden = false;
+        document.body.classList.add('has-mini-player');
+        miniGlass.style.setProperty('--mini-accent', '#0A84FF');
+        miniArt.src = sm.cover_url || '/icons/art_gospel.png';
+        miniStation.textContent = sm.title || 'Lectura Orante';
+        miniProg.textContent = sm.artist || 'Credo · Voz Humana';
+        miniPlayBtn.innerHTML = ICON_PAUSE;
+        return;
+      }
+
       const ch = st.channel;
       if (!ch) {
         miniAnchor.hidden = true;
@@ -602,7 +716,7 @@ class CredoApp {
       document.body.classList.add('has-mini-player');
       const artSrc = ch.cover_url && /^https?:\/\/(aire96fm\.com\.do|reflexionandolapalabra\.com)/i.test(ch.cover_url)
         ? `/api/v1/media/proxy?url=${encodeURIComponent(ch.cover_url)}`
-        : (ch.cover_url || '');
+        : (ch.cover_url || '/icons/credo-192.png');
       miniGlass.style.setProperty('--mini-accent', ch.accent_color || '#007AFF');
       miniArt.src = artSrc;
       miniStation.textContent = ch.name;
@@ -625,7 +739,10 @@ class CredoApp {
     audioEngine.subscribe(syncUI);
 
     miniPlayBtn.onclick = () => audioEngine.togglePlay();
-    miniCloseBtn.onclick = () => audioEngine.stop();
+    miniCloseBtn.onclick = () => {
+      audioEngine.stopGospelSpeech();
+      audioEngine.stop();
+    };
     miniExpandBtn.onclick = () => this.openFullPlayer();
 
     fpPlayBtn.onclick = () => audioEngine.togglePlay();
@@ -761,6 +878,7 @@ class CredoApp {
     const wasOpen = dlg.open;
     if (!wasOpen) dlg.showModal();
     if (!wasOpen) this._animateSheetOpen(dlg);
+    attachSegSpringPills(dlg);
     return dlg;
   }
 
@@ -1046,6 +1164,7 @@ class CredoApp {
       clearTimeout(this._storyTimer);
       dlg.innerHTML = '';
       if (dlg.open) dlg.close();
+      audioEngine.notifyExternalMedia({ playing: false });
       try { window.CredoNative?.setImmersive?.(this.parseRoute().route === 'vids'); } catch {}
       window.dispatchEvent(new CustomEvent('credo:stories-seen'));
     };
@@ -1069,6 +1188,19 @@ class CredoApp {
         ? `/api/v1/media/proxy?url=${encodeURIComponent(st.image_url)}`
         : (st.image_url || '');
       const isVideoStory = Boolean(st.youtube_id || st.video_url);
+      if (isVideoStory && !muted) {
+        audioEngine.notifyExternalMedia({
+          title: st.caption || st.author?.full_name || 'Historia en Credo',
+          artist: st.author?.full_name || 'Credo · Historia',
+          coverUrl: imgSrc || authorAv || '/icons/credo-192.png',
+          playing: true,
+          onAction: (act) => {
+            if (act === 'stop' || act === 'pause') closeViewer();
+          },
+        });
+      } else {
+        audioEngine.notifyExternalMedia({ playing: false });
+      }
       const ytUrl = st.youtube_id
         ? `https://www.youtube.com/embed/${encodeURIComponent(st.youtube_id)}?autoplay=1&playsinline=1&rel=0&modestbranding=1&mute=${muted ? 1 : 0}`
         : '';

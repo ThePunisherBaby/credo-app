@@ -2,12 +2,9 @@ const bcrypt = require('bcryptjs');
 const { pool } = require('./pool');
 
 async function seedIfEmpty() {
-  const { rows } = await pool.query('SELECT COUNT(*)::int AS cnt FROM ecclesiastical_units');
-  if (rows[0].cnt > 0) {
-    return;
-  }
+  // Worldwide pre-seeded hierarchy/churches removed: real churches are registered directly with their emails as user accounts.
+  return;
 
-  console.log('[seed] Initializing worldwide ecclesiastical hierarchy and sample data...');
 
   const unitIds = {};
 
@@ -1937,42 +1934,16 @@ async function purgeMockDataAndSyncReal() {
   // 3. Remove invented mock radio/TV channels — keep ONLY real Aire 96 FM & Reflexionando la Palabra
   await pool.query("DELETE FROM live_channels WHERE slug NOT IN ('aire-96', 'reflexionando-la-palabra')");
 
-  // 4. Clear invented mock Mass/Confession schedules, notices, and fake phone from ecclesiastical_units
-  await pool.query(
-    `UPDATE ecclesiastical_units
-        SET mass_schedule = '[]'::jsonb,
-            confession_schedule = '[]'::jsonb,
-            notices = '[]'::jsonb,
-            phone = CASE WHEN phone = '+1 (809) 555-0148' THEN '' ELSE phone END`
-  );
+  // 4. Remove pre-seeded ecclesiastical_units & hierarchy links so real churches register individually with their emails as user accounts
+  await pool.query('UPDATE users SET primary_unit_id = NULL, religious_order_id = NULL');
+  await pool.query('UPDATE posts SET scope_unit_id = NULL');
+  await pool.query('UPDATE stories SET scope_unit_id = NULL');
+  await pool.query('UPDATE prayer_intentions SET unit_id = NULL');
+  await pool.query('DELETE FROM user_assignments');
+  await pool.query('DELETE FROM ecclesiastical_units');
 
-  // 5. Ensure real CEO account: P. Domingo Vásquez
-  const domUnitRes = await pool.query(
-    `SELECT id FROM ecclesiastical_units
-      WHERE slug IN ('arq-santo-domingo', 'parroquia-catedral-sd') OR country_code = 'DO'
-      ORDER BY CASE WHEN unit_type = 'archdiocese' THEN 1 ELSE 2 END, id ASC
-      LIMIT 1`
-  );
-  const domUnitId = domUnitRes.rows[0]?.id || null;
+  // 5. Ensure real CEO account: P. Domingo Vásquez (ultra-clean Instagram profile with zero verbose text)
   const ceoPassHash = await bcrypt.hash('Credo2026!', 10);
-  const ceoBio = 'Sacerdote católico ordenado el 26 de enero de 1996 en San Pedro Apóstol, Pedro García (Santiago, RD), por imposición de manos y unción de Mons. José Dolores Grullón Estrella. CEO de Credo y propietario de Aire 96 FM (aire96fm.com.do) y Reflexionando la Palabra (reflexionandolapalabra.com). Con mente y corazón de pastor y alma misionera, anunciando la Abundante Redención en valores.';
-  const ceoLinks = JSON.stringify([
-    {
-      label: 'Aire 96 FM',
-      url: 'https://aire96fm.com.do',
-      role: 'Propietario & Director · Emisora en Vivo',
-    },
-    {
-      label: 'Reflexionando la Palabra',
-      url: 'https://reflexionandolapalabra.com',
-      role: 'Propietario & Director · Evangelio Diario',
-    },
-    {
-      label: 'Amigo del Hogar · 25 años de ministerio',
-      url: 'https://www.amigodelhogar.net/2021/01/el-padre-domingo-25-anos-de-ministerio.html',
-      role: 'Testimonio Sacerdotal · Anunciando la Abundante Redención',
-    },
-  ]);
 
   await pool.query(`UPDATE users SET is_ceo = FALSE WHERE username <> 'p_domingo_vasquez'`);
 
@@ -1985,29 +1956,30 @@ async function purgeMockDataAndSyncReal() {
        is_admin, is_ceo, is_credo_plus, credo_plus_plan, website_links
      ) VALUES (
        'padre.domingo@credo.org', $1, 'p_domingo_vasquez', 'Domingo Vásquez', 'P.',
-       'priest', $2, 'CEO de Credo · Propietario de Aire 96 FM y Reflexionando la Palabra',
-       $4,
-       'Anunciando la Abundante Redención en valores y en la Palabra',
-       '1996-01-26', 'DO', ARRAY['es'], 'es',
+       'priest', NULL, '',
+       '',
+       '',
+       NULL, 'DO', ARRAY['es'], 'es',
        '#0F1E36', '/icons/p_domingo_vasquez.png',
-       'verified', 'CEO & Fundador verificado',
-       TRUE, TRUE, TRUE, 'annual', $3::jsonb
+       'verified', '',
+       TRUE, TRUE, TRUE, 'annual', '[]'::jsonb
      )
      ON CONFLICT (username) DO UPDATE SET
        full_name = EXCLUDED.full_name,
        title_prefix = EXCLUDED.title_prefix,
-       current_office_title = EXCLUDED.current_office_title,
-       bio = EXCLUDED.bio,
-       motto = EXCLUDED.motto,
-       ordination_date = EXCLUDED.ordination_date,
+       primary_unit_id = NULL,
+       current_office_title = '',
+       bio = '',
+       motto = '',
+       ordination_date = NULL,
        avatar_url = EXCLUDED.avatar_url,
        verification_status = 'verified',
        is_admin = TRUE,
        is_ceo = TRUE,
        is_credo_plus = TRUE,
        credo_plus_plan = 'annual',
-       website_links = EXCLUDED.website_links`,
-    [ceoPassHash, domUnitId, ceoLinks, ceoBio]
+       website_links = '[]'::jsonb`,
+    [ceoPassHash]
   );
 
   await pool.query(
@@ -2024,13 +1996,13 @@ async function purgeMockDataAndSyncReal() {
       slug: 'aire-96',
       name: 'Aire 96 FM',
       kind: 'radio',
-      tagline: 'Emisora oficial de P. Domingo Vásquez · aire96fm.com.do',
+      tagline: 'Emisora oficial · P. Domingo Vásquez',
       current_program: 'Señal Oficial en Directo · Aire 96 FM',
       host_name: 'P. Domingo Vásquez',
       frequency: '96.5 FM · EN VIVO',
       country_code: 'DO',
       city: 'República Dominicana',
-      accent_color: '#C8A253',
+      accent_color: '#007AFF',
       cover_url: 'https://aire96fm.com.do/wp-content/themes/aire96-liquid/assets/img/aire96-logo-256.png',
       stream_url: 'https://paginas.moisespaulino.com/proxy/moises2020/stream',
       is_hero: true,
@@ -2041,13 +2013,13 @@ async function purgeMockDataAndSyncReal() {
       slug: 'reflexionando-la-palabra',
       name: 'Reflexionando la Palabra',
       kind: 'radio',
-      tagline: 'reflexionandolapalabra.com · Por P. Domingo Vásquez',
+      tagline: 'Liturgia y Palabra · P. Domingo Vásquez',
       current_program: 'Liturgia y Palabra del Día',
       host_name: 'P. Domingo Vásquez',
       frequency: 'Audio Oficial',
       country_code: 'DO',
       city: 'República Dominicana',
-      accent_color: '#6D4C2F',
+      accent_color: '#007AFF',
       cover_url: 'https://reflexionandolapalabra.com/wp-content/themes/reflexionando/assets/img/favicon-512.png',
       stream_url: 'https://paginas.moisespaulino.com/proxy/moises2020/stream',
       is_hero: false,
@@ -2099,7 +2071,11 @@ async function purgeMockDataAndSyncReal() {
 
   // 7. Fetch & sync real live articles from aire96fm.com.do & reflexionandolapalabra.com
   await syncOfficialSources();
-  console.log('[seed] All mock data purged; CEO P. Domingo Vásquez, Aire 96 FM live stream & real official feeds ready.');
+  try {
+    const { apiCache } = require('../utils/fastCache');
+    apiCache.invalidate();
+  } catch {}
+  console.log('[seed] Hierarchy/EWTN purged, clean CEO profile & real official feeds ready.');
 }
 
 module.exports = { seedIfEmpty, seedVisualsAndStories, seedCredoEcosystem, purgeMockDataAndSyncReal };

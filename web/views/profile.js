@@ -253,7 +253,15 @@ export async function mount({ root, app, signal }) {
       </div>
 
       <section class="ig-prof-head">
-        <div class="ig-prof-avatar" style="${profile.avatar_color ? `background:${app.esc(profile.avatar_color)}` : ''}">
+        <div
+          class="ig-prof-avatar"
+          data-zoomable
+          data-zoom-name="${app.esc(`${profile.title_prefix ? `${profile.title_prefix} ` : ''}${profile.full_name || 'Mi Perfil'}`)}"
+          data-zoom-src="${app.esc(avUrl)}"
+          data-zoom-bg="${app.esc(profile.avatar_color || '#0F1E36')}"
+          style="${profile.avatar_color ? `background:${app.esc(profile.avatar_color)}` : ''}"
+          title="Mantén presionado para ampliar"
+        >
           ${avUrl ? `<img src="${app.esc(avUrl)}" alt="${app.esc(profile.full_name)}" />` : app.initials(profile.full_name)}
         </div>
         <div class="ig-prof-stats">

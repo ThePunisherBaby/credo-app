@@ -78,23 +78,64 @@ router.get('/proxy', async (req, res) => {
   }
 });
 
-// Stream image with aggressive immutable browser caching
+// Bounded hot-media LRU cache (max 48 items / 24 MB total) so avatars & feed media never thrash PostgreSQL BYTEA
+const mediaLru = new Map();
+let mediaLruBytes = 0;
+const MAX_MEDIA_LRU_ITEMS = 48;
+const MAX_MEDIA_LRU_BYTES = 24 * 1024 * 1024;
+
+function putMediaCache(id, entry) {
+  if (!entry?.data || entry.data.length > 2 * 1024 * 1024) return;
+  if (mediaLru.has(id)) {
+    mediaLruBytes -= mediaLru.get(id).data.length;
+    mediaLru.delete(id);
+  }
+  while (mediaLru.size >= MAX_MEDIA_LRU_ITEMS || mediaLruBytes + entry.data.length > MAX_MEDIA_LRU_BYTES) {
+    const oldest = mediaLru.keys().next().value;
+    if (oldest === undefined) break;
+    mediaLruBytes -= mediaLru.get(oldest).data.length;
+    mediaLru.delete(oldest);
+  }
+  mediaLru.set(id, entry);
+  mediaLruBytes += entry.data.length;
+}
+
+// Stream image with aggressive immutable caching + ETag + zero-DB repeat hits
 router.get('/:id', async (req, res) => {
   try {
     const id = Number(req.params.id);
     if (!Number.isInteger(id)) {
       return res.status(400).send('Invalid media id');
     }
-    const { rows } = await pool.query(
-      `SELECT mime_type, data FROM media_assets WHERE id = $1`,
-      [id]
-    );
-    if (rows.length === 0) {
-      return res.status(404).send('Not found');
+
+    const etag = `"m-${id}"`;
+    if (req.headers['if-none-match'] === etag) {
+      res.setHeader('ETag', etag);
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      return res.status(304).end();
     }
-    res.setHeader('Content-Type', rows[0].mime_type);
+
+    let item = mediaLru.get(id);
+    if (item) {
+      // Refresh LRU order
+      mediaLru.delete(id);
+      mediaLru.set(id, item);
+    } else {
+      const { rows } = await pool.query(
+        `SELECT mime_type, data FROM media_assets WHERE id = $1`,
+        [id]
+      );
+      if (rows.length === 0) {
+        return res.status(404).send('Not found');
+      }
+      item = { mime_type: rows[0].mime_type, data: rows[0].data };
+      putMediaCache(id, item);
+    }
+
+    res.setHeader('ETag', etag);
+    res.setHeader('Content-Type', item.mime_type);
     res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-    return res.send(rows[0].data);
+    return res.send(item.data);
   } catch (err) {
     console.error('[media/get]', err);
     return res.status(500).send('Error loading media');
