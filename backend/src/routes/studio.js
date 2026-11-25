@@ -461,7 +461,7 @@ router.post('/campaigns', requireAuth, requireOrgRole(['owner', 'admin', 'editor
       req,
     });
 
-    apiCache.invalidatePrefix('posts:');
+    apiCache.invalidate('posts:');
     return res.status(201).json({ campaign, requires_approval: needsApproval });
   } catch (err) {
     console.error('[studio/campaigns/create]', err);
@@ -503,7 +503,7 @@ router.patch('/campaigns/:id/toggle', requireAuth, requireOrgRole(['owner', 'adm
       req,
     });
 
-    apiCache.invalidatePrefix('posts:');
+    apiCache.invalidate('posts:');
     return res.json({ campaign: upd.rows[0] });
   } catch (err) {
     console.error('[studio/campaigns/toggle]', err);
@@ -758,7 +758,7 @@ router.post('/approvals/:id/decide', requireAuth, requireOrgRole(['owner', 'admi
       req,
     });
 
-    apiCache.invalidatePrefix('posts:');
+    apiCache.invalidate('posts:');
     return res.json({ decided: true, status: nextApprovalStatus });
   } catch (err) {
     console.error('[studio/approvals/decide]', err);

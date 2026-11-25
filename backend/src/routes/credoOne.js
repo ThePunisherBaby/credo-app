@@ -161,7 +161,8 @@ async function activateCapturedOrder({
     });
   }
 
-  apiCache.invalidatePrefix('posts:');
+  apiCache.invalidate('posts:');
+  apiCache.invalidate('users:');
   return {
     subscription: subRows[0],
     organization: org,
@@ -652,7 +653,8 @@ router.post('/subscriptions/confirm', requireAuth, async (req, res) => {
       });
     }
 
-    apiCache.invalidatePrefix('posts:');
+    apiCache.invalidate('posts:');
+  apiCache.invalidate('users:');
     return res.status(201).json({
       subscription: subRows[0],
       organization: org,
@@ -898,7 +900,8 @@ async function handlePayPalWebhook(req, res) {
           await pauseOrganizationCampaigns(txRes.rows[0].organization_id, 'payment_refunded');
         }
         await reconcileUserEntitlements(txRes.rows[0].user_id);
-        apiCache.invalidatePrefix('posts:');
+        apiCache.invalidate('posts:');
+  apiCache.invalidate('users:');
       }
       return res.status(200).json({ received: true, event_type: eventType });
     }
@@ -1025,7 +1028,8 @@ async function handlePayPalWebhook(req, res) {
         await pauseOrganizationCampaigns(sub.organization_id, nextStatus);
       }
       await reconcileUserEntitlements(sub.user_id);
-      apiCache.invalidatePrefix('posts:');
+      apiCache.invalidate('posts:');
+  apiCache.invalidate('users:');
     }
 
     return res.status(200).json({ received: true, event_type: eventType });

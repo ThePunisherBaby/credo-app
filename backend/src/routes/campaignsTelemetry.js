@@ -79,7 +79,7 @@ router.post('/:id/impression', optionalAuth, async (req, res) => {
     ]);
 
     if (camp.status === 'completed') {
-      apiCache.invalidatePrefix('posts:');
+      apiCache.invalidate('posts:');
     }
 
     return res.json({

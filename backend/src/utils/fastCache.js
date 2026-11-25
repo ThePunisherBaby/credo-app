@@ -66,6 +66,10 @@ class FastCache {
       }
     }
   }
+
+  invalidatePrefix(prefix) {
+    return this.invalidate(prefix);
+  }
 }
 
 const apiCache = new FastCache(300);
