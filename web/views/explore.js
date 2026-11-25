@@ -41,7 +41,7 @@ export async function mount({ root, app, signal, params }) {
       <div class="explore-search-row">
         <div class="search-field" style="margin:0;min-height:42px;background:var(--surface-2)">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
-          <input type="search" id="exploreSearchInput" placeholder="Buscar presbíteros, radios, videos o publicaciones…" />
+          <input type="search" id="exploreSearchInput" placeholder="Buscar radios, videos o cuentas…" />
         </div>
       </div>
 

@@ -408,7 +408,7 @@ class CredoApp {
         }
       });
       // Preload core ES view modules silently so dock switching never waits for JS parsing
-      import('./views/explore.js?v=23').catch(() => {});
+      import('./views/explore.js?v=25').catch(() => {});
       import('./views/prayer.js?v=23').catch(() => {});
       import('./views/profile.js?v=23').catch(() => {});
       import('./views/vids.js?v=23').catch(() => {});
@@ -796,7 +796,7 @@ class CredoApp {
     try {
       if (route === 'feed') mod = await import('./views/feed.js?v=23');
       else if (route === 'vids') mod = await import('./views/vids.js?v=23');
-      else if (route === 'explore') mod = await import('./views/explore.js?v=23');
+      else if (route === 'explore') mod = await import('./views/explore.js?v=25');
       else if (route === 'prayer') mod = await import('./views/prayer.js?v=23');
       else if (route === 'user') mod = await import('./views/parishes.js?v=23');
       else if (route === 'settings') mod = await import('./views/settings.js?v=23');

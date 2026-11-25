@@ -206,6 +206,7 @@ class MainActivity : AppCompatActivity() {
                 cacheMode = WebSettings.LOAD_DEFAULT
                 useWideViewPort = true
                 loadWithOverviewMode = true
+                textZoom = textZoom.coerceIn(90, 115)
                 userAgentString = "$userAgentString CredoAndroid/${BuildConfig.VERSION_NAME}"
             }
 

@@ -20,14 +20,14 @@
   --font-rounded: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", system-ui, sans-serif;
   --font-serif: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", Georgia, serif;
 
-  /* Spacing Scale (base 4pt) */
+  /* Fluid Spacing Scale (adapts automatically from 320px compact phones to tablets/desktop) */
   --s-1: 4px;
   --s-2: 8px;
   --s-3: 12px;
   --s-4: 16px;
-  --s-5: 20px;
-  --s-6: 24px;
-  --s-8: 32px;
+  --s-5: clamp(10px, 3.6vw, 20px);
+  --s-6: clamp(14px, 4.5vw, 24px);
+  --s-8: clamp(20px, 6vw, 32px);
 
   /* Crisp Architectural Radii (Cubos & Rectángulos limpios) */
   --r-sm: 6px;
@@ -3492,6 +3492,360 @@ dialog.credo-dialog.is-comments-sheet[open] {
     }
   }
 }
+
+/* ==========================================================================
+   ADAPTIVE VIEWPORT, RESOLUTION & ACCESSIBILITY SCALE COMFORT ENGINE (v24)
+   Guarantees zero clipped/cut-off content across 320px-430px phones, tablets,
+   short/landscape screens, and enlarged OS accessibility font scales (110-130%).
+   ========================================================================== */
+
+/* 1. Global Horizontal Safety & Fluid Wrapping */
+html, body {
+  max-width: 100dvw;
+  overflow-x: clip;
+}
+.app-shell,
+.main-stage,
+.view-mount,
+.view-screen {
+  max-width: 100%;
+  min-width: 0;
+}
+.main-stage {
+  container-type: inline-size;
+  container-name: stage;
+  padding-bottom: calc(var(--dock-height) + var(--mini-height) + var(--dock-bottom) + 36px);
+}
+@media (min-width: 960px) {
+  .main-stage {
+    padding-bottom: 104px;
+  }
+}
+
+.page-head,
+.section-bar,
+.offering-banner,
+.prayer-head,
+.liturgy-toolbar,
+.mystery-cal-row {
+  flex-wrap: wrap;
+  row-gap: 8px;
+}
+.page-head > *,
+.section-bar > *,
+.entity-main,
+.prog-hcard-meta,
+.offering-banner > *,
+.mystery-cal-row > *,
+.feed-topbar > *,
+.ig-prof-top > *,
+.ig-prof-stats > div,
+.ig-header > *,
+.mini-meta {
+  min-width: 0;
+}
+.feed-topbar {
+  gap: clamp(6px, 2vw, 12px);
+}
+.ig-prof-username {
+  min-width: 0;
+  max-width: 100%;
+}
+.ig-prof-username > span:first-of-type {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 2. Fluid Typography & Interactive Control Sizing */
+.t-large-title {
+  font-size: clamp(1.45rem, 6.2vw, 2.05rem);
+  line-height: 1.15;
+}
+.t-title-2 {
+  font-size: clamp(1.12rem, 4.6vw, 1.38rem);
+  line-height: 1.2;
+}
+.t-title-3 {
+  font-size: clamp(0.98rem, 4vw, 1.16rem);
+  line-height: 1.24;
+}
+.t-headline {
+  font-size: clamp(0.92rem, 3.8vw, 1.04rem);
+}
+.btn {
+  padding-inline: clamp(12px, 3.6vw, 18px);
+  font-size: clamp(0.84rem, 3.4vw, 0.94rem);
+  max-width: 100%;
+}
+.btn-sm {
+  padding-inline: clamp(10px, 3vw, 14px);
+  font-size: clamp(0.76rem, 3.1vw, 0.84rem);
+}
+.seg-tab {
+  min-width: 0;
+  padding: 0 clamp(6px, 2.2vw, 14px);
+  font-size: clamp(0.74rem, 3.2vw, 0.86rem);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.seg-btn {
+  min-width: 0;
+  padding-inline: clamp(8px, 2.6vw, 14px);
+  font-size: clamp(0.76rem, 3.2vw, 0.86rem);
+}
+.explore-pill,
+.chip {
+  padding-inline: clamp(10px, 3vw, 14px);
+  font-size: clamp(0.74rem, 3.1vw, 0.83rem);
+}
+
+/* 3. Zero-Crop Crisp Edge-to-Edge Feed Media (Shows 100% of Liturgical Graphics) */
+.ig-media {
+  aspect-ratio: auto;
+  max-height: min(560px, 75dvh);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0;
+  background: var(--surface-2);
+}
+.ig-media[data-video-box] {
+  aspect-ratio: 16 / 9;
+  max-height: none;
+  display: block;
+}
+.ig-media-photo {
+  width: 100%;
+  height: auto;
+  max-height: min(560px, 75dvh);
+  object-fit: contain;
+  border-radius: 0;
+}
+.ig-media iframe {
+  width: 100%;
+  height: 100%;
+  aspect-ratio: 16 / 9;
+}
+
+/* 4. Container-Query & Auto-Fit Responsive Grids (Oración & Explorar) */
+.prog-hgrid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 178px), 1fr));
+  gap: clamp(8px, 2.6vw, 12px);
+}
+@container stage (max-width: 390px) {
+  .prog-hgrid {
+    grid-template-columns: 1fr;
+  }
+}
+.prog-hcard {
+  min-width: 0;
+  gap: clamp(8px, 2.5vw, 14px);
+  padding: clamp(10px, 3vw, 14px) clamp(12px, 3.5vw, 16px);
+}
+.prog-hcard-title {
+  font-size: clamp(0.92rem, 3.7vw, 1.06rem);
+  overflow-wrap: anywhere;
+}
+.prog-hcard--compact .prog-hcard-title {
+  font-size: clamp(0.88rem, 3.5vw, 0.98rem);
+}
+.prog-hcard-sub {
+  font-size: clamp(0.75rem, 3.1vw, 0.84rem);
+  overflow-wrap: anywhere;
+}
+
+.radio-grid,
+.explore-vids-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 152px), 1fr));
+  gap: clamp(8px, 2.5vw, 12px);
+}
+.explore-filter-strip {
+  padding-right: var(--s-5);
+  scroll-padding-inline: var(--s-5);
+}
+.explore-quick-live {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
+  gap: clamp(8px, 2.5vw, 12px);
+  overflow-x: visible;
+  padding: 2px 0 var(--s-4);
+}
+.explore-live-chip {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+.search-field input {
+  font-size: clamp(0.82rem, 3.5vw, 0.95rem);
+  min-width: 0;
+}
+.explore-live-chip > div {
+  min-width: 0;
+  overflow: hidden;
+}
+.explore-live-chip strong,
+.explore-live-chip span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 5. Fluid Profile Header, Stats & Banners */
+.ig-prof-head {
+  grid-template-columns: clamp(62px, 19vw, 84px) minmax(0, 1fr);
+  gap: clamp(10px, 3.5vw, 18px);
+}
+.ig-prof-avatar {
+  width: clamp(62px, 19vw, 84px);
+  height: clamp(62px, 19vw, 84px);
+}
+.ig-prof-stats {
+  gap: clamp(6px, 2vw, 12px);
+}
+.ig-stat-val {
+  font-size: clamp(0.94rem, 4vw, 1.15rem);
+}
+.ig-stat-lbl {
+  font-size: clamp(0.62rem, 2.6vw, 0.76rem);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ig-prof-cta {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: clamp(6px, 2vw, 10px);
+}
+.offering-banner {
+  gap: clamp(10px, 3vw, 14px);
+  padding: clamp(12px, 3.5vw, 16px);
+}
+.offering-banner .btn {
+  flex-shrink: 0;
+}
+
+/* 6. Fluid Floating Dock & Mini-Player (Zero Clipping on 320px-430px & 115%+ Font Scale) */
+@media (max-width: 959px) {
+  .mobile-dock {
+    left: max(clamp(6px, 2.5vw, 14px), var(--safe-left));
+    right: max(clamp(6px, 2.5vw, 14px), var(--safe-right));
+  }
+  .mini-player-anchor {
+    left: max(clamp(8px, 2.8vw, 14px), var(--safe-left));
+    right: max(clamp(8px, 2.8vw, 14px), var(--safe-right));
+  }
+}
+.dock-items {
+  padding-inline: clamp(3px, 1.2vw, 7px);
+}
+.dock-btn {
+  min-width: 0;
+  min-height: clamp(48px, 6.8dvh, 56px);
+  padding: 2px 1px;
+  font-size: clamp(0.55rem, 2.5vw, 0.65rem);
+}
+.dock-btn .dock-label {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dock-btn svg {
+  width: clamp(18px, 5vw, 22px);
+  height: clamp(18px, 5vw, 22px);
+}
+
+/* 7. Fluid Full-Screen Player Sheet (Scrollable on Short / Landscape Screens) */
+.full-player-sheet {
+  padding-inline: clamp(14px, 4.5vw, 26px);
+}
+.fp-body {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  gap: clamp(10px, 2.2dvh, 22px);
+  padding-bottom: max(12px, var(--safe-bottom));
+}
+.fp-art-frame {
+  width: min(248px, 60vw, 30dvh);
+  height: min(248px, 60vw, 30dvh);
+  flex-shrink: 0;
+}
+.fp-station {
+  font-size: clamp(1.12rem, 5vw, 1.5rem);
+  overflow-wrap: anywhere;
+}
+.fp-program {
+  font-size: clamp(0.84rem, 3.6vw, 0.96rem);
+}
+.fp-transport {
+  gap: clamp(16px, 6vw, 28px);
+}
+.fp-utility-row {
+  gap: clamp(6px, 2vw, 10px);
+}
+.fp-util-chip {
+  padding: clamp(7px, 1.8vw, 10px) clamp(10px, 3vw, 14px);
+  font-size: clamp(0.75rem, 3.1vw, 0.84rem);
+}
+
+@media (max-height: 700px) {
+  .fp-body {
+    justify-content: flex-start;
+    gap: 10px;
+  }
+  .fp-art-frame {
+    width: min(176px, 46vw, 26dvh);
+    height: min(176px, 46vw, 26dvh);
+  }
+  .fp-visualizer {
+    height: 18px;
+  }
+}
+
+@media (orientation: landscape) and (max-height: 540px) {
+  :root {
+    --dock-height: 54px;
+    --dock-bottom: max(6px, env(safe-area-inset-bottom, 0px));
+  }
+  .dock-btn {
+    min-height: 44px;
+    flex-direction: row;
+    gap: 5px;
+  }
+  .fp-art-frame {
+    width: min(124px, 26dvh);
+    height: min(124px, 26dvh);
+  }
+  .fp-body {
+    gap: 8px;
+  }
+}
+
+/* 8. Tablet Comfort Frame (600px–959px) */
+@media (min-width: 600px) and (max-width: 959px) {
+  .main-stage {
+    max-width: 640px;
+    margin-inline: auto;
+  }
+}
+
+/* 9. Modals, Comments Sheet & Dialog Viewport Clamping */
+.credo-dialog {
+  max-width: min(520px, 100dvw);
+  max-height: min(92dvh, calc(100dvh - 16px));
+}
+.ig-comments-sheet {
+  max-height: min(86dvh, calc(100dvh - 20px));
+}
+.story-dialog {
+  max-width: 100dvw;
+  max-height: 100dvh;
+}
+
 
 
 
