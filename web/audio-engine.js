@@ -390,10 +390,10 @@ class CredoAudioEngine {
     const meta = this._speechMeta || {
       title: 'Lectura Orante',
       artist: 'Credo · Voz Humana',
-      cover_url: '/icons/art_gospel.png',
+      cover_url: '/icons/art_gospel.jpg',
     };
     const album = 'Credo · Evangelio y Oraciones';
-    const coverUrl = meta.cover_url || '/icons/art_gospel.png';
+    const coverUrl = meta.cover_url || '/icons/art_gospel.jpg';
 
     if ('mediaSession' in navigator) {
       try {
@@ -499,7 +499,7 @@ class CredoAudioEngine {
     this._speechMeta = meta || {
       title: 'Palabra y Oración',
       artist: 'Credo · Voz Humana',
-      cover_url: '/icons/art_gospel.png',
+      cover_url: '/icons/art_gospel.jpg',
     };
 
     const ttsEl = this._ensureTtsEl();

@@ -60,14 +60,18 @@ function alignToMp3Frame(buf, fromPos) {
 }
 
 // GET /api/v1/rosary/status — Live schedule, current Mystery, Liturgical season, Repertoire, and tracks
+const { apiCache } = require('../utils/fastCache');
 router.get('/status', async (_req, res) => {
   try {
-    const ctx = getLiturgicalContext();
-    const { rows: tracks } = await pool.query(
-      `SELECT id, slot_type, title, created_at FROM rosary_audio_tracks ORDER BY created_at DESC LIMIT 30`
-    );
-    res.setHeader('Cache-Control', 'no-cache, no-store');
-    return res.json({ status: ctx, tracks });
+    const payload = await apiCache.getOrLoad('rosary:status', 20_000, async () => {
+      const ctx = getLiturgicalContext();
+      const { rows: tracks } = await pool.query(
+        `SELECT id, slot_type, title, created_at FROM rosary_audio_tracks ORDER BY created_at DESC LIMIT 30`
+      );
+      return { status: ctx, tracks };
+    });
+    res.setHeader('Cache-Control', 'public, max-age=20, stale-while-revalidate=90');
+    return res.json(payload);
   } catch (err) {
     console.error('[rosary/status]', err);
     return res.status(500).json({ error: 'Failed to load rosary radio status' });

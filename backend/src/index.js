@@ -207,15 +207,21 @@ const publicDir = path.join(__dirname, '..', 'public');
 if (fs.existsSync(publicDir)) {
   app.use(
     express.static(publicDir, {
-      maxAge: '1h',
+      maxAge: '7d',
+      etag: true,
       setHeaders: (res, filePath) => {
-        if (
-          filePath.endsWith('.html') ||
+        if (filePath.endsWith('index.html') || filePath.endsWith('sw.js')) {
+          res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+        } else if (
           filePath.endsWith('.js') ||
           filePath.endsWith('.mjs') ||
-          filePath.endsWith('.css')
+          filePath.endsWith('.css') ||
+          filePath.endsWith('.png') ||
+          filePath.endsWith('.jpg') ||
+          filePath.endsWith('.webp') ||
+          filePath.endsWith('.svg')
         ) {
-          res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+          res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
         }
       },
     })
@@ -226,6 +232,7 @@ if (fs.existsSync(publicDir)) {
     if (req.path.startsWith('/api/')) return next();
     const indexHtml = path.join(publicDir, 'index.html');
     if (fs.existsSync(indexHtml)) {
+      res.setHeader('Cache-Control', 'no-cache, must-revalidate');
       return res.sendFile(indexHtml);
     }
     return res.status(200).send('Credo API is running.');
@@ -253,12 +260,15 @@ async function start() {
 
   // Refresh real articles from aire96fm.com.do & reflexionandolapalabra.com every 15 minutes
   setInterval(() => {
-    syncOfficialSources().catch((e) => console.warn('[sync-interval]', e.message));
+    syncOfficialSources()
+      .then(() => mediaRoutes.warmUpProxyImages?.())
+      .catch((e) => console.warn('[sync-interval]', e.message));
   }, 15 * 60 * 1000);
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`[credo] Server listening on http://0.0.0.0:${PORT}`);
     warmUpRosaryCache();
+    mediaRoutes.warmUpProxyImages?.();
   });
 }
 

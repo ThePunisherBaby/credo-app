@@ -1,10 +1,10 @@
 // app.js — Credo Apple-Grade Core Router, Persistent Player, Liquid Glass & On-Demand View Loader
 // STRICTLY mounts ONLY the active route's ES module and DOM into #appView.
 
-import { detectLocale, getDict } from './i18n.js?v=22';
-import { attachDismissableSheet, createSpringPill, attachSpringPress, attachSegSpringPills } from './springs.mjs?v=22';
-import { enhanceLiquidGlass } from './glass.js?v=22';
-import { audioEngine } from './audio-engine.js?v=22';
+import { detectLocale, getDict } from './i18n.js?v=23';
+import { attachDismissableSheet, createSpringPill, attachSpringPress, attachSegSpringPills } from './springs.mjs?v=23';
+import { enhanceLiquidGlass } from './glass.js?v=23';
+import { audioEngine } from './audio-engine.js?v=23';
 
 const ICON_PLAY = '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" style="margin-left:2px"><path d="M8 5v14l11-7z"/></svg>';
 const ICON_PAUSE = '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M6 5h4v14H6zm8 0h4v14h-4z"/></svg>';
@@ -228,45 +228,204 @@ class CredoApp {
     this._toastTimer = setTimeout(() => el.classList.remove('show'), 2800);
   }
 
-  async api(path, { method = 'GET', body, signal, noCache = false } = {}) {
-    const isCacheableGet = method === 'GET' && !noCache && !this.token &&
-      (path.startsWith('/api/v1/live') || path.startsWith('/api/v1/prayers/liturgy') || path.startsWith('/api/v1/stories'));
-    if (!this._cache) this._cache = new Map();
+  _cacheScope() {
+    return this.token ? `u:${this.token.slice(-10)}` : 'anon';
+  }
 
-    if (isCacheableGet) {
-      const hit = this._cache.get(path);
-      if (hit && Date.now() < hit.exp) {
-        return hit.data;
+  _storageKey(path) {
+    return `credo_c3:${this._cacheScope()}:${path}`;
+  }
+
+  getCached(path, maxStaleMs = 24 * 60 * 60 * 1000) {
+    if (!this._cache) this._cache = new Map();
+    const k = `${this._cacheScope()}:${path}`;
+    const mem = this._cache.get(k);
+    if (mem && Date.now() - mem.ts < maxStaleMs) {
+      return mem.data;
+    }
+    try {
+      const raw = localStorage.getItem(this._storageKey(path));
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed.data !== undefined && Date.now() - (parsed.ts || 0) < maxStaleMs) {
+        this._cache.set(k, parsed);
+        return parsed.data;
+      }
+    } catch {}
+    return null;
+  }
+
+  _isFresh(path, ttlMs = 25_000) {
+    if (!this._cache) return false;
+    const mem = this._cache.get(`${this._cacheScope()}:${path}`);
+    return Boolean(mem && Date.now() - mem.ts < ttlMs);
+  }
+
+  _saveCache(path, data) {
+    if (!this._cache) this._cache = new Map();
+    const entry = { data, ts: Date.now() };
+    const k = `${this._cacheScope()}:${path}`;
+    this._cache.set(k, entry);
+    if (this._cache.size > 60) {
+      const oldest = this._cache.keys().next().value;
+      if (oldest) this._cache.delete(oldest);
+    }
+    try {
+      const serialized = JSON.stringify(entry);
+      if (serialized.length < 180_000) {
+        localStorage.setItem(this._storageKey(path), serialized);
+      }
+    } catch {
+      // If quota exceeded, evict oldest credo_c3 keys and retry once
+      try {
+        const keys = [];
+        for (let i = 0; i < localStorage.length; i += 1) {
+          const lk = localStorage.key(i);
+          if (lk && lk.startsWith('credo_c3:')) keys.push(lk);
+        }
+        keys.slice(0, Math.ceil(keys.length / 2)).forEach((lk) => localStorage.removeItem(lk));
+        localStorage.setItem(this._storageKey(path), JSON.stringify(entry));
+      } catch {}
+    }
+  }
+
+  clearLocalCache(prefix = '') {
+    if (this._cache) {
+      if (!prefix) this._cache.clear();
+      else {
+        for (const k of this._cache.keys()) {
+          if (k.includes(prefix)) this._cache.delete(k);
+        }
       }
     }
+    try {
+      const toDel = [];
+      for (let i = 0; i < localStorage.length; i += 1) {
+        const lk = localStorage.key(i);
+        if (lk && lk.startsWith('credo_c3:') && (!prefix || lk.includes(prefix))) {
+          toDel.push(lk);
+        }
+      }
+      toDel.forEach((lk) => localStorage.removeItem(lk));
+    } catch {}
+  }
 
-    const headers = {};
-    if (this.token) headers.Authorization = `Bearer ${this.token}`;
-    if (body !== undefined) headers['Content-Type'] = 'application/json';
-    const res = await fetch(path, {
-      method,
-      headers,
-      body: body !== undefined ? JSON.stringify(body) : undefined,
-      signal,
+  async api(path, { method = 'GET', body, signal, noCache = false, ttlMs = 30_000 } = {}) {
+    const isCacheableGet = method === 'GET' && !noCache && path.startsWith('/api/v1/');
+    if (!this._cache) this._cache = new Map();
+    if (!this._inFlight) this._inFlight = new Map();
+
+    if (isCacheableGet && this._isFresh(path, ttlMs)) {
+      return this._cache.get(`${this._cacheScope()}:${path}`).data;
+    }
+
+    const flightKey = isCacheableGet ? `${this._cacheScope()}:${path}` : '';
+    if (flightKey && this._inFlight.has(flightKey)) {
+      return this._inFlight.get(flightKey);
+    }
+
+    const doFetch = async () => {
+      const headers = {};
+      if (this.token) headers.Authorization = `Bearer ${this.token}`;
+      if (body !== undefined) headers['Content-Type'] = 'application/json';
+      const res = await fetch(path, {
+        method,
+        headers,
+        body: body !== undefined ? JSON.stringify(body) : undefined,
+        signal,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const err = new Error(data.message || data.error || `HTTP ${res.status}`);
+        err.status = res.status;
+        err.code = data.error;
+        throw err;
+      }
+
+      if (isCacheableGet) {
+        this._saveCache(path, data);
+      }
+      if (method !== 'GET') {
+        if (path.includes('/posts')) this.clearLocalCache('/api/v1/posts');
+        else if (path.includes('/prayers')) this.clearLocalCache('/api/v1/prayers');
+        else if (path.includes('/users')) this.clearLocalCache('/api/v1/users');
+        else if (path.includes('/stories')) this.clearLocalCache('/api/v1/stories');
+        else this.clearLocalCache();
+      }
+      return data;
+    };
+
+    if (!flightKey) return doFetch();
+
+    const p = doFetch().finally(() => {
+      this._inFlight.delete(flightKey);
     });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      const err = new Error(data.message || data.error || `HTTP ${res.status}`);
-      err.status = res.status;
-      err.code = data.error;
-      throw err;
-    }
+    this._inFlight.set(flightKey, p);
+    return p;
+  }
 
-    if (isCacheableGet) {
-      this._cache.set(path, { data, exp: Date.now() + 45_000 });
+  /**
+   * Stale-While-Revalidate helper:
+   * 1. Immediately invokes onData(cached, true) synchronously in 0ms if local cache exists.
+   * 2. Silently fetches fresh data in the background and calls onData(fresh, false) if updated.
+   */
+  swr(path, onData, { signal, ttlMs = 20_000 } = {}) {
+    const cached = this.getCached(path);
+    if (cached !== null) {
+      try { onData(cached, true); } catch {}
     }
-    if (method !== 'GET' && this._cache) {
-      this._cache.clear();
+    if (cached !== null && this._isFresh(path, ttlMs)) {
+      return Promise.resolve(cached);
     }
-    return data;
+    return this.api(path, { signal, noCache: true, ttlMs })
+      .then((fresh) => {
+        if (signal?.aborted) return fresh;
+        try { onData(fresh, false); } catch {}
+        return fresh;
+      })
+      .catch((err) => {
+        if (cached !== null) return cached;
+        throw err;
+      });
+  }
+
+  prefetchCore() {
+    if (this._prefetched) return;
+    this._prefetched = true;
+    const warm = () => {
+      const urls = [
+        '/api/v1/posts?scope=global&limit=6&offset=0',
+        '/api/v1/stories',
+        '/api/v1/live',
+        '/api/v1/rosary/status',
+        `/api/v1/prayers/liturgy?lang=${this.locale}`,
+        '/api/v1/prayers/intentions?filter=recent',
+        '/api/v1/users?clergy_only=true&limit=25',
+      ];
+      urls.forEach((u) => {
+        if (!this._isFresh(u, 60_000)) {
+          this.api(u, { ttlMs: 60_000 }).catch(() => {});
+        }
+      });
+      // Preload core ES view modules silently so dock switching never waits for JS parsing
+      import('./views/explore.js?v=23').catch(() => {});
+      import('./views/prayer.js?v=23').catch(() => {});
+      import('./views/profile.js?v=23').catch(() => {});
+      import('./views/vids.js?v=23').catch(() => {});
+    };
+    if ('requestIdleCallback' in window) {
+      requestIdleCallback(warm, { timeout: 900 });
+    } else {
+      setTimeout(warm, 320);
+    }
   }
 
   async bootstrap() {
+    // Register Offline-First Service Worker (caches app shell & all feed/profile images locally in 0ms)
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js').catch(() => {});
+    }
+
     // Wire top-layer dialogs
     wireDialogAccessibility(document.getElementById('modalDialog'));
     wireDialogAccessibility(document.getElementById('storyDialog'));
@@ -293,15 +452,12 @@ class CredoApp {
     attachSpringPress(document.body);
     this.attachAvatarLongPress();
 
-    // Load current session if token exists
+    // Instant 0ms session hydration from localStorage (NEVER block first paint waiting on /auth/me!)
     if (this.token) {
       try {
-        const me = await this.api('/api/v1/auth/me');
-        this.user = me.user || null;
-      } catch {
-        this.token = '';
-        try { localStorage.removeItem('credo-token'); } catch {}
-      }
+        const cachedUser = localStorage.getItem('credo-user-cache');
+        if (cachedUser) this.user = JSON.parse(cachedUser);
+      } catch {}
     }
 
     this.renderChrome(true);
@@ -322,6 +478,32 @@ class CredoApp {
     } else {
       this.navigate();
     }
+
+    // Revalidate session in background without blocking initial render
+    if (this.token) {
+      this.api('/api/v1/auth/me', { noCache: true })
+        .then((me) => {
+          this.user = me.user || null;
+          try {
+            if (this.user) localStorage.setItem('credo-user-cache', JSON.stringify(this.user));
+            else localStorage.removeItem('credo-user-cache');
+          } catch {}
+          this.renderChrome();
+        })
+        .catch((err) => {
+          if (err?.status === 401) {
+            this.token = '';
+            this.user = null;
+            try {
+              localStorage.removeItem('credo-token');
+              localStorage.removeItem('credo-user-cache');
+            } catch {}
+            this.renderChrome();
+          }
+        });
+    }
+
+    this.prefetchCore();
   }
 
   attachAvatarLongPress() {
@@ -612,14 +794,14 @@ class CredoApp {
     // Lazy-import ONLY the required view module
     let mod;
     try {
-      if (route === 'feed') mod = await import('./views/feed.js?v=22');
-      else if (route === 'vids') mod = await import('./views/vids.js?v=22');
-      else if (route === 'explore') mod = await import('./views/explore.js?v=22');
-      else if (route === 'prayer') mod = await import('./views/prayer.js?v=22');
-      else if (route === 'user') mod = await import('./views/parishes.js?v=22');
-      else if (route === 'settings') mod = await import('./views/settings.js?v=22');
-      else if (route === 'profile') mod = await import('./views/profile.js?v=22');
-      else mod = await import('./views/feed.js?v=22');
+      if (route === 'feed') mod = await import('./views/feed.js?v=23');
+      else if (route === 'vids') mod = await import('./views/vids.js?v=23');
+      else if (route === 'explore') mod = await import('./views/explore.js?v=23');
+      else if (route === 'prayer') mod = await import('./views/prayer.js?v=23');
+      else if (route === 'user') mod = await import('./views/parishes.js?v=23');
+      else if (route === 'settings') mod = await import('./views/settings.js?v=23');
+      else if (route === 'profile') mod = await import('./views/profile.js?v=23');
+      else mod = await import('./views/feed.js?v=23');
     } catch (err) {
       root.innerHTML = `<div class="empty-box">Error cargando vista: ${this.esc(err.message)}</div>`;
       return;
@@ -697,7 +879,7 @@ class CredoApp {
         miniAnchor.hidden = false;
         document.body.classList.add('has-mini-player');
         miniGlass.style.setProperty('--mini-accent', '#0A84FF');
-        miniArt.src = sm.cover_url || '/icons/art_gospel.png';
+        miniArt.src = sm.cover_url || '/icons/art_gospel.jpg';
         miniStation.textContent = sm.title || 'Lectura Orante';
         miniProg.textContent = sm.artist || 'Credo · Voz Humana';
         miniPlayBtn.innerHTML = ICON_PAUSE;
@@ -1405,7 +1587,10 @@ class CredoApp {
   _applySession({ token, user }) {
     this.token = token;
     this.user = user;
-    try { localStorage.setItem('credo-token', token); } catch {}
+    try {
+      localStorage.setItem('credo-token', token);
+      if (user) localStorage.setItem('credo-user-cache', JSON.stringify(user));
+    } catch {}
     this.toast(`Bienvenido, ${user.title_prefix ? user.title_prefix + ' ' : ''}${user.full_name}`);
     this.renderChrome();
     this.navigate();
@@ -1414,7 +1599,11 @@ class CredoApp {
   logout() {
     this.token = '';
     this.user = null;
-    try { localStorage.removeItem('credo-token'); } catch {}
+    try {
+      localStorage.removeItem('credo-token');
+      localStorage.removeItem('credo-user-cache');
+    } catch {}
+    this.clearLocalCache();
     this.toast('Sesión cerrada');
     this.renderChrome();
   }

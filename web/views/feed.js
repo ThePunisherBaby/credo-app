@@ -309,27 +309,22 @@ export async function mount({ root, app, signal }) {
   async function loadPage(reset = false) {
     if (state.loading || (!state.hasMore && !reset)) return;
     state.loading = true;
-    if (reset) {
-      state.offset = 0;
-      state.hasMore = true;
-      state.posts = [];
-      feedList.innerHTML = igSkeletonHTML(2);
-    }
-    sentinel.textContent = d.feed.loadMore;
 
-    try {
-      const qs = new URLSearchParams({
-        scope: state.scope,
-        limit: String(state.limit),
-        offset: String(state.offset),
-      });
-      if (state.mediaKind) qs.set('media_kind', state.mediaKind);
-      if (state.q) qs.set('q', state.q);
+    const qs = new URLSearchParams({
+      scope: state.scope,
+      limit: String(state.limit),
+      offset: String(reset ? 0 : state.offset),
+    });
+    if (state.mediaKind) qs.set('media_kind', state.mediaKind);
+    if (state.q) qs.set('q', state.q);
+    const url = `/api/v1/posts?${qs}`;
 
-      const data = await app.api(`/api/v1/posts?${qs}`, { signal });
-      const batch = data.posts || [];
-      if (reset) feedList.innerHTML = '';
-
+    const paintBatch = (batch, isReset) => {
+      if (isReset) {
+        state.offset = 0;
+        state.posts = [];
+        feedList.innerHTML = '';
+      }
       if (batch.length === 0 && state.posts.length === 0) {
         feedList.innerHTML = `<div class="empty-box" style="margin:20px">${app.esc(d.feed.emptyFeed)}</div>`;
       } else {
@@ -341,12 +336,50 @@ export async function mount({ root, app, signal }) {
         });
         feedList.insertAdjacentHTML('beforeend', html);
       }
-
-      state.offset += batch.length;
+      state.offset = state.posts.length;
       state.hasMore = batch.length >= state.limit;
       sentinel.textContent = state.hasMore ? '' : (state.posts.length > 0 ? d.feed.endOfFeed : '');
+    };
+
+    let paintedFromCache = false;
+    let cachedSig = '';
+    if (reset) {
+      const cached = app.getCached(url);
+      if (cached && Array.isArray(cached.posts) && cached.posts.length > 0) {
+        paintedFromCache = true;
+        cachedSig = cached.posts.map((p) => `${p.id}:${p.comments_count || 0}:${p.reactions?.amen || 0}`).join('|');
+        paintBatch(cached.posts, true);
+      } else {
+        state.offset = 0;
+        state.hasMore = true;
+        state.posts = [];
+        feedList.innerHTML = igSkeletonHTML(2);
+        sentinel.textContent = d.feed.loadMore;
+      }
+    } else {
+      sentinel.textContent = d.feed.loadMore;
+    }
+
+    // If cache is still fresh (<25s), skip redundant network call completely!
+    if (paintedFromCache && app._isFresh(url, 25_000)) {
+      state.loading = false;
+      return;
+    }
+
+    try {
+      const data = await app.api(url, { signal, noCache: paintedFromCache });
+      if (signal.aborted) return;
+      const batch = data.posts || [];
+      if (paintedFromCache) {
+        const freshSig = batch.map((p) => `${p.id}:${p.comments_count || 0}:${p.reactions?.amen || 0}`).join('|');
+        if (freshSig !== cachedSig && state.offset <= state.limit) {
+          paintBatch(batch, true);
+        }
+      } else {
+        paintBatch(batch, reset);
+      }
     } catch (err) {
-      if (err.name !== 'AbortError') {
+      if (err.name !== 'AbortError' && !paintedFromCache) {
         sentinel.textContent = '';
         if (state.posts.length === 0) {
           feedList.innerHTML = `<div class="empty-box" style="margin:20px">${app.esc(err.message)}</div>`;
@@ -495,16 +528,22 @@ export async function mount({ root, app, signal }) {
   );
   observer.observe(sentinel);
 
-  // Parallel lightweight initial fetch ONLY for this view (Video Stories + Feed Posts)
-  const [storiesRes] = await Promise.allSettled([
-    app.api('/api/v1/stories', { signal }),
-    loadPage(true),
-  ]);
-
-  if (!signal.aborted) {
-    if (storiesRes.status === 'fulfilled') state.stories = storiesRes.value.stories || [];
+  // Instant 0ms paint from local cache + background refresh (Stories + Feed Posts)
+  const cachedStories = app.getCached('/api/v1/stories');
+  if (cachedStories) {
+    state.stories = cachedStories.stories || [];
     renderStories();
   }
+  loadPage(true);
+  app.swr(
+    '/api/v1/stories',
+    (val) => {
+      if (signal.aborted || !val) return;
+      state.stories = val.stories || [];
+      renderStories();
+    },
+    { signal, ttlMs: 30_000 }
+  ).catch(() => {});
 
   return {
     cleanup() {

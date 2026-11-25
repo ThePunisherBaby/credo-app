@@ -33,7 +33,11 @@
   <link rel="icon" type="image/png" sizes="32x32" href="/icons/credo-32.png" />
   <link rel="apple-touch-icon" href="/icons/credo-180.png" />
   <link rel="manifest" href="/manifest.json" />
-  <link rel="stylesheet" href="/styles.css?v=22" />
+  <link rel="stylesheet" href="/styles.css?v=23" />
+  <link rel="modulepreload" href="/app.js?v=23" />
+  <link rel="modulepreload" href="/views/feed.js?v=23" />
+  <link rel="modulepreload" href="/springs.mjs?v=23" />
+  <link rel="modulepreload" href="/audio-engine.js?v=23" />
 </head>
 <body>
   <!-- Soft progressive top scroll edge blur (functional layer) -->
@@ -185,6 +189,6 @@
   <audio id="credoLiveAudio" preload="none" playsinline style="display:none"></audio>
   <audio id="credoTtsAudio" preload="none" playsinline style="display:none"></audio>
 
-  <script type="module" src="/app.js?v=22"></script>
+  <script type="module" src="/app.js?v=23"></script>
 </body>
 </html>

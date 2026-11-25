@@ -1,16 +1,16 @@
 // views/prayer.js — Oración: Santo Rosario a cualquier hora + Música + Evangelio (Voz Humana) + Muro
 
-import { audioEngine } from '../audio-engine.js?v=22';
-import { enhanceLiquidGlass } from '../glass.js?v=22';
-import { attachSegSpringPills } from '../springs.mjs?v=22';
+import { audioEngine } from '../audio-engine.js?v=23';
+import { enhanceLiquidGlass } from '../glass.js?v=23';
+import { attachSegSpringPills } from '../springs.mjs?v=23';
 
 const ART_BY_KEY = {
-  rosary: '/icons/art_rosary.png',
-  music: '/icons/art_music.png',
-  joyful: '/icons/art_morning.png',
-  luminous: '/icons/art_gospel.png',
-  sorrowful: '/icons/art_sorrow.png',
-  glorious: '/icons/art_glory.png',
+  rosary: '/icons/art_rosary.jpg',
+  music: '/icons/art_music.jpg',
+  joyful: '/icons/art_morning.jpg',
+  luminous: '/icons/art_gospel.jpg',
+  sorrowful: '/icons/art_sorrow.jpg',
+  glorious: '/icons/art_glory.jpg',
 };
 
 const MYSTERY_DAYS_ORDER = [
@@ -663,28 +663,32 @@ export async function mount({ root, app, signal }) {
     renderLiturgyAndPrayers();
   });
 
-  app.api('/api/v1/rosary/status', { signal })
-    .then((val) => {
-      if (signal.aborted) return;
+  app.swr(
+    '/api/v1/rosary/status',
+    (val) => {
+      if (signal.aborted || !val) return;
       rosaryStatus = val.status;
       rosaryTracks = val.tracks || [];
       renderRosary();
-    })
-    .catch((err) => {
-      if (!signal.aborted && err.name !== 'AbortError') {
-        rosaryHost.innerHTML = `<div class="empty-box">${app.esc(err.message)}</div>`;
-      }
-    });
+    },
+    { signal, ttlMs: 30_000 }
+  ).catch((err) => {
+    if (!signal.aborted && err.name !== 'AbortError' && !rosaryStatus) {
+      rosaryHost.innerHTML = `<div class="empty-box">${app.esc(err.message)}</div>`;
+    }
+  });
 
-  app.api(`/api/v1/prayers/liturgy?lang=${app.locale}`, { signal })
-    .then((val) => {
-      if (signal.aborted) return;
+  app.swr(
+    `/api/v1/prayers/liturgy?lang=${app.locale}`,
+    (val) => {
+      if (signal.aborted || !val) return;
       liturgy = val.liturgy;
       renderLiturgyAndPrayers();
-    })
-    .catch(() => {
-      if (!signal.aborted) renderLiturgyAndPrayers();
-    });
+    },
+    { signal, ttlMs: 120_000 }
+  ).catch(() => {
+    if (!signal.aborted && !liturgy) renderLiturgyAndPrayers();
+  });
 
   loadIntentions();
 

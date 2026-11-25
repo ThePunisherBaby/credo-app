@@ -1,6 +1,6 @@
 // views/explore.js — Explorar: Búsqueda Universal, Radios Católicas En Vivo, Presbíteros, Vids y Publicaciones
 
-import { audioEngine } from '../audio-engine.js?v=22';
+import { audioEngine } from '../audio-engine.js?v=23';
 
 function proxyImg(url) {
   if (!url) return '';
@@ -400,6 +400,23 @@ export async function mount({ root, app, signal, params }) {
 
   audioUnsub = audioEngine.subscribe(() => render());
 
+  // Instant 0ms synchronous paint from local cache (zero skeletons on cached visits!)
+  const cLive = app.getCached('/api/v1/live');
+  const cClergy = app.getCached('/api/v1/users?clergy_only=true&limit=25');
+  const cVids = app.getCached('/api/v1/vids');
+  const cPosts = app.getCached('/api/v1/posts?scope=global&limit=20') || app.getCached('/api/v1/posts?scope=global&limit=6&offset=0');
+  if (cLive || cClergy || cPosts) {
+    if (cLive) {
+      liveData = cLive;
+      app.setLiveQueue(liveData.all || []);
+    }
+    if (cClergy) clergyList = cClergy.users || [];
+    if (cVids) vidsList = cVids.reels || cVids.vids || cVids.items || [];
+    if (cPosts) postsList = cPosts.posts || [];
+    loading = false;
+    render();
+  }
+
   try {
     const [liveRes, clergyRes, vidsRes, postsRes] = await Promise.allSettled([
       app.api('/api/v1/live', { signal }),
@@ -419,7 +436,7 @@ export async function mount({ root, app, signal, params }) {
     loading = false;
     render();
   } catch (err) {
-    if (err.name !== 'AbortError') {
+    if (err.name !== 'AbortError' && !liveData && clergyList.length === 0) {
       loading = false;
       bodyEl.innerHTML = `<div class="empty-box">${app.esc(err.message)}</div>`;
     }
