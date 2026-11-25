@@ -286,13 +286,16 @@ export function createCredoOneController(app) {
       const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
       if (!reduceMotion && typeof dlg.animate === 'function') {
         try {
-          dlg.animate(
+          const anim = dlg.animate(
             [
-              { opacity: 0, transform: 'translate3d(0, 36px, 0)' },
-              { opacity: 1, transform: 'translate3d(0, 0, 0)' },
+              { transform: 'translate3d(0, 28px, 0)' },
+              { transform: 'translate3d(0, 0, 0)' },
             ],
-            { duration: 300, easing: 'cubic-bezier(0.32, 0.72, 0, 1)' }
+            { duration: 280, easing: 'cubic-bezier(0.32, 0.72, 0, 1)' }
           );
+          setTimeout(() => {
+            try { anim.finish(); } catch {}
+          }, 320);
         } catch {}
       }
     }
@@ -1372,12 +1375,6 @@ export function createCredoOneController(app) {
         const cfStyle = {
           input: {
             color: '#FFFFFF',
-            'font-size': '15px',
-            'font-family': '-apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif',
-            'font-weight': '500',
-          },
-          '::placeholder': {
-            color: '#9CA3AF',
           },
           '.invalid': {
             color: '#FCA5A5',
@@ -1403,7 +1400,7 @@ export function createCredoOneController(app) {
           </div>
         `;
 
-        const nameEl = cardSession.createCardFieldsComponent({ type: 'name', placeholder: 'Nombre como aparece en la tarjeta', style: cfStyle });
+        const nameEl = cardSession.createCardFieldsComponent({ type: 'name', placeholder: 'Nombre del titular', style: cfStyle });
         const numEl = cardSession.createCardFieldsComponent({ type: 'number', placeholder: '0000 0000 0000 0000', style: cfStyle });
         const expEl = cardSession.createCardFieldsComponent({ type: 'expiry', placeholder: 'MM / AA', style: cfStyle });
         const cvvEl = cardSession.createCardFieldsComponent({ type: 'cvv', placeholder: 'CVV', style: cfStyle });
