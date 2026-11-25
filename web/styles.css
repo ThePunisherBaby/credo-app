@@ -92,14 +92,18 @@
   --safe-bottom: max(env(safe-area-inset-bottom, 0px), var(--native-safe-bottom, 0px));
   --safe-left: max(env(safe-area-inset-left, 0px), var(--native-safe-left, 0px));
   --safe-right: max(env(safe-area-inset-right, 0px), var(--native-safe-right, 0px));
+  --top-pad: max(2px, var(--safe-top));
+  --dock-bottom: max(1px, var(--native-safe-bottom, 0px), calc(env(safe-area-inset-bottom, 0px) * 0.06));
 
-  --dock-height: 68px;
+  --dock-height: 56px;
   --mini-height: 0px;
   --rail-width: 260px;
 }
 
-:root[data-theme="light"] {
+:root[data-theme="light"],
+:root[data-theme="light"] body {
   color-scheme: light;
+  word-spacing: 0.0001px;
   --bg: #FFFFFF;
   --surface: #F9F9FB;
   --surface-2: #F2F2F7;
@@ -119,7 +123,8 @@
   --lg-rim-bot: rgba(15, 30, 54, 0.12);
 }
 
-:root[data-theme="dark"] {
+:root[data-theme="dark"],
+:root[data-theme="dark"] body {
   color-scheme: dark;
   --bg: #000000;
   --surface: #0F0F12;
@@ -317,8 +322,8 @@ img { display: block; max-width: 100%; }
   overflow-x: clip;
   width: 100%;
   max-width: 100%;
-  padding: calc(12px + var(--safe-top)) calc(var(--s-5) + var(--safe-right))
-           calc(var(--dock-height) + var(--mini-height) + 28px + var(--safe-bottom))
+  padding: var(--top-pad) calc(var(--s-5) + var(--safe-right))
+           calc(var(--dock-height) + var(--mini-height) + 18px + var(--dock-bottom))
            calc(var(--s-5) + var(--safe-left));
   outline: none;
 }
@@ -346,7 +351,7 @@ img { display: block; max-width: 100%; }
 }
 .view-exit-layer {
   position: absolute;
-  top: calc(12px + var(--safe-top));
+  top: var(--top-pad);
   left: calc(var(--s-5) + var(--safe-left));
   right: calc(var(--s-5) + var(--safe-right));
   pointer-events: none;
@@ -477,9 +482,9 @@ img { display: block; max-width: 100%; }
    ========================================================================== */
 .mobile-dock {
   position: fixed;
-  left: max(12px, var(--safe-left));
-  right: max(12px, var(--safe-right));
-  bottom: calc(3px + var(--safe-bottom));
+  left: max(10px, var(--safe-left));
+  right: max(10px, var(--safe-right));
+  bottom: var(--dock-bottom);
   z-index: 40;
   max-width: 430px;
   margin: 0 auto;
@@ -494,7 +499,7 @@ img { display: block; max-width: 100%; }
   position: relative;
   display: grid;
   grid-template-columns: repeat(5, 1fr);
-  padding: 5px 5px;
+  padding: 4px 4px;
   gap: 2px;
   border-radius: 9999px;
   overflow: hidden;
@@ -503,8 +508,8 @@ img { display: block; max-width: 100%; }
 /* Physics-Driven Sliding Liquid Glass Active Capsule (springs.mjs — GPU Transform Only) */
 .dock-pill-indicator {
   position: absolute;
-  top: 5px;
-  bottom: 5px;
+  top: 4px;
+  bottom: 4px;
   left: 0;
   border-radius: 9999px;
   background: var(--gold-soft);
@@ -526,27 +531,27 @@ img { display: block; max-width: 100%; }
   align-items: center;
   justify-content: center;
   gap: 2px;
-  min-height: 50px;
+  min-height: 44px;
   min-width: 44px;
   border: none;
   background: transparent;
   border-radius: 999px;
   color: var(--label-2);
   font-family: var(--font-rounded);
-  font-size: 0.64rem;
+  font-size: 0.62rem;
   font-weight: 600;
   letter-spacing: -0.01em;
   transition: color 200ms ease;
 }
 @media (max-width: 359px) {
   .mobile-dock {
-    left: max(8px, var(--safe-left));
-    right: max(8px, var(--safe-right));
+    left: max(6px, var(--safe-left));
+    right: max(6px, var(--safe-right));
   }
   .dock-btn {
-    min-height: 46px;
+    min-height: 42px;
     min-width: 0;
-    font-size: 0.57rem;
+    font-size: 0.56rem;
   }
 }
 .dock-btn svg {
@@ -563,7 +568,7 @@ img { display: block; max-width: 100%; }
 }
 .dock-btn .live-pip {
   position: absolute;
-  top: 6px;
+  top: 5px;
   right: calc(50% - 14px);
   width: 7px;
   height: 7px;
@@ -577,9 +582,9 @@ img { display: block; max-width: 100%; }
    ========================================================================== */
 .mini-player-anchor {
   position: fixed;
-  left: max(14px, var(--safe-left));
-  right: max(14px, var(--safe-right));
-  bottom: calc(var(--dock-height) + 14px + var(--safe-bottom));
+  left: max(12px, var(--safe-left));
+  right: max(12px, var(--safe-right));
+  bottom: calc(var(--dock-height) + 8px + var(--dock-bottom));
   z-index: 39;
   max-width: 430px;
   margin: 0 auto;
@@ -1122,13 +1127,17 @@ img { display: block; max-width: 100%; }
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  margin: calc(-12px - var(--safe-top)) calc((var(--s-5) + var(--safe-right)) * -1) var(--s-2) calc((var(--s-5) + var(--safe-left)) * -1);
-  padding: calc(10px + var(--safe-top)) calc(var(--s-5) + var(--safe-right)) 8px calc(var(--s-5) + var(--safe-left));
-  background: linear-gradient(to bottom, var(--bg) 52%, light-dark(rgba(255, 255, 255, 0.93), rgba(0, 0, 0, 0.92)) 100%);
+  gap: 10px;
+  margin: calc(var(--top-pad) * -1) calc((var(--s-5) + var(--safe-right)) * -1) 2px calc((var(--s-5) + var(--safe-left)) * -1);
+  padding: var(--top-pad) calc(12px + var(--safe-right)) 4px calc(12px + var(--safe-left));
+  background: linear-gradient(to bottom, var(--bg) 52%, light-dark(rgba(255, 255, 255, 0.94), rgba(0, 0, 0, 0.93)) 100%);
   -webkit-backdrop-filter: blur(24px) saturate(1.85);
   backdrop-filter: blur(24px) saturate(1.85);
   border-bottom: var(--hairline) solid var(--sep);
+}
+.feed-topbar .icon-btn-44 {
+  width: 38px;
+  height: 38px;
 }
 .stories-divider {
   border: none;
@@ -1156,7 +1165,7 @@ img { display: block; max-width: 100%; }
 .ig-post {
   display: flex;
   flex-direction: column;
-  padding: 14px 0 20px;
+  padding: 10px 0 11px;
   overflow-x: clip;
   border-bottom: var(--hairline) solid var(--sep);
 }
@@ -1164,20 +1173,20 @@ img { display: block; max-width: 100%; }
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 0 var(--s-4) 11px;
+  padding: 0 12px 8px;
 }
 .post-author-info { flex: 1; min-width: 0; }
 .post-author-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.post-author-name { font-weight: 800; font-size: 0.94rem; letter-spacing: -0.015em; }
+.post-author-name { font-weight: 800; font-size: 0.92rem; letter-spacing: -0.015em; }
 .post-meta-line {
-  font-size: 0.74rem;
+  font-size: 0.72rem;
   color: var(--label-2);
   display: flex;
   align-items: center;
   gap: 6px;
   flex-wrap: wrap;
   font-weight: 600;
-  margin-top: 2px;
+  margin-top: 1px;
 }
 .source-pill-box {
   display: inline-flex;
@@ -1188,9 +1197,9 @@ img { display: block; max-width: 100%; }
   border: var(--hairline) solid var(--sep-strong);
   background: var(--surface-2);
   color: var(--label);
-  font-size: 0.71rem;
+  font-size: 0.7rem;
   font-weight: 700;
-  line-height: 1.3;
+  line-height: 1.25;
   transition: background 180ms ease, border-color 180ms ease, transform 150ms var(--ease-snappy);
 }
 a.source-pill-box:hover {
@@ -1206,37 +1215,25 @@ a.source-pill-box:active {
   opacity: 0.72;
 }
 .rank-tag {
-  font-size: 0.66rem;
+  font-size: 0.65rem;
   font-weight: 800;
   color: var(--gold-text);
   background: var(--gold-soft);
-  padding: 2px 7px;
+  padding: 2px 6px;
   border-radius: 5px;
   letter-spacing: 0.01em;
 }
 
-/* Outward Ambilight Colored Shadow Projection (Crisp Unmasked Photo + Vibrant External Glow) */
+/* True Instagram 1:1 Edge-to-Edge Square Media Container (Zero Rounded Corners, Zero Bleed Blur) */
 .ig-media {
   position: relative;
-  width: calc(100% - 28px);
-  overflow: visible;
-  background: transparent;
-  aspect-ratio: 4 / 3;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  overflow: hidden;
+  background: var(--surface-2);
   user-select: none;
-  margin: 6px auto 14px;
-}
-.ig-media-aura {
-  position: absolute;
-  inset: -24px -18px;
-  width: calc(100% + 36px);
-  height: calc(100% + 48px);
-  object-fit: cover;
-  filter: blur(34px) saturate(1.9) brightness(1.06);
-  opacity: light-dark(0.38, 0.56);
-  pointer-events: none;
-  z-index: 0;
-  -webkit-mask-image: radial-gradient(ellipse 74% 72% at 50% 52%, #000 32%, transparent 94%);
-  mask-image: radial-gradient(ellipse 74% 72% at 50% 52%, #000 32%, transparent 94%);
+  margin: 0;
+  border-radius: 0;
 }
 .ig-media-photo, .ig-media iframe {
   position: relative;
@@ -1246,13 +1243,13 @@ a.source-pill-box:active {
   object-fit: cover;
   display: block;
   border: 0;
-  border-radius: 14px;
-  box-shadow: 0 2px 14px light-dark(rgba(0, 0, 0, 0.08), rgba(0, 0, 0, 0.45)),
-              0 0 0 1px light-dark(rgba(0, 0, 0, 0.05), rgba(255, 255, 255, 0.08));
+  border-radius: 0;
+  box-shadow: none;
 }
 @media (min-width: 960px) {
-  .ig-media { width: 100%; margin: 6px 0 14px; }
-  .ig-media-photo, .ig-media iframe { border-radius: 14px; }
+  .ig-media {
+    border: var(--hairline) solid var(--sep);
+  }
 }
 .ig-heart-burst {
   position: absolute;
@@ -1280,13 +1277,18 @@ a.source-pill-box:active {
 
 .ig-quote-canvas {
   width: 100%;
-  padding: 30px 22px;
+  aspect-ratio: 1 / 1;
+  padding: 28px 20px;
   background: linear-gradient(145deg, var(--navy), #1C2338);
   color: #FFFFFF;
   font-family: var(--font-serif);
-  font-size: 1.12rem;
-  line-height: 1.55;
-  border-radius: 14px;
+  font-size: 1.08rem;
+  line-height: 1.5;
+  border-radius: 0;
+  margin: 0;
+  display: grid;
+  place-items: center;
+  text-align: center;
 }
 
 .ig-actions {
@@ -1295,24 +1297,27 @@ a.source-pill-box:active {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 4px 10px 4px;
+  padding: 2px 6px 0;
 }
 .ig-caption {
-  padding: 6px var(--s-5) 2px;
+  padding: 1px 10px 0;
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: stretch;
   text-align: center;
-  gap: 5px;
+  gap: 2px;
 }
 .post-title {
+  width: 100%;
+  max-width: 100%;
   font-family: var(--font-rounded);
-  font-size: 1.14rem;
+  font-size: 0.94rem;
   font-weight: 800;
-  line-height: 1.24;
-  letter-spacing: -0.022em;
+  line-height: 1.14;
+  letter-spacing: -0.02em;
   margin: 0;
   text-align: center;
+  text-wrap: normal;
   color: var(--label);
   background: linear-gradient(
     105deg,
@@ -1328,7 +1333,7 @@ a.source-pill-box:active {
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
-  filter: drop-shadow(0 1px 12px light-dark(rgba(0, 122, 255, 0.16), rgba(116, 192, 255, 0.34)));
+  filter: drop-shadow(0 1px 10px light-dark(rgba(0, 122, 255, 0.14), rgba(116, 192, 255, 0.3)));
 }
 @media (prefers-reduced-motion: no-preference) {
   .post-title {
@@ -1340,27 +1345,23 @@ a.source-pill-box:active {
   65%, 100% { background-position: -35% 0; }
 }
 .post-excerpt {
-  font-size: 0.76rem;
-  line-height: 1.44;
+  width: 100%;
+  max-width: 100%;
+  font-size: 0.75rem;
+  line-height: 1.2;
   color: var(--label-2);
-  margin: 0 auto;
+  margin: 0;
   text-align: center;
-  max-width: 88%;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+  text-wrap: normal;
 }
 .post-excerpt.is-expanded {
   display: block;
-  -webkit-line-clamp: unset;
-  overflow: visible;
   white-space: pre-line;
+  line-height: 1.32;
 }
-.post-more-btn {
-  display: inline-block;
-  margin: -2px auto 0;
-  padding: 2px 8px;
+.post-more-inline {
+  display: inline;
+  padding: 0 0 0 3px;
   border: none;
   background: transparent;
   color: var(--label-3);
@@ -1370,28 +1371,30 @@ a.source-pill-box:active {
 }
 .post-comments-teaser {
   display: inline-block;
-  margin: 2px auto 0;
-  padding: 3px 10px;
+  align-self: center;
+  margin: 1px auto 0;
+  padding: 1px 8px;
   border: none;
   background: transparent;
   color: var(--label-3);
-  font-size: 0.76rem;
+  font-size: 0.74rem;
   font-weight: 600;
+  line-height: 1.2;
   cursor: pointer;
 }
-.post-more-btn:hover, .post-comments-teaser:hover {
+.post-more-inline:hover, .post-comments-teaser:hover {
   color: var(--label);
 }
 .video-duration-pill {
   position: absolute;
-  bottom: 12px;
-  right: 14px;
+  bottom: 10px;
+  right: 10px;
   z-index: 2;
   background: rgba(0, 0, 0, 0.78);
   color: #FFFFFF;
-  font-size: 0.74rem;
+  font-size: 0.72rem;
   font-weight: 700;
-  padding: 3px 8px;
+  padding: 2px 7px;
   border-radius: 5px;
 }
 .video-play-overlay {
@@ -1399,8 +1402,8 @@ a.source-pill-box:active {
   inset: 0;
   z-index: 2;
   border: none;
-  border-radius: 14px;
-  background: linear-gradient(to top, rgba(0, 0, 0, 0.42), transparent 55%);
+  border-radius: 0;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.38), transparent 55%);
   display: grid;
   place-items: center;
   color: #FFFFFF;
@@ -1422,27 +1425,28 @@ a.source-pill-box:active {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: 5px;
   font-family: var(--font-serif);
   font-style: italic;
-  font-size: 0.80rem;
+  font-size: 0.75rem;
+  line-height: 1.18;
   color: var(--gold-text);
-  margin-top: 2px;
+  margin-top: 1px;
 }
 
-.post-act-group { display: flex; align-items: center; gap: 4px; }
+.post-act-group { display: flex; align-items: center; gap: 2px; }
 .act-btn {
   position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  min-height: 44px;
-  padding: 0 12px;
+  gap: 5px;
+  min-height: 36px;
+  padding: 0 9px;
   border-radius: 999px;
   border: none;
   background: transparent;
   color: var(--label-2);
-  font-size: 0.84rem;
+  font-size: 0.82rem;
   font-weight: 700;
   overflow: visible;
   transition: color 180ms ease, background 180ms ease, transform 240ms cubic-bezier(0.34, 1.56, 0.64, 1);
@@ -1909,20 +1913,11 @@ dialog.credo-dialog::backdrop {
 dialog.credo-dialog[open]:not([data-closing]) {
   opacity: 1;
   transform: translateY(0);
-  animation: sheetSlideUp 260ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 dialog.credo-dialog[data-closing] {
   opacity: 0;
   transform: translateY(100%);
   transition: opacity 200ms ease, transform 220ms cubic-bezier(0.32, 0, 0.67, 0);
-}
-@keyframes sheetSlideUp {
-  from { opacity: 0; transform: translateY(100%); }
-  to { opacity: 1; transform: translateY(0); }
-}
-@keyframes modalPopIn {
-  from { opacity: 0; transform: translateY(18px) scale(0.96); }
-  to { opacity: 1; transform: translateY(0) scale(1); }
 }
 @media (min-width: 720px) {
   dialog.credo-dialog {
@@ -1936,16 +1931,10 @@ dialog.credo-dialog[data-closing] {
     padding: 0;
     box-shadow: 0 28px 80px rgba(0, 0, 0, 0.5);
   }
-  dialog.credo-dialog[open]:not([data-closing]) {
-    animation: modalPopIn 240ms cubic-bezier(0.22, 1, 0.36, 1);
-  }
   dialog.credo-dialog[data-closing] {
     transform: translateY(16px) scale(0.96);
   }
   .dialog-grabber { display: none; }
-}
-@media (prefers-reduced-motion: reduce) {
-  dialog.credo-dialog[open]:not([data-closing]) { animation: none !important; }
 }
 
 .dialog-grabber {
@@ -2317,9 +2306,9 @@ body.is-vids-mode .main-stage {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  margin: calc(-12px - var(--safe-top)) calc((var(--s-5) + var(--safe-right)) * -1) 14px calc((var(--s-5) + var(--safe-left)) * -1);
-  padding: calc(10px + var(--safe-top)) calc(var(--s-5) + var(--safe-right)) 10px calc(var(--s-5) + var(--safe-left));
-  background: linear-gradient(to bottom, var(--bg) 52%, light-dark(rgba(255, 255, 255, 0.93), rgba(0, 0, 0, 0.92)) 100%);
+  margin: calc(var(--top-pad) * -1) calc((var(--s-5) + var(--safe-right)) * -1) 12px calc((var(--s-5) + var(--safe-left)) * -1);
+  padding: var(--top-pad) calc(14px + var(--safe-right)) 6px calc(14px + var(--safe-left));
+  background: linear-gradient(to bottom, var(--bg) 52%, light-dark(rgba(255, 255, 255, 0.94), rgba(0, 0, 0, 0.93)) 100%);
   -webkit-backdrop-filter: blur(24px) saturate(1.85);
   backdrop-filter: blur(24px) saturate(1.85);
   border-bottom: var(--hairline) solid var(--sep);
@@ -2611,9 +2600,9 @@ body.is-vids-mode .main-stage {
   position: sticky;
   top: 0;
   z-index: 21;
-  margin: calc(-12px - var(--safe-top)) calc((var(--s-5) + var(--safe-right)) * -1) var(--s-3) calc((var(--s-5) + var(--safe-left)) * -1);
-  padding: calc(10px + var(--safe-top)) calc(var(--s-5) + var(--safe-right)) 8px calc(var(--s-5) + var(--safe-left));
-  background: linear-gradient(to bottom, var(--bg) 52%, light-dark(rgba(255, 255, 255, 0.93), rgba(0, 0, 0, 0.92)) 100%);
+  margin: calc(var(--top-pad) * -1) calc((var(--s-5) + var(--safe-right)) * -1) var(--s-3) calc((var(--s-5) + var(--safe-left)) * -1);
+  padding: var(--top-pad) calc(14px + var(--safe-right)) 6px calc(14px + var(--safe-left));
+  background: linear-gradient(to bottom, var(--bg) 52%, light-dark(rgba(255, 255, 255, 0.94), rgba(0, 0, 0, 0.93)) 100%);
   -webkit-backdrop-filter: blur(24px) saturate(1.85);
   backdrop-filter: blur(24px) saturate(1.85);
   border-bottom: var(--hairline) solid var(--sep);
@@ -2745,4 +2734,235 @@ body.is-vids-mode .main-stage {
   line-height: 1.3;
   margin-bottom: 3px;
 }
+
+/* ==========================================================================
+   INSTAGRAM COMMENTS BOTTOM-SHEET (Exact Instagram Layout & Sticky Composer)
+   ========================================================================== */
+dialog.credo-dialog.is-comments-sheet {
+  padding: 0;
+}
+dialog.credo-dialog.is-comments-sheet[open] {
+  display: flex;
+  flex-direction: column;
+  height: 76dvh;
+  max-height: 86dvh;
+}
+@media (min-width: 720px) {
+  dialog.credo-dialog.is-comments-sheet[open] {
+    height: min(640px, 84dvh);
+  }
+}
+.ig-cs-head {
+  position: relative;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 0 44px 10px;
+  border-bottom: var(--hairline) solid var(--sep);
+  touch-action: none;
+  user-select: none;
+}
+.ig-cs-head h1 {
+  margin: 6px 0 0;
+  font-size: 0.94rem;
+  font-weight: 800;
+  letter-spacing: -0.015em;
+  text-align: center;
+}
+.ig-cs-close {
+  position: absolute;
+  right: 8px;
+  bottom: 2px;
+  width: 36px;
+  height: 36px;
+  border: none;
+  background: transparent;
+  color: var(--label-2);
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+}
+.ig-cs-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: 0;
+}
+.ig-cs-caption {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  padding: 12px 14px;
+  border-bottom: var(--hairline) solid var(--sep);
+}
+.ig-cs-list {
+  display: flex;
+  flex-direction: column;
+  padding: 4px 0 12px;
+}
+.ig-cs-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  padding: 10px 14px;
+}
+.ig-cs-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.ig-cs-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  line-height: 1.2;
+}
+.ig-cs-author {
+  font-size: 0.81rem;
+  font-weight: 700;
+  color: var(--label);
+}
+.ig-cs-time {
+  font-size: 0.74rem;
+  color: var(--label-3);
+  font-weight: 500;
+}
+.ig-cs-text {
+  margin: 0;
+  font-size: 0.87rem;
+  line-height: 1.32;
+  color: var(--label);
+  white-space: pre-line;
+  text-wrap: pretty;
+}
+.ig-cs-subactions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 3px;
+}
+.ig-cs-reply-btn {
+  padding: 0;
+  border: none;
+  background: transparent;
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: var(--label-3);
+  cursor: pointer;
+}
+.ig-cs-like-btn {
+  flex-shrink: 0;
+  padding: 4px 2px 0;
+  border: none;
+  background: transparent;
+  color: var(--label-3);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  transition: transform 180ms cubic-bezier(0.34, 1.56, 0.64, 1), color 150ms ease;
+}
+.ig-cs-like-btn.is-liked {
+  color: #FF3040;
+  transform: scale(1.12);
+}
+.ig-cs-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 46px 24px;
+  gap: 4px;
+}
+.ig-cs-empty strong {
+  font-size: 1.02rem;
+  font-weight: 800;
+  color: var(--label);
+}
+.ig-cs-empty span {
+  font-size: 0.82rem;
+  color: var(--label-3);
+}
+.ig-cs-composer {
+  flex-shrink: 0;
+  border-top: var(--hairline) solid var(--sep);
+  background: var(--surface);
+  padding: 6px 12px calc(8px + var(--dock-bottom));
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ig-cs-emojis {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 2px;
+}
+.ig-cs-emoji-btn {
+  border: none;
+  background: transparent;
+  font-size: 1.28rem;
+  line-height: 1;
+  padding: 4px 5px;
+  border-radius: 8px;
+  transition: transform 140ms var(--ease-snappy);
+}
+.ig-cs-emoji-btn:active {
+  transform: scale(1.26);
+}
+.ig-cs-input-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.ig-cs-pill {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 2px 12px 2px 14px;
+  border-radius: 999px;
+  border: var(--hairline) solid var(--sep-strong);
+  background: var(--surface-2);
+}
+.ig-cs-pill input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  outline: none;
+  font-size: 0.88rem;
+  font-weight: 500;
+  color: var(--label);
+}
+.ig-cs-pill input::placeholder {
+  color: var(--label-3);
+}
+.ig-cs-post-btn {
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  padding: 4px 2px;
+  font-size: 0.86rem;
+  font-weight: 800;
+  color: light-dark(#0095F6, #4CB5F9);
+  transition: opacity 150ms ease;
+}
+.ig-cs-post-btn:disabled {
+  opacity: 0.34;
+  cursor: default;
+}
+
 

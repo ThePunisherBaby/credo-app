@@ -1,10 +1,10 @@
 // app.js — Credo Apple-Grade Core Router, Persistent Player, Liquid Glass & On-Demand View Loader
 // STRICTLY mounts ONLY the active route's ES module and DOM into #appView.
 
-import { detectLocale, getDict } from './i18n.js?v=18';
-import { attachDismissableSheet, createSpringPill, attachSpringPress } from './springs.mjs?v=18';
-import { enhanceLiquidGlass } from './glass.js?v=18';
-import { audioEngine } from './audio-engine.js?v=18';
+import { detectLocale, getDict } from './i18n.js?v=21';
+import { attachDismissableSheet, createSpringPill, attachSpringPress } from './springs.mjs?v=21';
+import { enhanceLiquidGlass } from './glass.js?v=21';
+import { audioEngine } from './audio-engine.js?v=21';
 
 const ICON_PLAY = '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" style="margin-left:2px"><path d="M8 5v14l11-7z"/></svg>';
 const ICON_PAUSE = '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M6 5h4v14H6zm8 0h4v14h-4z"/></svg>';
@@ -511,14 +511,14 @@ class CredoApp {
     // Lazy-import ONLY the required view module
     let mod;
     try {
-      if (route === 'feed') mod = await import('./views/feed.js?v=18');
-      else if (route === 'vids') mod = await import('./views/vids.js?v=18');
-      else if (route === 'explore') mod = await import('./views/explore.js?v=18');
-      else if (route === 'prayer') mod = await import('./views/prayer.js?v=18');
-      else if (route === 'parishes' || route === 'unit' || route === 'user') mod = await import('./views/parishes.js?v=18');
-      else if (route === 'settings') mod = await import('./views/settings.js?v=18');
-      else if (route === 'profile') mod = await import('./views/profile.js?v=18');
-      else mod = await import('./views/feed.js?v=18');
+      if (route === 'feed') mod = await import('./views/feed.js?v=21');
+      else if (route === 'vids') mod = await import('./views/vids.js?v=21');
+      else if (route === 'explore') mod = await import('./views/explore.js?v=21');
+      else if (route === 'prayer') mod = await import('./views/prayer.js?v=21');
+      else if (route === 'parishes' || route === 'unit' || route === 'user') mod = await import('./views/parishes.js?v=21');
+      else if (route === 'settings') mod = await import('./views/settings.js?v=21');
+      else if (route === 'profile') mod = await import('./views/profile.js?v=21');
+      else mod = await import('./views/feed.js?v=21');
     } catch (err) {
       root.innerHTML = `<div class="empty-box">Error cargando vista: ${this.esc(err.message)}</div>`;
       return;
@@ -694,8 +694,25 @@ class CredoApp {
   // =========================================================================
   // MODALS: GENERIC, STORY VIEWER, AUTH (LOGIN / REGISTER), COMPOSER, ONBOARDING
   // =========================================================================
+  _animateSheetOpen(dlg) {
+    if (!dlg || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
+    try {
+      const isMobile = window.innerWidth < 720;
+      const anim = dlg.animate(
+        isMobile
+          ? [{ transform: 'translateY(100%)' }, { transform: 'translateY(0)' }]
+          : [{ opacity: 0, transform: 'translateY(16px) scale(0.96)' }, { opacity: 1, transform: 'translateY(0) scale(1)' }],
+        { duration: 250, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' }
+      );
+      setTimeout(() => {
+        try { anim.finish(); } catch {}
+      }, 280);
+    } catch {}
+  }
+
   openModal(title, bodyHTML) {
     const dlg = document.getElementById('modalDialog');
+    dlg.classList.remove('is-comments-sheet');
     dlg.removeAttribute('data-closing');
     dlg.style.transform = '';
     dlg.innerHTML = `
@@ -741,12 +758,280 @@ class CredoApp {
       el?.addEventListener('pointercancel', onUp);
     });
 
-    if (!dlg.open) dlg.showModal();
+    const wasOpen = dlg.open;
+    if (!wasOpen) dlg.showModal();
+    if (!wasOpen) this._animateSheetOpen(dlg);
     return dlg;
   }
 
   closeModal() {
     closeTopLayer(document.getElementById('modalDialog'));
+  }
+
+  openCommentsModal(postOrId, { onCountChange } = {}) {
+    const post = typeof postOrId === 'object' && postOrId !== null ? postOrId : { id: Number(postOrId) };
+    const postId = Number(post.id);
+    if (!postId) return;
+
+    const dlg = document.getElementById('modalDialog');
+    dlg.removeAttribute('data-closing');
+    dlg.classList.add('is-comments-sheet');
+    dlg.style.transform = '';
+
+    const proxyAv = (u) => {
+      const raw = u?.avatar_url || '';
+      if (raw && /^https?:\/\/(aire96fm\.com\.do|reflexionandolapalabra\.com)/i.test(raw)) {
+        return `/api/v1/media/proxy?url=${encodeURIComponent(raw)}`;
+      }
+      return raw;
+    };
+
+    const author = post.author || {};
+    const authorAv = proxyAv(author);
+    const meAv = proxyAv(this.user);
+    const captionFull = String(post.content || post.title || '')
+      .replace(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g, '')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+    const captionLong = captionFull.length > 130;
+    const likedIds = new Set();
+    let comments = [];
+
+    const EMOJIS = ['❤️', '🙌', '🔥', '👏', '🙏', '🕊️', '✨', '🕯️'];
+
+    dlg.innerHTML = `
+      <div class="ig-cs-head" id="igCsDragZone">
+        <div class="dialog-grabber" aria-hidden="true"></div>
+        <h1 id="modalTitle">Comentarios</h1>
+        <button type="button" class="ig-cs-close" id="igCsCloseBtn" aria-label="Cerrar">
+          <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+
+      <div class="ig-cs-scroll" id="igCsScroll">
+        ${author.full_name || captionFull ? `
+          <div class="ig-cs-caption">
+            <span class="avatar" style="--av-sz:34px;--av-bg:${this.esc(author.avatar_color || '#0F1E36')}">
+              ${authorAv ? `<img src="${this.esc(authorAv)}" alt="" />` : this.initials(author.full_name || 'Credo')}
+            </span>
+            <div class="ig-cs-main">
+              <div class="ig-cs-meta">
+                <span class="ig-cs-author">${this.esc(author.title_prefix ? `${author.title_prefix} ` : '')}${this.esc(author.full_name || 'Credo')}</span>
+                ${author.is_ceo ? '<span class="rank-tag">CEO</span>' : ''}
+                ${post.created_at ? `<span class="ig-cs-time">${this.relTime(post.created_at)}</span>` : ''}
+              </div>
+              ${post.title ? `<strong style="font-size:0.84rem;line-height:1.22;margin-top:1px">${this.esc(post.title)}</strong>` : ''}
+              ${captionFull ? `
+                <p class="ig-cs-text" id="igCsCaptionBody" style="color:var(--label-2);font-size:0.82rem">
+                  ${captionLong
+                    ? `${this.esc(captionFull.slice(0, 128).trimEnd())}<button type="button" class="post-more-inline" id="igCsExpandCap">… más</button>`
+                    : this.esc(captionFull)}
+                </p>` : ''}
+            </div>
+          </div>` : ''}
+
+        <div class="ig-cs-list" id="igCommentsList">
+          <div style="padding:14px;display:flex;gap:10px;align-items:center">
+            <div class="skeleton" style="width:34px;height:34px;border-radius:50%;flex-shrink:0"></div>
+            <div style="flex:1;display:flex;flex-direction:column;gap:6px">
+              <div class="skeleton" style="height:11px;width:36%;border-radius:5px"></div>
+              <div class="skeleton" style="height:12px;width:72%;border-radius:5px"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <form class="ig-cs-composer" id="igCsForm">
+        <div class="ig-cs-emojis" role="group" aria-label="Reacciones rápidas">
+          ${EMOJIS.map((em) => `<button type="button" class="ig-cs-emoji-btn" data-cs-emoji="${em}">${em}</button>`).join('')}
+        </div>
+        <div class="ig-cs-input-row">
+          <span class="avatar" style="--av-sz:34px;--av-bg:${this.esc(this.user?.avatar_color || '#0A84FF')}">
+            ${meAv ? `<img src="${this.esc(meAv)}" alt="" />` : (this.user ? this.initials(this.user.full_name) : '✝')}
+          </span>
+          <div class="ig-cs-pill">
+            <input type="text" id="igCsInput" name="content" maxlength="600" placeholder="${this.esc(author.full_name ? `Agrega un comentario para ${author.full_name}…` : 'Agrega un comentario…')}" autocomplete="off" />
+            <button type="submit" class="ig-cs-post-btn" id="igCsSubmit" disabled>Publicar</button>
+          </div>
+        </div>
+      </form>
+    `;
+
+    dlg.querySelector('#igCsCloseBtn').onclick = () => closeTopLayer(dlg);
+    dlg.querySelector('#igCsExpandCap')?.addEventListener('click', () => {
+      const capEl = dlg.querySelector('#igCsCaptionBody');
+      if (capEl) capEl.textContent = captionFull;
+    });
+
+    // Swipe-down-to-dismiss on Comments header
+    const dragZone = dlg.querySelector('#igCsDragZone');
+    let startY = null;
+    dragZone.addEventListener('pointerdown', (e) => {
+      if (e.target.closest('button')) return;
+      startY = e.clientY;
+    });
+    dragZone.addEventListener('pointermove', (e) => {
+      if (startY === null) return;
+      const dy = Math.max(0, e.clientY - startY);
+      if (dy > 4 && window.innerWidth < 720) {
+        dlg.style.transition = 'none';
+        dlg.style.transform = `translateY(${dy}px)`;
+      }
+    });
+    const finishDrag = (e) => {
+      if (startY === null) return;
+      const dy = e.clientY - startY;
+      startY = null;
+      dlg.style.transition = '';
+      dlg.style.transform = '';
+      if (dy > 72 && window.innerWidth < 720) closeTopLayer(dlg);
+    };
+    dragZone.addEventListener('pointerup', finishDrag);
+    dragZone.addEventListener('pointercancel', finishDrag);
+
+    const listEl = dlg.querySelector('#igCommentsList');
+    const scrollEl = dlg.querySelector('#igCsScroll');
+    const inputEl = dlg.querySelector('#igCsInput');
+    const submitBtn = dlg.querySelector('#igCsSubmit');
+    const formEl = dlg.querySelector('#igCsForm');
+
+    const syncBtn = () => {
+      submitBtn.disabled = inputEl.value.trim().length === 0;
+    };
+    inputEl.addEventListener('input', syncBtn);
+
+    dlg.querySelectorAll('[data-cs-emoji]').forEach((b) => {
+      b.addEventListener('click', () => {
+        inputEl.value += b.dataset.csEmoji;
+        syncBtn();
+        inputEl.focus();
+      });
+    });
+
+    const renderList = () => {
+      if (comments.length === 0) {
+        listEl.innerHTML = `
+          <div class="ig-cs-empty">
+            <strong>Todavía no hay comentarios</strong>
+            <span>Inicia la conversación.</span>
+          </div>
+        `;
+        return;
+      }
+      listEl.innerHTML = comments
+        .map((c, i) => {
+          const cid = c.id ?? `tmp-${i}`;
+          const liked = likedIds.has(String(cid));
+          const cAv = proxyAv(c.author);
+          const handle = c.author?.username || c.author?.full_name || 'Fiel';
+          const dispName = c.author?.full_name || handle;
+          return `
+            <div class="ig-cs-item" data-cid="${this.esc(cid)}">
+              <span class="avatar" style="--av-sz:34px;--av-bg:${this.esc(c.author?.avatar_color || '#1E3A5F')}">
+                ${cAv ? `<img src="${this.esc(cAv)}" alt="" loading="lazy" />` : this.initials(dispName)}
+              </span>
+              <div class="ig-cs-main">
+                <div class="ig-cs-meta">
+                  <span class="ig-cs-author">${this.esc(dispName)}</span>
+                  ${c.author?.is_ceo ? '<span class="rank-tag">CEO</span>' : ''}
+                  <span class="ig-cs-time">${this.relTime(c.created_at)}</span>
+                </div>
+                <p class="ig-cs-text">${this.esc(c.content)}</p>
+                <div class="ig-cs-subactions">
+                  <button type="button" class="ig-cs-reply-btn" data-reply-user="${this.esc(c.author?.username ? `@${c.author.username}` : dispName)}">Responder</button>
+                </div>
+              </div>
+              <button type="button" class="ig-cs-like-btn${liked ? ' is-liked' : ''}" data-like-cid="${this.esc(cid)}" aria-label="Me gusta">
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="${liked ? '#FF3040' : 'none'}" stroke="${liked ? '#FF3040' : 'currentColor'}" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+                ${liked ? '<span>1</span>' : ''}
+              </button>
+            </div>
+          `;
+        })
+        .join('');
+    };
+
+    listEl.addEventListener('click', (e) => {
+      const rep = e.target.closest('[data-reply-user]');
+      if (rep) {
+        const tag = rep.dataset.replyUser;
+        if (!inputEl.value.startsWith(tag)) {
+          inputEl.value = `${tag} ${inputEl.value}`.trimStart();
+        }
+        syncBtn();
+        inputEl.focus();
+        return;
+      }
+      const lk = e.target.closest('[data-like-cid]');
+      if (lk) {
+        const key = String(lk.dataset.likeCid);
+        if (likedIds.has(key)) likedIds.delete(key);
+        else likedIds.add(key);
+        renderList();
+      }
+    });
+
+    const loadComments = async () => {
+      try {
+        const res = await this.api(`/api/v1/posts/${postId}/comments`, { noCache: true });
+        comments = res.comments || [];
+        renderList();
+        onCountChange?.(comments.length);
+      } catch {
+        comments = [];
+        renderList();
+      }
+    };
+
+    formEl.addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const content = inputEl.value.trim();
+      if (!content) return;
+      if (!this.user) {
+        closeTopLayer(dlg);
+        setTimeout(() => this.openAuthModal(), 180);
+        return;
+      }
+
+      // Optimistic 0ms Instagram comment append
+      const optimistic = {
+        id: `opt-${Date.now()}`,
+        content,
+        created_at: new Date().toISOString(),
+        author: {
+          full_name: this.user.full_name,
+          username: this.user.username,
+          avatar_url: this.user.avatar_url,
+          avatar_color: this.user.avatar_color,
+          is_ceo: this.user.is_ceo,
+        },
+      };
+      comments.push(optimistic);
+      inputEl.value = '';
+      syncBtn();
+      renderList();
+      scrollEl.scrollTop = scrollEl.scrollHeight;
+      onCountChange?.(comments.length);
+
+      try {
+        await this.api(`/api/v1/posts/${postId}/comments`, {
+          method: 'POST',
+          body: { content },
+        });
+        await loadComments();
+      } catch (err) {
+        comments = comments.filter((x) => x.id !== optimistic.id);
+        renderList();
+        onCountChange?.(comments.length);
+        this.toast(err.message);
+      }
+    });
+
+    const wasOpen = dlg.open;
+    if (!wasOpen) dlg.showModal();
+    if (!wasOpen) this._animateSheetOpen(dlg);
+    loadComments();
+    return dlg;
   }
 
   openStoryViewer(stories, startIdx = 0) {

@@ -1,6 +1,6 @@
 // views/explore.js — Explorar: Búsqueda Universal, Filtro "● En Vivo" (Radios, TV, Misas), Presbíteros, Parroquias y Vids
 
-import { audioEngine } from '../audio-engine.js?v=18';
+import { audioEngine } from '../audio-engine.js?v=21';
 
 function proxyImg(url) {
   if (!url) return '';

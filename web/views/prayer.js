@@ -1,7 +1,7 @@
 // views/prayer.js — Oración: Rosario 24/7 (7am/2pm/4pm/8pm) + Repertorio Completo por Día (Voz Humana y YouTube) + Música de Fondo + Oraciones + Muro
 
-import { audioEngine } from '../audio-engine.js?v=18';
-import { enhanceLiquidGlass } from '../glass.js?v=18';
+import { audioEngine } from '../audio-engine.js?v=21';
+import { enhanceLiquidGlass } from '../glass.js?v=21';
 
 function formatCountdown(sec) {
   const s = Math.max(0, Number(sec) || 0);

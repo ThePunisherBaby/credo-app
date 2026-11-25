@@ -37,16 +37,16 @@ export async function mount({ root, app, signal }) {
 
   root.innerHTML = `
     <header class="feed-topbar">
-      <div style="display:flex;align-items:center;gap:10px">
-        <img class="brand-logo" src="/icons/credo-192.png" alt="Credo" width="34" height="34" />
-        <h1 class="t-large-title" style="font-size:1.72rem;letter-spacing:-0.03em;margin:0">${app.esc(d.appName)}</h1>
+      <div style="display:flex;align-items:center;gap:8px">
+        <img class="brand-logo" src="/icons/credo-192.png" alt="Credo" width="30" height="30" />
+        <h1 class="t-large-title" style="font-size:1.46rem;line-height:1.05;letter-spacing:-0.03em;margin:0">${app.esc(d.appName)}</h1>
       </div>
       <div class="page-head-actions">
         <a href="#/explore" class="icon-btn-44" id="feedSearchToggle" aria-label="${app.esc(d.nav.explore || 'Explorar')}">
-          <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
         </a>
         <button type="button" class="icon-btn-44" id="feedPublishBtn" aria-label="${app.esc(d.feed.publishBtn)}" ${app.user?.can_publish ? '' : 'hidden'}>
-          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="5"/><path d="M12 8v8M8 12h8"/></svg>
+          <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="5"/><path d="M12 8v8M8 12h8"/></svg>
         </button>
       </div>
     </header>
@@ -64,7 +64,7 @@ export async function mount({ root, app, signal }) {
     <div class="feed-list" id="feedList" aria-live="polite">
       ${igSkeletonHTML(2)}
     </div>
-    <div id="feedSentinel" style="height:48px;display:grid;place-items:center;color:var(--label-3);font-size:0.82rem;margin-top:8px;"></div>
+    <div id="feedSentinel" style="height:40px;display:grid;place-items:center;color:var(--label-3);font-size:0.8rem;margin-top:4px;"></div>
   `;
 
   const storiesStrip = root.querySelector('#storiesStrip');
@@ -183,6 +183,18 @@ export async function mount({ root, app, signal }) {
     }
   }
 
+  function updateCardCommentsUI(postId, count) {
+    const pObj = state.posts.find((x) => x.id === postId);
+    if (pObj) pObj.comments_count = count;
+    const cntSpan = feedList.querySelector(`[data-comment-count="${postId}"]`);
+    if (cntSpan) cntSpan.textContent = String(count);
+    const teaser = feedList.querySelector(`[data-comments-teaser="${postId}"]`);
+    if (teaser) {
+      teaser.hidden = count <= 0;
+      teaser.textContent = count === 1 ? 'Ver 1 comentario' : `Ver los ${count} comentarios`;
+    }
+  }
+
   function postCardHTML(p, globalIndex) {
     const author = p.author || {};
     const unitName = p.channel_name || p.scope_unit?.name || author.lineage?.[author.lineage.length - 1]?.name || '';
@@ -201,14 +213,14 @@ export async function mount({ root, app, signal }) {
       .replace(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g, '')
       .replace(/\s{2,}/g, ' ')
       .trim();
-    const isLongBody = cleanBody.length > 135;
+    const isLongBody = cleanBody.length > 112;
+    const shortBody = isLongBody ? cleanBody.slice(0, 110).trimEnd() : cleanBody;
 
     let mediaBlock = '';
     if (isVideo) {
       mediaBlock = `
         <div class="ig-media" data-video-box="${p.id}" data-yt="${app.esc(p.youtube_id)}">
-          ${mediaSrc ? `<img class="ig-media-aura" src="${app.esc(mediaSrc)}" alt="" aria-hidden="true" />` : ''}
-          <img class="ig-media-photo" src="${app.esc(mediaSrc)}" alt="${app.esc(p.title || d.feed.officialChannel)}" ${imgAttrs} width="640" height="480" />
+          <img class="ig-media-photo" src="${app.esc(mediaSrc)}" alt="${app.esc(p.title || d.feed.officialChannel)}" ${imgAttrs} width="640" height="640" />
           ${p.video_duration ? `<span class="video-duration-pill">${app.esc(p.video_duration)}</span>` : ''}
           <button type="button" class="video-play-overlay" data-play-video="${p.id}" aria-label="${app.esc(d.feed.watchInline)}">
             <span class="video-play-circle">
@@ -220,8 +232,7 @@ export async function mount({ root, app, signal }) {
     } else if (mediaSrc) {
       mediaBlock = `
         <div class="ig-media" data-dbltap="${p.id}" style="cursor:pointer">
-          <img class="ig-media-aura" src="${app.esc(mediaSrc)}" alt="" aria-hidden="true" />
-          <img class="ig-media-photo" src="${app.esc(mediaSrc)}" alt="${app.esc(p.title || author.full_name)}" ${imgAttrs} width="640" height="480" />
+          <img class="ig-media-photo" src="${app.esc(mediaSrc)}" alt="${app.esc(p.title || author.full_name)}" ${imgAttrs} width="640" height="640" />
         </div>
       `;
     } else {
@@ -267,9 +278,9 @@ export async function mount({ root, app, signal }) {
               <span>${app.esc(d.feed.amen)}</span>
               <strong class="amen-count" data-amen-count="${p.id}">${p.reactions?.amen || 0}</strong>
             </button>
-            <button type="button" class="act-btn" data-open-post="${p.id}" aria-label="${app.esc(d.feed.comment)}">
+            <button type="button" class="act-btn" data-comment-post="${p.id}" aria-label="${app.esc(d.feed.comment)}">
               <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-              <span>${commentsCount}</span>
+              <span data-comment-count="${p.id}">${commentsCount}</span>
             </button>
           </div>
           <div class="post-act-group">
@@ -284,10 +295,9 @@ export async function mount({ root, app, signal }) {
 
         <div class="ig-caption">
           ${p.title ? `<h2 class="post-title" data-open-post="${p.id}" style="cursor:pointer">${app.esc(p.title)}</h2>` : ''}
-          ${cleanBody ? `<p class="post-excerpt" data-excerpt-post="${p.id}" data-open-post="${p.id}" style="cursor:pointer">${app.esc(cleanBody)}</p>` : ''}
-          ${isLongBody ? `<button type="button" class="post-more-btn" data-expand-post="${p.id}">… más</button>` : ''}
+          ${cleanBody ? `<p class="post-excerpt" data-excerpt-post="${p.id}">${app.esc(shortBody)}${isLongBody ? `<button type="button" class="post-more-inline" data-expand-post="${p.id}">… más</button>` : ''}</p>` : ''}
           ${p.scripture_ref ? `<span class="post-scripture-pill">📖 ${app.esc(p.scripture_ref)}</span>` : ''}
-          ${commentsCount > 0 ? `<button type="button" class="post-comments-teaser" data-open-post="${p.id}">Ver ${commentsCount === 1 ? '1 comentario' : `los ${commentsCount} comentarios`}</button>` : ''}
+          <button type="button" class="post-comments-teaser" data-comment-post="${p.id}" data-comments-teaser="${p.id}" ${commentsCount > 0 ? '' : 'hidden'}>${commentsCount === 1 ? 'Ver 1 comentario' : `Ver los ${commentsCount} comentarios`}</button>
         </div>
       </article>
     `;
@@ -344,17 +354,29 @@ export async function mount({ root, app, signal }) {
     }
   }
 
-  function reloadFeed() {
-    loadPage(true);
-  }
-
   feedList.addEventListener('click', async (e) => {
     const expandBtn = e.target.closest('[data-expand-post]');
     if (expandBtn) {
-      const pid = expandBtn.dataset.expandPost;
+      const pid = Number(expandBtn.dataset.expandPost);
+      const pObj = state.posts.find((x) => x.id === pid);
       const exEl = feedList.querySelector(`[data-excerpt-post="${pid}"]`);
-      if (exEl) exEl.classList.add('is-expanded');
-      expandBtn.remove();
+      if (exEl && pObj) {
+        const full = String(pObj.content || '')
+          .replace(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g, '')
+          .trim();
+        exEl.textContent = full;
+        exEl.classList.add('is-expanded');
+      }
+      return;
+    }
+
+    const commentBtn = e.target.closest('[data-comment-post]');
+    if (commentBtn) {
+      const pid = Number(commentBtn.dataset.commentPost);
+      const post = state.posts.find((p) => p.id === pid) || { id: pid };
+      app.openCommentsModal(post, {
+        onCountChange: (n) => updateCardCommentsUI(pid, n),
+      });
       return;
     }
 
@@ -394,7 +416,7 @@ export async function mount({ root, app, signal }) {
         clearTimeout(tapTimer);
         tapTimer = setTimeout(() => {
           const post = state.posts.find((p) => p.id === postId);
-          if (post) openPostDetailModal(post, app, d);
+          if (post) openPostDetailModal(post, app, d, (n) => updateCardCommentsUI(postId, n));
         }, 250);
       }
       return;
@@ -441,8 +463,9 @@ export async function mount({ root, app, signal }) {
 
     const openEl = e.target.closest('[data-open-post]');
     if (openEl) {
-      const post = state.posts.find((p) => p.id === Number(openEl.dataset.openPost));
-      if (post) openPostDetailModal(post, app, d);
+      const pid = Number(openEl.dataset.openPost);
+      const post = state.posts.find((p) => p.id === pid);
+      if (post) openPostDetailModal(post, app, d, (n) => updateCardCommentsUI(pid, n));
     }
   });
 
@@ -477,14 +500,17 @@ export async function mount({ root, app, signal }) {
   };
 }
 
-async function openPostDetailModal(post, app, d) {
+function openPostDetailModal(post, app, d, onCountChange) {
   const author = post.author || {};
   const avUrl = author.avatar_url && /^https?:\/\/(aire96fm\.com\.do|reflexionandolapalabra\.com)/i.test(author.avatar_url)
     ? `/api/v1/media/proxy?url=${encodeURIComponent(author.avatar_url)}`
     : author.avatar_url;
+  const imgUrl = post.image_url && /^https?:\/\/(aire96fm\.com\.do|reflexionandolapalabra\.com)/i.test(post.image_url)
+    ? `/api/v1/media/proxy?url=${encodeURIComponent(post.image_url)}`
+    : post.image_url;
   const body = `
-    <article style="display:flex;flex-direction:column;gap:14px;">
-      <div class="post-head">
+    <article style="display:flex;flex-direction:column;gap:12px;">
+      <div class="post-head" style="display:flex;align-items:center;gap:10px">
         <span class="avatar" style="--av-bg:${app.esc(author.avatar_color || '#0F1E36')}">
           ${avUrl ? `<img src="${app.esc(avUrl)}" alt="" />` : app.initials(author.full_name)}
         </span>
@@ -496,72 +522,19 @@ async function openPostDetailModal(post, app, d) {
           <span class="t-footnote">${app.esc(post.channel_name || post.scope_unit?.name || '')} · ${app.relTime(post.created_at)}</span>
         </div>
       </div>
-      ${post.image_url ? `<img src="${app.esc(post.image_url)}" alt="" style="width:100%;border-radius:12px;aspect-ratio:16/10;object-fit:cover" />` : ''}
-      ${post.title ? `<h3 class="t-serif" style="margin:0;font-size:1.3rem;line-height:1.3">${app.esc(post.title)}</h3>` : ''}
+      ${imgUrl ? `<img src="${app.esc(imgUrl)}" alt="" style="width:100%;aspect-ratio:1/1;object-fit:cover" />` : ''}
+      ${post.title ? `<h2 class="t-serif" style="margin:0;font-size:1.18rem;line-height:1.25">${app.esc(post.title)}</h2>` : ''}
       ${post.scripture_ref ? `<span class="post-scripture-pill">📖 ${app.esc(post.scripture_ref)}</span>` : ''}
-      <p style="margin:0;line-height:1.65;white-space:pre-line">${app.esc(post.content)}</p>
-      ${post.source_url ? `<a href="${app.esc(post.source_url)}" target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-soft" style="align-self:flex-start">Leer en ${app.esc(post.channel_name || 'fuente oficial')} ↗</a>` : ''}
-      <hr style="border:none;border-top:1px solid var(--sep);width:100%;margin:4px 0" />
-      <h4 class="t-headline">Comentarios moderados</h4>
-      <div id="modalCommentsList" style="display:flex;flex-direction:column;gap:10px">
-        <div class="skeleton" style="height:44px"></div>
+      <p style="margin:0;font-size:0.92rem;line-height:1.58;white-space:pre-line">${app.esc(post.content)}</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;padding-top:4px">
+        <button type="button" class="btn btn-gold btn-sm" id="openIgCommentsFromDetail">💬 Comentarios (${post.comments_count || 0})</button>
+        ${post.source_url ? `<a href="${app.esc(post.source_url)}" target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-soft">Fuente oficial ↗</a>` : ''}
       </div>
-      <form id="modalCommentForm" style="display:flex;gap:8px;margin-top:4px">
-        <input type="text" name="content" placeholder="${app.esc(d.feed.commentPlaceholder)}" style="flex:1;min-height:44px;padding:0 14px;border-radius:8px;border:1px solid var(--sep-strong);background:var(--surface-2)" required />
-        <button type="submit" class="btn btn-gold btn-sm">${app.esc(d.feed.send)}</button>
-      </form>
     </article>
   `;
 
   const dlg = app.openModal(d.postTypes[post.post_type] || 'Publicación', body);
-  const listEl = dlg.querySelector('#modalCommentsList');
-  const form = dlg.querySelector('#modalCommentForm');
-
-  const loadComments = async () => {
-    try {
-      const res = await app.api(`/api/v1/posts/${post.id}/comments`);
-      const items = res.comments || [];
-      if (items.length === 0) {
-        listEl.innerHTML = `<p class="t-footnote">${app.esc(d.feed.noComments)}</p>`;
-      } else {
-        listEl.innerHTML = items
-          .map(
-            (c) => `
-          <div style="padding:10px 12px;border-radius:8px;background:var(--surface-2)">
-            <div style="display:flex;justify-content:space-between;gap:8px;font-size:0.8rem">
-              <strong>${app.esc(c.author?.full_name || 'Fiel')}</strong>
-              <span class="t-caption">${app.relTime(c.created_at)}</span>
-            </div>
-            <p style="margin:4px 0 0;font-size:0.9rem">${app.esc(c.content)}</p>
-          </div>`
-          )
-          .join('');
-      }
-    } catch {
-      listEl.innerHTML = `<p class="t-footnote">${app.esc(d.feed.noComments)}</p>`;
-    }
-  };
-
-  loadComments();
-
-  form.addEventListener('submit', async (ev) => {
-    ev.preventDefault();
-    if (!app.user) {
-      app.closeModal();
-      app.openAuthModal();
-      return;
-    }
-    const content = form.content.value.trim();
-    if (!content) return;
-    try {
-      await app.api(`/api/v1/posts/${post.id}/comments`, {
-        method: 'POST',
-        body: { content },
-      });
-      form.content.value = '';
-      loadComments();
-    } catch (err) {
-      app.toast(err.message);
-    }
+  dlg.querySelector('#openIgCommentsFromDetail')?.addEventListener('click', () => {
+    app.openCommentsModal(post, { onCountChange });
   });
 }

@@ -198,17 +198,21 @@ export async function mount({ root, app, signal }) {
     };
 
     const openPostDetail = (p) => {
-      app.openModal(
+      const dlg = app.openModal(
         p.title || profile.full_name,
         `
         <div style="display:flex;flex-direction:column;gap:12px">
-          ${p.image_url ? `<img src="${app.esc(proxySrc(p.image_url))}" alt="" style="width:100%;border-radius:10px;max-height:360px;object-fit:cover" />` : ''}
-          ${p.youtube_id ? `<div style="aspect-ratio:16/9;border-radius:10px;overflow:hidden;background:#000"><iframe src="https://www.youtube.com/embed/${app.esc(p.youtube_id)}?playsinline=1&rel=0" style="width:100%;height:100%;border:0" allowfullscreen></iframe></div>` : ''}
+          ${p.image_url ? `<img src="${app.esc(proxySrc(p.image_url))}" alt="" style="width:100%;aspect-ratio:1/1;object-fit:cover" />` : ''}
+          ${p.youtube_id ? `<div style="aspect-ratio:16/9;overflow:hidden;background:#000"><iframe src="https://www.youtube.com/embed/${app.esc(p.youtube_id)}?playsinline=1&rel=0" style="width:100%;height:100%;border:0" allowfullscreen></iframe></div>` : ''}
           ${p.scripture_ref ? `<span class="post-scripture-pill">📖 ${app.esc(p.scripture_ref)}</span>` : ''}
-          <p style="margin:0;font-size:0.95rem;line-height:1.55;white-space:pre-line">${app.esc(p.content || '')}</p>
+          <p style="margin:0;font-size:0.94rem;line-height:1.55;white-space:pre-line">${app.esc(p.content || '')}</p>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button type="button" class="btn btn-gold btn-sm" id="profOpenCommentsBtn">💬 Comentarios (${p.comments_count || 0})</button>
+          </div>
         </div>
         `
       );
+      dlg.querySelector('#profOpenCommentsBtn')?.addEventListener('click', () => app.openCommentsModal(p));
     };
 
     const renderGrid = () => {

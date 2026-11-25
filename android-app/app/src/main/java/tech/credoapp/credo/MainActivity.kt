@@ -88,7 +88,7 @@ class MainActivity : AppCompatActivity() {
         val controller = WindowCompat.getInsetsController(window, window.decorView)
         controller.isAppearanceLightStatusBars = !isDark
         controller.isAppearanceLightNavigationBars = !isDark
-        val bgColor = if (isDark) Color.BLACK else Color.parseColor("#F2F4F8")
+        val bgColor = if (isDark) Color.BLACK else Color.WHITE
         window.decorView.setBackgroundColor(bgColor)
         if (::webView.isInitialized) {
             webView.setBackgroundColor(bgColor)
@@ -262,17 +262,23 @@ class MainActivity : AppCompatActivity() {
         root.addView(offlineBox, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
 
         // True edge-to-edge full screen: ZERO system-bar padding on root.
-        // Forward real cutout & system-bar safe-area insets cleanly to CSS, reserving root bottom padding ONLY for soft keyboard IME.
+        // Trim status-bar internal slack and use tappableElement() for bottom so gesture-nav phones place the dock right at the bottom edge.
         ViewCompat.setOnApplyWindowInsetsListener(root) { view, insets ->
             val safe = insets.getInsets(
+                WindowInsetsCompat.Type.statusBars() or WindowInsetsCompat.Type.displayCutout()
+            )
+            val bars = insets.getInsets(
                 WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
             )
+            val tappable = insets.getInsets(WindowInsetsCompat.Type.tappableElement())
             val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
             val density = resources.displayMetrics.density.coerceAtLeast(1f)
-            safeTopDp = safe.top / density
-            safeBottomDp = safe.bottom / density
-            safeLeftDp = safe.left / density
-            safeRightDp = safe.right / density
+            safeTopDp = ((safe.top / density) - 4f).coerceAtLeast(0f)
+            // Only offset bottom when 3-button tappable nav bar (>= 28dp) is active; gesture bar gets 0dp so dock hugs bottom
+            val tapBotDp = tappable.bottom / density
+            safeBottomDp = if (tapBotDp >= 28f) tapBotDp else 0f
+            safeLeftDp = bars.left / density
+            safeRightDp = bars.right / density
 
             view.setPadding(0, 0, 0, ime.bottom)
             pushSafeInsetsToWeb()
