@@ -93,7 +93,14 @@ async function getDescendantUnitIds(unitId) {
   return rows.map((r) => r.id);
 }
 
+const fsharpKernel = require('../services/fsharpKernel');
+
 function serializeUserSummary(u, lineage = [], orderUnit = null) {
+  const effectiveSku = u.active_plan_sku || (u.is_ceo ? 'biz_one_enterprise' : '');
+  const planSpec = effectiveSku ? fsharpKernel.getPlanSpec(effectiveSku) : null;
+  const effectiveBadge = u.one_badge || planSpec?.badge_type || (u.is_ceo ? 'enterprise_gold' : '');
+  const effectivePlanName = planSpec?.display_name || '';
+
   return {
     id: u.id,
     username: u.username,
@@ -102,7 +109,7 @@ function serializeUserSummary(u, lineage = [], orderUnit = null) {
     ecclesiastical_rank: u.ecclesiastical_rank,
     can_publish:
       isClergyRank(u.ecclesiastical_rank) ||
-      ['user_one_pro', 'biz_one_plus', 'biz_one_pro', 'biz_one_enterprise'].includes(u.active_plan_sku || ''),
+      ['user_one_pro', 'biz_one_plus', 'biz_one_pro', 'biz_one_enterprise'].includes(effectiveSku),
     religious_order_initials: u.religious_order_initials || '',
     primary_unit_id: u.primary_unit_id,
     religious_order_id: u.religious_order_id,
@@ -119,12 +126,13 @@ function serializeUserSummary(u, lineage = [], orderUnit = null) {
     is_admin: Boolean(u.is_admin),
     is_ceo: Boolean(u.is_ceo),
     website_links: Array.isArray(u.website_links) ? u.website_links : [],
-    is_credo_plus: Boolean(u.is_credo_plus || u.active_plan_sku),
-    credo_plus_plan: u.active_plan_sku || u.credo_plus_plan || '',
-    active_plan_sku: u.active_plan_sku || (u.is_ceo ? 'biz_one_enterprise' : ''),
-    ad_free: Boolean(u.ad_free),
-    studio_eligible: Boolean(u.studio_eligible || u.is_ceo || u.is_admin),
-    one_badge: u.one_badge || (u.is_ceo ? 'enterprise_gold' : ''),
+    is_credo_plus: Boolean(u.is_credo_plus || effectiveSku),
+    credo_plus_plan: effectiveSku || u.credo_plus_plan || '',
+    active_plan_sku: effectiveSku,
+    active_plan_name: effectivePlanName,
+    ad_free: Boolean(u.ad_free || planSpec?.ad_free),
+    studio_eligible: Boolean(u.studio_eligible || planSpec?.studio_access || u.is_ceo || u.is_admin),
+    one_badge: effectiveBadge,
     lineage,
     religious_order: orderUnit,
     created_at: u.created_at,

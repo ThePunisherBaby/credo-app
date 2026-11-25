@@ -15,6 +15,7 @@ const USER_PUBLIC_COLS = `
   languages, preferred_locale, avatar_color, avatar_url,
   verification_status, is_admin, is_ceo, website_links,
   is_credo_plus, credo_plus_plan,
+  active_plan_sku, ad_free, studio_eligible, one_badge,
   followers_count, following_count, posts_count, created_at
 `;
 

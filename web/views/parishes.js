@@ -95,6 +95,7 @@ async function mountUserProfile({ root, app, signal, userId }) {
           </a>
           <span>@${app.esc(u.username || 'credo')}</span>
           ${u.is_ceo ? '<span class="rank-tag" style="background:#0A84FF;color:#FFFFFF;font-size:0.66rem;flex-shrink:0">CEO</span>' : ''}
+          ${app.renderPlanInsignia(u)}
         </div>
         <div class="ig-prof-actions">
           <button type="button" class="ig-icon-btn" id="pubShareTopBtn" aria-label="Compartir perfil">
@@ -132,7 +133,10 @@ async function mountUserProfile({ root, app, signal, userId }) {
       </section>
 
       <div class="ig-prof-bio">
-        <strong style="font-size:0.98rem">${app.esc(fullNameDisplay)}</strong>
+        <strong style="font-size:0.98rem;display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap">
+          <span>${app.esc(fullNameDisplay)}</span>
+          ${app.renderPlanInsignia(u, { showLabel: Boolean(!u.is_ceo) })}
+        </strong>
         <span class="t-footnote">${app.esc(u.current_office_title || d.ranks[u.ecclesiastical_rank] || u.ecclesiastical_rank)}</span>
         ${u.bio ? `<p style="margin:4px 0 0;font-size:0.88rem;line-height:1.45">${app.esc(u.bio)}</p>` : ''}
         ${u.motto ? `<p style="margin:2px 0 0;font-size:0.84rem;font-style:italic;color:var(--gold-text)">«${app.esc(u.motto)}»</p>` : ''}

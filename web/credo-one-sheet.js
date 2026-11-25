@@ -526,6 +526,7 @@ export function createCredoOneController(app) {
 
   function renderPlansView() {
     const visiblePlans = state.plans.filter((p) => p.audience === state.audience);
+    const activeMeta = app.getPlanMeta?.(app.user) || null;
     const dynamicSubtitle =
       state.audience === 'business'
         ? 'Impulsa tu parroquia, emisora, comercio o institución con campañas medidas y control de equipo.'
@@ -537,7 +538,12 @@ export function createCredoOneController(app) {
           <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M12 2l2.4 6.6L21 11l-6.6 2.4L12 20l-2.4-6.6L3 11l6.6-2.4z"/></svg>
           <span>Familia Credo One</span>
         </div>
-        <h1 class="co-sheet-title" id="coSheetTitle">Únete a Credo One</h1>
+        <h1 class="co-sheet-title" id="coSheetTitle">${activeMeta ? app.esc(activeMeta.name) : 'Únete a Credo One'}</h1>
+        ${activeMeta ? `
+          <div class="co-active-sheet-banner">
+            ${app.renderPlanInsignia(app.user)}
+            <span>Plan activo en tu cuenta · Puedes cambiar o subir de nivel cuando gustes</span>
+          </div>` : ''}
         <p class="co-sheet-subtitle">${dynamicSubtitle}</p>
 
         <div class="co-controls-bar">

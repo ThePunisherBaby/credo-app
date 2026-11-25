@@ -5,7 +5,7 @@ import { detectLocale, getDict } from './i18n.js?v=23';
 import { attachDismissableSheet, createSpringPill, attachSpringPress, attachSegSpringPills } from './springs.mjs?v=23';
 import { enhanceLiquidGlass } from './glass.js?v=23';
 import { audioEngine } from './audio-engine.js?v=23';
-import { createCredoOneController } from './credo-one-sheet.js?v=33';
+import { createCredoOneController } from './credo-one-sheet.js?v=35';
 
 const ICON_PLAY = '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" style="margin-left:2px"><path d="M8 5v14l11-7z"/></svg>';
 const ICON_PAUSE = '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M6 5h4v14H6zm8 0h4v14h-4z"/></svg>';
@@ -728,8 +728,13 @@ class CredoApp {
 
     const coBtn = document.getElementById('desktopCredoOneBtn');
     if (coBtn) {
+      this.syncCredoOneButton(coBtn, this.user);
       coBtn.onclick = () => this.openCredoOne();
     }
+    const feedCoBtn = document.getElementById('feedCredoOneBtn');
+    if (feedCoBtn) this.syncCredoOneButton(feedCoBtn, this.user);
+    const profCoBtn = document.getElementById('profCredoOneBtn');
+    if (profCoBtn) this.syncCredoOneButton(profCoBtn, this.user);
 
     // Desktop & Mobile Publish buttons (Clergy or Credo One Pro/Business) & Account chip
     const pubBtn = document.getElementById('desktopPublishBtn');
@@ -745,6 +750,7 @@ class CredoApp {
     const accBtn = document.getElementById('desktopAccountBtn');
     if (accBtn) {
       const u = this.user;
+      const planMeta = this.getPlanMeta(u);
       const avUrl = u?.avatar_url && u.avatar_url.includes('aire96fm.com.do')
         ? `/api/v1/media/proxy?url=${encodeURIComponent(u.avatar_url)}`
         : u?.avatar_url;
@@ -753,13 +759,106 @@ class CredoApp {
           ${avUrl ? `<img src="${this.esc(avUrl)}" alt="" />` : (u ? this.initials(u.full_name) : '✝')}
         </span>
         <span style="flex:1;min-width:0;display:flex;flex-direction:column">
-          <strong style="font-size:0.86rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${this.esc(u ? u.full_name : d.profile.signIn)}</strong>
-          <small class="t-caption" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${this.esc(u ? (u.is_ceo ? 'CEO · Credo' : d.ranks[u.ecclesiastical_rank] || 'Fiel') : 'Entrar a Credo')}</small>
+          <strong style="font-size:0.86rem;display:flex;align-items:center;gap:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+            <span style="overflow:hidden;text-overflow:ellipsis">${this.esc(u ? u.full_name : d.profile.signIn)}</span>
+            ${planMeta ? this.renderPlanInsignia(u) : ''}
+          </strong>
+          <small class="t-caption" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${this.esc(u ? (u.is_ceo ? 'CEO · Credo' : (planMeta ? planMeta.name : (d.ranks[u.ecclesiastical_rank] || 'Fiel'))) : 'Entrar a Credo')}</small>
         </span>
       `;
       accBtn.onclick = () => {
         location.hash = '#/profile';
       };
+    }
+  }
+
+  getPlanMeta(user) {
+    const sku = String(user?.active_plan_sku || '').trim();
+    if (!sku) return null;
+    const map = {
+      user_one_plus: {
+        sku: 'user_one_plus',
+        name: user?.active_plan_name || 'Credo One Plus',
+        shortName: 'Credo One Plus',
+        tier: 'plus',
+        subtitle: 'Insignia gris · Sin anuncios · Audio continuo',
+      },
+      user_one_pro: {
+        sku: 'user_one_pro',
+        name: user?.active_plan_name || 'Credo One Pro',
+        shortName: 'Credo One Pro',
+        tier: 'pro',
+        subtitle: 'Creador Verificado · Publicación habilitada · Sin anuncios',
+      },
+      biz_one_plus: {
+        sku: 'biz_one_plus',
+        name: user?.active_plan_name || 'Credo One Empresas Plus',
+        shortName: 'Empresas Plus',
+        tier: 'biz-plus',
+        subtitle: 'Credo One Studio · 15,000 impresiones/mes',
+      },
+      biz_one_pro: {
+        sku: 'biz_one_pro',
+        name: user?.active_plan_name || 'Credo One Empresas Pro',
+        shortName: 'Empresas Pro',
+        tier: 'biz-pro',
+        subtitle: 'Credo One Studio Pro · 50,000 impresiones/mes',
+      },
+      biz_one_enterprise: {
+        sku: 'biz_one_enterprise',
+        name: user?.active_plan_name || 'Credo One Enterprise',
+        shortName: 'Enterprise',
+        tier: 'enterprise',
+        subtitle: 'Cuenta Corporativa · Patrocinio y SLA dedicado',
+      },
+    };
+    return map[sku] || {
+      sku,
+      name: user?.active_plan_name || 'Credo One',
+      shortName: user?.active_plan_name || 'Credo One',
+      tier: 'plus',
+      subtitle: 'Miembro activo Credo One',
+    };
+  }
+
+  renderPlanInsignia(user, { showLabel = false } = {}) {
+    const meta = this.getPlanMeta(user);
+    if (!meta) return '';
+    // CEO already has the dedicated CEO badge unless we explicitly ask for the full label pill
+    if (user?.is_ceo && !showLabel) return '';
+    const checkSvg =
+      meta.tier === 'enterprise'
+        ? '<svg viewBox="0 0 20 20" width="11" height="11" fill="currentColor" aria-hidden="true"><path d="M10 1.5l2.3 5.5L18 9.3l-5.7 2.2L10 17l-2.3-5.5L2 9.3l5.7-2.3z"/></svg>'
+        : '<svg viewBox="0 0 20 20" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5.2 10.3 8.5 13.5 14.8 6.8"/></svg>';
+    if (showLabel) {
+      return `<span class="co-insignia co-insignia--pill co-insignia--${meta.tier}" title="${this.esc(meta.name)}">${checkSvg}<span>${this.esc(meta.shortName)}</span></span>`;
+    }
+    return `<span class="co-insignia co-insignia--icon co-insignia--${meta.tier}" title="${this.esc(meta.name)}" aria-label="${this.esc(meta.name)}">${checkSvg}</span>`;
+  }
+
+  syncCredoOneButton(btn, user = this.user) {
+    if (!btn) return;
+    const meta = this.getPlanMeta(user);
+    btn.classList.remove(
+      'credo-one-trigger--plus',
+      'credo-one-trigger--pro',
+      'credo-one-trigger--biz-plus',
+      'credo-one-trigger--biz-pro',
+      'credo-one-trigger--enterprise'
+    );
+    if (meta) {
+      btn.classList.add(`credo-one-trigger--${meta.tier}`);
+      btn.setAttribute('aria-label', `Tu plan activo: ${meta.name}`);
+      btn.innerHTML = `
+        <svg viewBox="0 0 20 20" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="10" cy="10" r="8" stroke-opacity="0.45" stroke-width="1.6"/><path d="M6.3 10.2 8.8 12.6 13.7 7.4"/></svg>
+        <span>${this.esc(meta.shortName)}</span>
+      `;
+    } else {
+      btn.setAttribute('aria-label', 'Abrir Familia Credo One');
+      btn.innerHTML = `
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M12 2l2.4 6.6L21 11l-6.6 2.4L12 20l-2.4-6.6L3 11l6.6-2.4z"/></svg>
+        <span>Credo One</span>
+      `;
     }
   }
 
@@ -837,15 +936,15 @@ class CredoApp {
     // Lazy-import ONLY the required view module
     let mod;
     try {
-      if (route === 'feed') mod = await import('./views/feed.js?v=26');
+      if (route === 'feed') mod = await import('./views/feed.js?v=35');
       else if (route === 'studio') mod = await import('./views/studio.js?v=26');
       else if (route === 'vids') mod = await import('./views/vids.js?v=23');
       else if (route === 'explore') mod = await import('./views/explore.js?v=25');
       else if (route === 'prayer') mod = await import('./views/prayer.js?v=23');
-      else if (route === 'user') mod = await import('./views/parishes.js?v=23');
+      else if (route === 'user') mod = await import('./views/parishes.js?v=35');
       else if (route === 'settings') mod = await import('./views/settings.js?v=23');
-      else if (route === 'profile') mod = await import('./views/profile.js?v=26');
-      else mod = await import('./views/feed.js?v=26');
+      else if (route === 'profile') mod = await import('./views/profile.js?v=35');
+      else mod = await import('./views/feed.js?v=35');
     } catch (err) {
       root.innerHTML = `<div class="empty-box">Error cargando vista: ${this.esc(err.message)}</div>`;
       return;

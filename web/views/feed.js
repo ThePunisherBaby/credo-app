@@ -75,7 +75,9 @@ export async function mount({ root, app, signal }) {
   const feedList = root.querySelector('#feedList');
   const sentinel = root.querySelector('#feedSentinel');
 
-  root.querySelector('#feedCredoOneBtn')?.addEventListener('click', () => {
+  const feedCoBtn = root.querySelector('#feedCredoOneBtn');
+  app.syncCredoOneButton(feedCoBtn, app.user);
+  feedCoBtn?.addEventListener('click', () => {
     app.openCredoOne();
   });
   root.querySelector('#feedPublishBtn')?.addEventListener('click', () => {
@@ -278,6 +280,7 @@ export async function mount({ root, app, signal }) {
             <div class="post-author-row">
               <a href="#/user/${author.id}" class="post-author-name">${app.esc(authorDisplay)}</a>
               ${author.is_ceo ? '<span class="rank-tag">CEO</span>' : ''}
+              ${app.renderPlanInsignia(author)}
               ${isEntSponsor ? '<span class="co-badge-gold" style="padding:1px 7px;font-size:0.64rem">✦ Enterprise</span>' : ''}
             </div>
             <div class="post-meta-line">

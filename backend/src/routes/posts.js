@@ -71,6 +71,8 @@ async function hydratePosts(rows, viewerId) {
         verification_status: r.author_verification_status,
         country_code: r.author_country_code,
         is_ceo: r.author_is_ceo,
+        active_plan_sku: r.author_active_plan_sku || '',
+        one_badge: r.author_one_badge || '',
       },
       []
     ),
@@ -99,7 +101,9 @@ const POST_SELECT = `
          u.avatar_url AS author_avatar_url,
          u.verification_status AS author_verification_status,
          u.country_code AS author_country_code,
-         u.is_ceo AS author_is_ceo
+         u.is_ceo AS author_is_ceo,
+         u.active_plan_sku AS author_active_plan_sku,
+         u.one_badge AS author_one_badge
     FROM posts p
     JOIN users u ON u.id = p.author_id
 `;

@@ -144,12 +144,17 @@ export async function mount({ root, app, signal }) {
 
   try {
     const [profRes, postsRes, savedRes] = await Promise.all([
-      app.api(`/api/v1/users/${u.id}`, { signal }).catch(() => ({ user: u })),
+      app.api(`/api/v1/users/${u.id}`, { signal, noCache: true }).catch(() => ({ user: u })),
       app.api(`/api/v1/posts?author_id=${u.id}&limit=36`, { signal }).catch(() => ({ posts: [] })),
       app.api('/api/v1/posts?scope=saved&limit=36', { signal }).catch(() => ({ posts: [] })),
     ]);
 
-    const profile = profRes.user || u;
+    const profile = { ...u, ...(profRes.user || {}) };
+    const planMeta = app.getPlanMeta(profile);
+    if (profile.active_plan_sku && profile.active_plan_sku !== app.user?.active_plan_sku) {
+      app.user = { ...app.user, ...profile };
+      app.renderChrome();
+    }
     const myPosts = postsRes.posts || [];
     const myVids = myPosts.filter((p) => p.media_kind === 'video' || Boolean(p.youtube_id));
     const savedPosts = savedRes.posts || [];
@@ -245,12 +250,10 @@ export async function mount({ root, app, signal }) {
         <div class="ig-prof-username">
           <span>@${app.esc(profile.username || 'credo')}</span>
           ${profile.is_ceo ? '<span class="rank-tag" style="background:#0A84FF;color:#FFFFFF;font-size:0.68rem">CEO</span>' : ''}
+          ${app.renderPlanInsignia(profile)}
         </div>
         <div class="ig-prof-actions" style="gap:6px">
-          <button type="button" class="credo-one-trigger" id="profCredoOneBtn" aria-label="Abrir Familia Credo One">
-            <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M12 2l2.4 6.6L21 11l-6.6 2.4L12 20l-2.4-6.6L3 11l6.6-2.4z"/></svg>
-            <span>Credo One</span>
-          </button>
+          <button type="button" class="credo-one-trigger" id="profCredoOneBtn" aria-label="Plan Credo One"></button>
           ${profile.can_publish ? `
             <button type="button" class="ig-icon-btn" id="igAddPostBtn" aria-label="Nueva publicación">
               <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
@@ -290,10 +293,24 @@ export async function mount({ root, app, signal }) {
       </section>
 
       <div class="ig-prof-bio">
-        <strong style="font-size:0.96rem">${app.esc(profile.title_prefix ? `${profile.title_prefix} ` : '')}${app.esc(profile.full_name)}</strong>
+        <strong style="font-size:0.96rem;display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap">
+          <span>${app.esc(profile.title_prefix ? `${profile.title_prefix} ` : '')}${app.esc(profile.full_name)}</span>
+          ${app.renderPlanInsignia(profile)}
+        </strong>
         <span class="t-footnote">${app.esc(profile.current_office_title || d.ranks[profile.ecclesiastical_rank] || 'Miembro de Credo')}</span>
         ${profile.bio ? `<p style="margin:4px 0 0;font-size:0.88rem;line-height:1.42">${app.esc(profile.bio)}</p>` : ''}
         ${profile.motto ? `<p style="margin:2px 0 0;font-size:0.84rem;font-style:italic;color:var(--gold-text)">«${app.esc(profile.motto)}»</p>` : ''}
+        ${planMeta ? `
+          <button type="button" class="co-prof-plan-strip co-prof-plan-strip--${planMeta.tier}" id="profPlanStripBtn">
+            <span class="co-prof-plan-left">
+              ${app.renderPlanInsignia(profile, { showLabel: false })}
+              <span class="co-prof-plan-meta">
+                <strong>${app.esc(planMeta.name)}</strong>
+                <small>${app.esc(planMeta.subtitle)}</small>
+              </span>
+            </span>
+            <span class="co-prof-plan-action">Ver plan ›</span>
+          </button>` : ''}
         ${Array.isArray(profile.website_links) && profile.website_links.length > 0 ? `
           <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">
             ${profile.website_links.map((lk) => `
@@ -330,7 +347,10 @@ export async function mount({ root, app, signal }) {
       <div id="igProfGrid"></div>
     `;
 
-    root.querySelector('#profCredoOneBtn')?.addEventListener('click', () => app.openCredoOne());
+    const profCoBtn = root.querySelector('#profCredoOneBtn');
+    app.syncCredoOneButton(profCoBtn, profile);
+    profCoBtn?.addEventListener('click', () => app.openCredoOne());
+    root.querySelector('#profPlanStripBtn')?.addEventListener('click', () => app.openCredoOne());
     root.querySelector('#igAddPostBtn')?.addEventListener('click', () => app.openComposer());
     root.querySelector('#igEditProfBtn').addEventListener('click', openEditModal);
     root.querySelector('#igShareProfBtn').addEventListener('click', async () => {
