@@ -309,7 +309,7 @@ export async function mount({ root, app, signal }) {
                 <small>${app.esc(planMeta.subtitle)}</small>
               </span>
             </span>
-            <span class="co-prof-plan-action">Ver plan ›</span>
+            <span class="co-prof-plan-action">Pagos y plan ›</span>
           </button>` : ''}
         ${Array.isArray(profile.website_links) && profile.website_links.length > 0 ? `
           <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">
@@ -349,8 +349,8 @@ export async function mount({ root, app, signal }) {
 
     const profCoBtn = root.querySelector('#profCredoOneBtn');
     app.syncCredoOneButton(profCoBtn, profile);
-    profCoBtn?.addEventListener('click', () => app.openCredoOne());
-    root.querySelector('#profPlanStripBtn')?.addEventListener('click', () => app.openCredoOne());
+    profCoBtn?.addEventListener('click', () => app.openCredoOne(planMeta ? { view: 'billing' } : {}));
+    root.querySelector('#profPlanStripBtn')?.addEventListener('click', () => app.openCredoOne({ view: 'billing' }));
     root.querySelector('#igAddPostBtn')?.addEventListener('click', () => app.openComposer());
     root.querySelector('#igEditProfBtn').addEventListener('click', openEditModal);
     root.querySelector('#igShareProfBtn').addEventListener('click', async () => {

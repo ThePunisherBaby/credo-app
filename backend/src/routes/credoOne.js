@@ -215,6 +215,9 @@ router.get('/plans', optionalAuth, async (req, res) => {
       plans,
       paypal: {
         mode: ppSnap.mode,
+        effective_env: ppSnap.effective_env,
+        env_mismatch: ppSnap.env_mismatch,
+        merchant_id: ppSnap.merchant_id,
         client_id: ppSnap.client_id,
         configured: ppSnap.configured,
         checkout_ready: ppSnap.configured,
@@ -233,6 +236,51 @@ router.get('/plans', optionalAuth, async (req, res) => {
   }
 });
 
+// GET /api/v1/credo-one/my-billing — Personal & Business Subscription + Transaction History for Profile
+router.get('/my-billing', requireAuth, async (req, res) => {
+  try {
+    const [subsRes, txRes] = await Promise.all([
+      pool.query(
+        `SELECT s.id, s.plan_sku, s.billing_cycle, s.status, s.paypal_subscription_id,
+                s.impressions_quota, s.impressions_used, s.current_period_start, s.current_period_end,
+                s.created_at, p.display_name, p.audience, p.price_monthly_cents, p.price_annual_cents
+           FROM subscriptions s
+           LEFT JOIN subscription_plans p ON p.sku = s.plan_sku
+          WHERE s.user_id = $1
+          ORDER BY s.updated_at DESC
+          LIMIT 15`,
+        [req.user.id]
+      ),
+      pool.query(
+        `SELECT bt.id, bt.subscription_id, bt.paypal_event_id, bt.paypal_sale_id,
+                bt.plan_sku, bt.amount_cents, bt.currency, bt.status, bt.description, bt.created_at,
+                p.display_name
+           FROM billing_transactions bt
+           LEFT JOIN subscription_plans p ON p.sku = bt.plan_sku
+          WHERE bt.user_id = $1
+          ORDER BY bt.created_at DESC
+          LIMIT 30`,
+        [req.user.id]
+      ),
+    ]);
+
+    const ppSnap = getPayPalStatusSnapshot();
+    return res.json({
+      subscriptions: subsRes.rows,
+      transactions: txRes.rows,
+      paypal: {
+        mode: ppSnap.mode,
+        effective_env: ppSnap.effective_env,
+        env_mismatch: ppSnap.env_mismatch,
+        merchant_id: ppSnap.merchant_id,
+      },
+    });
+  } catch (err) {
+    console.error('[credo-one/my-billing]', err);
+    return res.status(500).json({ error: 'No se pudo cargar tu historial de movimientos' });
+  }
+});
+
 // GET /api/v1/credo-one/paypal/client-token — Mints domain-bound browser-safe clientToken for PayPal Web SDK v6
 router.get('/paypal/client-token', optionalAuth, async (req, res) => {
   const ppSnap = getPayPalStatusSnapshot();
@@ -241,6 +289,7 @@ router.get('/paypal/client-token', optionalAuth, async (req, res) => {
       sdk_version: 'none',
       v6_ready: false,
       mode: PAYPAL_MODE,
+      effective_env: ppSnap.effective_env,
       client_id: '',
       client_token: null,
       reason: 'PAYPAL_CLIENT_ID no configurado en el servidor.',
@@ -252,6 +301,8 @@ router.get('/paypal/client-token', optionalAuth, async (req, res) => {
       sdk_version: 'v5-fallback',
       v6_ready: false,
       mode: PAYPAL_MODE,
+      effective_env: ppSnap.effective_env,
+      merchant_id: ppSnap.merchant_id,
       client_id: PAYPAL_CLIENT_ID,
       client_token: null,
       sdk_v6_url: ppSnap.sdk_v6_url,
@@ -711,6 +762,10 @@ router.post('/orders/confirm', requireAuth, async (req, res) => {
       }
     }
 
+    const ppSnap = getPayPalStatusSnapshot();
+    const methodLabel =
+      ppSnap.effective_env === 'sandbox' ? 'Pago PayPal Sandbox (Prueba)' : 'Pago PayPal Live';
+
     const result = await activateCapturedOrder({
       user: req.user,
       kernelPlan,
@@ -719,7 +774,7 @@ router.post('/orders/confirm', requireAuth, async (req, res) => {
       captureId: verifiedCaptureId,
       verifiedCents,
       organizationName: organization_name,
-      paymentMethodLabel: 'Pago PayPal Live',
+      paymentMethodLabel: methodLabel,
       req,
     });
 

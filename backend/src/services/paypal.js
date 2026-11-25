@@ -18,6 +18,8 @@ const clientTokenCache = new Map();
 let oauthHealthy = null; // null = untested, true = valid live/sandbox pair, false = auth failed
 let lastOAuthError = '';
 let resolvedWebhookId = PAYPAL_WEBHOOK_ID || '';
+let detectedClientEnv = ''; // 'live' | 'sandbox' | ''
+let detectedMerchantId = '';
 
 const PAYPAL_WEBHOOK_EVENTS = [
   'BILLING.SUBSCRIPTION.CREATED',
@@ -37,15 +39,44 @@ function isPayPalConfigured() {
   return Boolean(PAYPAL_CLIENT_ID && PAYPAL_CLIENT_SECRET);
 }
 
+async function probeClientIdEnvironment() {
+  if (!PAYPAL_CLIENT_ID) return '';
+  try {
+    const qs = `clientID=${encodeURIComponent(PAYPAL_CLIENT_ID)}&currency=USD&intent=capture&commit=true&vault=false&components=buttons`;
+    const liveRes = await fetch(`https://www.paypal.com/smart/buttons?${qs}`);
+    if (liveRes.ok) {
+      const html = await liveRes.text().catch(() => '');
+      const m = html.match(/"merchantID"\s*:\s*\["([A-Z0-9]+)"\]/);
+      detectedClientEnv = 'live';
+      detectedMerchantId = m ? m[1] : '';
+      return 'live';
+    }
+    const sbRes = await fetch(`https://www.sandbox.paypal.com/smart/buttons?${qs}`);
+    if (sbRes.ok) {
+      const html = await sbRes.text().catch(() => '');
+      const m = html.match(/"merchantID"\s*:\s*\["([A-Z0-9]+)"\]/);
+      detectedClientEnv = 'sandbox';
+      detectedMerchantId = m ? m[1] : '';
+      return 'sandbox';
+    }
+  } catch {}
+  return '';
+}
+
 function getPayPalSdkCoreUrl() {
-  return PAYPAL_MODE === 'live'
+  const eff = detectedClientEnv || PAYPAL_MODE;
+  return eff === 'live'
     ? 'https://www.paypal.com/web-sdk/v6/core'
     : 'https://www.sandbox.paypal.com/web-sdk/v6/core';
 }
 
 function getPayPalStatusSnapshot() {
+  const effectiveEnv = detectedClientEnv || PAYPAL_MODE;
   return {
     mode: PAYPAL_MODE,
+    effective_env: effectiveEnv,
+    env_mismatch: Boolean(detectedClientEnv && detectedClientEnv !== PAYPAL_MODE),
+    merchant_id: detectedMerchantId || '',
     client_id: PAYPAL_CLIENT_ID || '',
     configured: Boolean(PAYPAL_CLIENT_ID),
     rest_configured: isPayPalConfigured(),
@@ -528,11 +559,14 @@ async function ensureWebhookRegistered(webhookUrl = 'https://credoapp.tech/api/w
  * Verifies OAuth2 credentials, provisions all 4 products + 8 plans, and registers the live webhook.
  */
 async function bootstrapPayPalAutomation() {
+  const probedEnv = await probeClientIdEnvironment();
   if (!isPayPalConfigured()) {
     oauthHealthy = false;
     lastOAuthError = 'PAYPAL_CLIENT_SECRET no configurado (modo v5 Smart Checkout activo).';
-    console.log(`[paypal] Mode=${PAYPAL_MODE} · ClientID=${PAYPAL_CLIENT_ID ? 'set' : 'missing'} · Secret=missing (SDK v6 awaits paired PAYPAL_CLIENT_SECRET)`);
-    return { ok: false, reason: 'missing_secret' };
+    console.log(
+      `[paypal] Mode=${PAYPAL_MODE} · EffectiveEnv=${probedEnv || PAYPAL_MODE} · Merchant=${detectedMerchantId || 'n/a'} · ClientID=${PAYPAL_CLIENT_ID ? 'set' : 'missing'} · Secret=missing`
+    );
+    return { ok: false, reason: 'missing_secret', effective_env: probedEnv || PAYPAL_MODE };
   }
 
   try {

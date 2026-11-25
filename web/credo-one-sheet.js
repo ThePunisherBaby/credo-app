@@ -200,6 +200,8 @@ export function createCredoOneController(app) {
     enterpriseWhatsapp: '18095550199',
     enterpriseSuccess: null,
     activatedSub: null,
+    billingData: null,
+    billingLoading: false,
     sheetCtrl: null,
     loadedRemote: false,
     prevFocus: null,
@@ -211,6 +213,24 @@ export function createCredoOneController(app) {
   const getAppShell = () => document.querySelector('.app-shell');
 
   const formatUsd = (cents) => `$${(Number(cents || 0) / 100).toFixed(2)}`;
+
+  async function loadMyBilling() {
+    if (!app.user) return;
+    state.billingLoading = true;
+    renderSheet();
+    try {
+      const res = await app.api('/api/v1/credo-one/my-billing', { noCache: true });
+      state.billingData = res;
+      if (res?.paypal) {
+        state.paypal = { ...state.paypal, ...res.paypal };
+      }
+    } catch {
+      state.billingData = { subscriptions: [], transactions: [] };
+    } finally {
+      state.billingLoading = false;
+      renderSheet();
+    }
+  }
 
   let escBound = false;
   function ensureGlobalSheetListeners() {
@@ -542,8 +562,12 @@ export function createCredoOneController(app) {
         ${activeMeta ? `
           <div class="co-active-sheet-banner">
             ${app.renderPlanInsignia(app.user)}
-            <span>Plan activo en tu cuenta · Puedes cambiar o subir de nivel cuando gustes</span>
-          </div>` : ''}
+            <span>Plan activo en tu cuenta</span>
+            <button type="button" id="coOpenBillingBtn" style="margin-left:6px;padding:3px 10px;border-radius:999px;border:1px solid rgba(255,255,255,0.22);background:rgba(255,255,255,0.12);color:#fff;font-size:0.74rem;font-weight:700;cursor:pointer">Mis pagos ›</button>
+          </div>` : (app.user ? `
+          <div style="margin-top:8px">
+            <button type="button" class="co-back-btn" id="coOpenBillingBtn" style="margin:0">Ver historial de movimientos ›</button>
+          </div>` : '')}
         <p class="co-sheet-subtitle">${dynamicSubtitle}</p>
 
         <div class="co-controls-bar">
@@ -786,8 +810,113 @@ export function createCredoOneController(app) {
             <button type="button" class="co-cta-btn co-cta-sapphire" style="width:auto;padding-inline:24px" id="coGoStudioBtn">
               <span>Abrir Credo One Studio</span>
             </button>` : ''}
-          <button type="button" class="co-cta-btn co-cta-glass" style="width:auto;padding-inline:22px" id="coDoneBtn">Continuar en Credo</button>
+          <button type="button" class="co-cta-btn co-cta-glass" style="width:auto;padding-inline:22px" id="coDoneBtn">Ver mi plan y recibo</button>
         </div>
+      </div>
+    `;
+  }
+
+  function renderBillingView() {
+    const subs = state.billingData?.subscriptions || [];
+    const txs = state.billingData?.transactions || [];
+    const activeSub = subs.find((s) => s.status === 'active') || null;
+    const isSandboxKey = state.paypal?.effective_env === 'sandbox';
+    const fmtDate = (iso) => {
+      if (!iso) return '—';
+      try {
+        return new Date(iso).toLocaleString('es-DO', {
+          day: '2-digit',
+          month: 'short',
+          year: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+        });
+      } catch {
+        return iso;
+      }
+    };
+
+    return `
+      <div class="co-subview co-slide-in">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:16px">
+          <button type="button" class="co-back-btn" id="coBackToPlans" style="margin:0">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M19 12H5M11 6l-6 6 6 6"/></svg>
+            <span>Explorar todos los planes</span>
+          </button>
+          <span class="co-sdk-pill ${isSandboxKey ? 'is-sandbox' : 'is-live'}">
+            ${isSandboxKey ? 'Entorno PayPal: Sandbox (Prueba)' : 'Entorno PayPal: Live (Real)'}
+          </span>
+        </div>
+
+        <h1 class="co-sheet-title" id="coSheetTitle" style="text-align:left;margin-bottom:6px">Mi Plan y Movimientos</h1>
+        <p class="co-card-sub" style="margin-bottom:16px">Estado de tu membresía Credo One y comprobantes registrados en tu cuenta.</p>
+
+        ${isSandboxKey ? `
+          <div class="co-sandbox-alert">
+            <strong>⚠️ Aviso de Entorno Sandbox (Pruebas):</strong>
+            El <code>PAYPAL_CLIENT_ID</code> actualmente configurado en el servidor pertenece a <strong>PayPal Sandbox</strong>${state.paypal?.merchant_id ? ` (Merchant de prueba <code>${app.esc(state.paypal.merchant_id)}</code>)` : ''}.
+            Los movimientos realizados en Sandbox usan saldo simulado de pruebas: <strong>no debitan dinero real de tu tarjeta/banco ni depositan saldo real en <code>paypal.com</code></strong> (solo aparecen en <code>sandbox.paypal.com</code>). Para cobros reales, reemplaza el Client ID + Secret por tus credenciales de la pestaña <strong>Live</strong> en PayPal Developer.
+          </div>` : ''}
+
+        ${state.billingLoading && !state.billingData ? `
+          <div class="co-billing-card">
+            <div class="skeleton" style="height:22px;width:45%;border-radius:8px;margin-bottom:10px"></div>
+            <div class="skeleton" style="height:16px;width:72%;border-radius:6px"></div>
+          </div>
+        ` : activeSub ? `
+          <div class="co-billing-card">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+              <div>
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+                  ${app.renderPlanInsignia(app.user)}
+                  <strong style="font-size:1.1rem;color:#fff">${app.esc(activeSub.display_name || activeSub.plan_sku)}</strong>
+                  <span class="co-badge-active">Activo</span>
+                </div>
+                <p class="co-card-sub" style="margin:0">
+                  Ciclo ${activeSub.billing_cycle === 'annual' ? 'Anual' : 'Mensual'} · Vigente hasta <strong>${app.esc(fmtDate(activeSub.current_period_end))}</strong>
+                </p>
+                <p class="co-card-sub" style="margin:3px 0 0;font-size:0.74rem">
+                  Ref. PayPal: <code>${app.esc(activeSub.paypal_subscription_id || '—')}</code>
+                </p>
+              </div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap">
+                <button type="button" class="co-cta-btn co-cta-glass" id="coChangePlanBtn" style="width:auto;min-height:38px;padding:7px 14px;font-size:0.8rem">Cambiar de plan</button>
+                <button type="button" class="co-cta-btn co-cta-glass" id="coCancelMySubBtn" style="width:auto;min-height:38px;padding:7px 14px;font-size:0.8rem;color:#FCA5A5;border-color:rgba(248,113,113,0.35)">Cancelar plan</button>
+              </div>
+            </div>
+          </div>
+        ` : `
+          <div class="co-billing-card">
+            <strong style="color:#fff">No tienes una suscripción activa en este momento</strong>
+            <p class="co-card-sub" style="margin:4px 0 12px">Elige un plan de la Familia Credo One para disfrutar Credo sin anuncios o impulsar tu institución.</p>
+            <button type="button" class="co-cta-btn co-cta-sapphire" id="coChangePlanBtn" style="width:auto;padding-inline:20px">Ver planes disponibles</button>
+          </div>
+        `}
+
+        <h2 style="font-size:0.96rem;font-weight:800;color:#fff;margin:18px 0 10px">Movimientos Registrados (${txs.length})</h2>
+        ${txs.length === 0 ? `
+          <div class="co-billing-card" style="text-align:center;color:#9CA3AF;font-size:0.85rem">
+            Aún no hay movimientos registrados en tu cuenta.
+          </div>
+        ` : `
+          <div class="co-tx-list">
+            ${txs.map((tx) => `
+              <div class="co-tx-item">
+                <div class="co-tx-meta">
+                  <strong>${app.esc(tx.display_name || tx.plan_sku)} · ${app.esc(tx.description || 'Pago PayPal')}</strong>
+                  <small>Fecha: ${app.esc(fmtDate(tx.created_at))}</small>
+                  <small>Captura PayPal: <code>${app.esc(tx.paypal_sale_id || '—')}</code> · Evento: <code>${app.esc(tx.paypal_event_id || '—')}</code></small>
+                </div>
+                <div class="co-tx-amt">
+                  <strong>${formatUsd(tx.amount_cents)} ${app.esc(tx.currency || 'USD')}</strong>
+                  <span class="${isSandboxKey ? 'co-sdk-pill is-sandbox' : 'co-badge-active'}" style="font-size:0.66rem">
+                    ${isSandboxKey ? 'Sandbox (Prueba)' : app.esc(tx.status || 'completed')}
+                  </span>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        `}
       </div>
     `;
   }
@@ -1298,8 +1427,9 @@ export function createCredoOneController(app) {
     if (seq !== state.mountSeq) return;
 
     if (sdkBadge) {
-      sdkBadge.textContent = 'PayPal Live · Activo';
-      sdkBadge.classList.add('is-live');
+      const isSb = state.paypal?.effective_env === 'sandbox';
+      sdkBadge.textContent = isSb ? 'PayPal Sandbox · Prueba' : 'PayPal Live · Activo';
+      sdkBadge.classList.add(isSb ? 'is-sandbox' : 'is-live');
     }
 
     // Mount PayPal Pay Later messaging banner only when eligible (Pay in 4 threshold >= $30 USD)
@@ -1463,7 +1593,9 @@ export function createCredoOneController(app) {
           ? renderEnterpriseView()
           : state.view === 'success'
             ? renderSuccessView()
-            : renderPlansView();
+            : state.view === 'billing'
+              ? renderBillingView()
+              : renderPlansView();
 
     dlg.innerHTML = `
       <div class="co-sheet-surface">
@@ -1550,6 +1682,36 @@ export function createCredoOneController(app) {
       });
     });
 
+    // Open Billing & Movements View
+    dlg.querySelector('#coOpenBillingBtn')?.addEventListener('click', () => {
+      state.view = 'billing';
+      loadMyBilling();
+    });
+
+    dlg.querySelector('#coChangePlanBtn')?.addEventListener('click', () => {
+      state.view = 'plans';
+      renderSheet();
+    });
+
+    dlg.querySelector('#coCancelMySubBtn')?.addEventListener('click', async (ev) => {
+      const btn = ev.currentTarget;
+      btn.disabled = true;
+      btn.textContent = 'Cancelando…';
+      try {
+        await app.api('/api/v1/credo-one/subscriptions/cancel', {
+          method: 'POST',
+          body: { reason: 'Cancelado por el usuario desde Mi Plan y Movimientos' },
+        });
+        await app.refreshSession?.();
+        app.toast('Suscripción cancelada.');
+        await loadMyBilling();
+      } catch (err) {
+        app.toast(err?.message || 'No se pudo cancelar la suscripción.');
+        btn.disabled = false;
+        btn.textContent = 'Cancelar plan';
+      }
+    });
+
     // Back to Plans
     dlg.querySelector('#coBackToPlans')?.addEventListener('click', () => {
       state.mountSeq += 1;
@@ -1569,7 +1731,10 @@ export function createCredoOneController(app) {
       closeSheet();
       location.hash = '#/studio/overview';
     });
-    dlg.querySelector('#coDoneBtn')?.addEventListener('click', closeSheet);
+    dlg.querySelector('#coDoneBtn')?.addEventListener('click', () => {
+      state.view = 'billing';
+      loadMyBilling();
+    });
 
     // Mount PayPal SDK v6 (or Live Smart Checkout fallback) if on checkout view
     if (state.view === 'checkout' && app.user && state.paypal.client_id) {
@@ -1619,13 +1784,14 @@ export function createCredoOneController(app) {
     }
   }
 
-  async function open({ audience = null, cycle = null, planSku = null } = {}) {
+  async function open({ audience = null, cycle = null, planSku = null, view = null } = {}) {
     const dlg = getDialog();
     if (!dlg) return;
 
     if (audience === 'user' || audience === 'business') state.audience = audience;
     if (cycle === 'monthly' || cycle === 'annual') state.cycle = cycle;
-    state.view = 'plans';
+    const defaultView = view === 'billing' ? 'billing' : 'plans';
+    state.view = defaultView;
     state.enterpriseSuccess = null;
 
     if (!state.loadedRemote) {
@@ -1640,6 +1806,9 @@ export function createCredoOneController(app) {
           state.checkoutFlow = state.paypal.subscriptions_ready ? 'subscription' : 'direct';
           state.view = match.is_enterprise ? 'enterprise' : 'checkout';
         }
+      } else if (state.view === 'billing') {
+        await loadMyBilling();
+        return;
       }
       renderSheet();
       return;
@@ -1656,6 +1825,9 @@ export function createCredoOneController(app) {
     }
     renderSheet();
     showSheetSurface();
+    if (state.view === 'billing') {
+      loadMyBilling();
+    }
   }
 
   return { open, close: closeSheet, refreshPlans, handlePayPalReturnIfPresent };

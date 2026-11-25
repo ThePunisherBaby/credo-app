@@ -725,6 +725,71 @@ dialog.co-sheet-dialog[open] {
   border-color: rgba(34, 197, 94, 0.42);
   color: #86EFAC;
 }
+.co-sdk-pill.is-sandbox {
+  background: rgba(245, 158, 11, 0.16);
+  border-color: rgba(245, 158, 11, 0.45);
+  color: #FCD34D;
+}
+
+.co-billing-card {
+  padding: 18px;
+  border-radius: 18px;
+  background: rgba(22, 24, 29, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  margin-bottom: 16px;
+}
+.co-tx-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.co-tx-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 13px 15px;
+  border-radius: 14px;
+  background: rgba(9, 9, 11, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.co-tx-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.co-tx-meta strong {
+  font-size: 0.88rem;
+  color: #FFFFFF;
+}
+.co-tx-meta small {
+  font-size: 0.74rem;
+  color: #9CA3AF;
+  word-break: break-all;
+}
+.co-tx-amt {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+.co-tx-amt strong {
+  font-size: 0.96rem;
+  font-weight: 800;
+  color: #FFFFFF;
+}
+.co-sandbox-alert {
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  color: #FDE68A;
+  font-size: 0.8rem;
+  line-height: 1.48;
+  margin-bottom: 16px;
+}
 
 .co-flow-tabs {
   display: grid;
