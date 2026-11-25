@@ -503,3 +503,244 @@ WHERE
   OR u.followers_count <> COALESCE((SELECT COUNT(*)::int FROM follows f WHERE f.target_user_id = u.id), 0)
   OR u.following_count <> COALESCE((SELECT COUNT(*)::int FROM follows f WHERE f.follower_id = u.id), 0);
 
+-- ============================================================================
+-- FAMILIA CREDO ONE & CREDO ONE STUDIO — SUBSCRIPTIONS, RBAC, CAMPAIGNS, AUDIT
+-- ============================================================================
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS active_plan_sku TEXT NOT NULL DEFAULT '';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS ad_free BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS studio_eligible BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS one_badge TEXT NOT NULL DEFAULT '';
+
+CREATE TABLE IF NOT EXISTS subscription_plans (
+  sku TEXT PRIMARY KEY,
+  audience TEXT NOT NULL CHECK (audience IN ('user', 'business')),
+  display_name TEXT NOT NULL,
+  subtitle TEXT NOT NULL DEFAULT '',
+  price_monthly_cents INTEGER NOT NULL DEFAULT 0,
+  price_annual_cents INTEGER NOT NULL DEFAULT 0,
+  is_popular BOOLEAN NOT NULL DEFAULT FALSE,
+  is_enterprise BOOLEAN NOT NULL DEFAULT FALSE,
+  max_seats INTEGER NOT NULL DEFAULT 1, -- -1 = unlimited
+  monthly_impressions INTEGER NOT NULL DEFAULT 0,
+  max_active_campaigns INTEGER NOT NULL DEFAULT 0, -- -1 = unlimited
+  ad_free BOOLEAN NOT NULL DEFAULT FALSE,
+  can_publish_open BOOLEAN NOT NULL DEFAULT FALSE,
+  studio_access BOOLEAN NOT NULL DEFAULT FALSE,
+  approval_workflow BOOLEAN NOT NULL DEFAULT FALSE,
+  audit_logs_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+  badge_type TEXT NOT NULL DEFAULT 'none',
+  features JSONB NOT NULL DEFAULT '[]'::jsonb,
+  paypal_product_id TEXT NOT NULL DEFAULT '',
+  paypal_plan_id_monthly TEXT NOT NULL DEFAULT '',
+  paypal_plan_id_annual TEXT NOT NULL DEFAULT '',
+  sort_order INTEGER NOT NULL DEFAULT 10,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS organizations (
+  id SERIAL PRIMARY KEY,
+  slug TEXT UNIQUE NOT NULL,
+  name TEXT NOT NULL,
+  org_type TEXT NOT NULL DEFAULT 'business' CHECK (org_type IN ('personal', 'business', 'parish', 'enterprise')),
+  badge_type TEXT NOT NULL DEFAULT 'verified_business' CHECK (badge_type IN (
+    'none', 'one_plus', 'verified_personal', 'verified_business', 'enterprise_gold'
+  )),
+  avatar_style TEXT NOT NULL DEFAULT 'circle' CHECK (avatar_style IN ('circle', 'square')),
+  avatar_url TEXT NOT NULL DEFAULT '',
+  avatar_color TEXT NOT NULL DEFAULT '#0A84FF',
+  country_code TEXT NOT NULL DEFAULT 'DO',
+  city TEXT NOT NULL DEFAULT '',
+  website_url TEXT NOT NULL DEFAULT '',
+  whatsapp_number TEXT NOT NULL DEFAULT '',
+  parent_org_id INTEGER REFERENCES organizations(id) ON DELETE SET NULL,
+  owner_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  approval_required BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_orgs_owner ON organizations(owner_user_id);
+CREATE INDEX IF NOT EXISTS idx_orgs_parent ON organizations(parent_org_id) WHERE parent_org_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS organization_members (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+  invited_email TEXT NOT NULL DEFAULT '',
+  role TEXT NOT NULL CHECK (role IN ('owner', 'admin', 'editor', 'moderator', 'analyst')),
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'invited', 'revoked')),
+  invited_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_org_members_user_unique
+  ON organization_members(organization_id, user_id) WHERE user_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_org_members_email_unique
+  ON organization_members(organization_id, LOWER(invited_email)) WHERE invited_email <> '';
+CREATE INDEX IF NOT EXISTS idx_org_members_user_active
+  ON organization_members(user_id, status) WHERE user_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS subscriptions (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  organization_id INTEGER REFERENCES organizations(id) ON DELETE SET NULL,
+  plan_sku TEXT NOT NULL REFERENCES subscription_plans(sku),
+  billing_cycle TEXT NOT NULL DEFAULT 'monthly' CHECK (billing_cycle IN ('monthly', 'annual', 'custom')),
+  paypal_subscription_id TEXT UNIQUE,
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('pending', 'active', 'suspended', 'cancelled', 'expired')),
+  impressions_quota INTEGER NOT NULL DEFAULT 0,
+  impressions_used INTEGER NOT NULL DEFAULT 0,
+  current_period_start TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  current_period_end TIMESTAMPTZ NOT NULL DEFAULT (NOW() + INTERVAL '30 days'),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_subscriptions_user_status ON subscriptions(user_id, status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_subscriptions_org_status ON subscriptions(organization_id, status) WHERE organization_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS billing_transactions (
+  id SERIAL PRIMARY KEY,
+  subscription_id INTEGER REFERENCES subscriptions(id) ON DELETE SET NULL,
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  organization_id INTEGER REFERENCES organizations(id) ON DELETE SET NULL,
+  paypal_event_id TEXT UNIQUE,
+  paypal_sale_id TEXT DEFAULT '',
+  plan_sku TEXT NOT NULL DEFAULT '',
+  amount_cents INTEGER NOT NULL DEFAULT 0,
+  currency TEXT NOT NULL DEFAULT 'USD',
+  status TEXT NOT NULL DEFAULT 'completed',
+  description TEXT NOT NULL DEFAULT '',
+  raw_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_billing_tx_user ON billing_transactions(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_billing_tx_org ON billing_transactions(organization_id, created_at DESC) WHERE organization_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS campaigns (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  creator_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  post_id INTEGER REFERENCES posts(id) ON DELETE SET NULL,
+  title TEXT NOT NULL,
+  body TEXT NOT NULL DEFAULT '',
+  media_url TEXT NOT NULL DEFAULT '',
+  media_kind TEXT NOT NULL DEFAULT 'photo' CHECK (media_kind IN ('photo', 'video', 'article')),
+  objective TEXT NOT NULL DEFAULT 'whatsapp',
+  cta_type TEXT NOT NULL DEFAULT 'whatsapp' CHECK (cta_type IN ('whatsapp', 'web', 'offering', 'event_register', 'lead_form')),
+  cta_label TEXT NOT NULL DEFAULT 'Ir a WhatsApp',
+  cta_url TEXT NOT NULL DEFAULT '',
+  target_country TEXT NOT NULL DEFAULT 'ALL',
+  target_city TEXT NOT NULL DEFAULT '',
+  target_category TEXT NOT NULL DEFAULT 'general',
+  impressions_allocated INTEGER NOT NULL DEFAULT 5000 CHECK (impressions_allocated > 0),
+  impressions_served INTEGER NOT NULL DEFAULT 0,
+  clicks_count INTEGER NOT NULL DEFAULT 0,
+  unique_reach INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN (
+    'draft', 'pending_approval', 'scheduled', 'active', 'paused', 'completed', 'rejected'
+  )),
+  starts_at TIMESTAMPTZ DEFAULT NOW(),
+  ends_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_campaigns_delivery
+  ON campaigns(status, target_country, updated_at DESC)
+  WHERE status = 'active' AND impressions_served < impressions_allocated;
+CREATE INDEX IF NOT EXISTS idx_campaigns_org_status ON campaigns(organization_id, status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS campaign_metrics_daily (
+  id SERIAL PRIMARY KEY,
+  campaign_id INTEGER NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  metric_date DATE NOT NULL DEFAULT CURRENT_DATE,
+  organic_impressions INTEGER NOT NULL DEFAULT 0,
+  boosted_impressions INTEGER NOT NULL DEFAULT 0,
+  clicks INTEGER NOT NULL DEFAULT 0,
+  unique_viewers INTEGER NOT NULL DEFAULT 0,
+  live_peak_viewers INTEGER NOT NULL DEFAULT 0,
+  UNIQUE(campaign_id, metric_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_campaign_metrics_org_date
+  ON campaign_metrics_daily(organization_id, metric_date DESC);
+
+CREATE TABLE IF NOT EXISTS campaign_events_dedup (
+  id BIGSERIAL PRIMARY KEY,
+  campaign_id INTEGER NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+  session_key TEXT NOT NULL,
+  event_type TEXT NOT NULL CHECK (event_type IN ('impression', 'click')),
+  bucket_hour TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(campaign_id, session_key, event_type, bucket_hour)
+);
+
+CREATE INDEX IF NOT EXISTS idx_campaign_dedup_created ON campaign_events_dedup(created_at DESC);
+
+CREATE TABLE IF NOT EXISTS approval_requests (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  campaign_id INTEGER REFERENCES campaigns(id) ON DELETE CASCADE,
+  post_id INTEGER REFERENCES posts(id) ON DELETE CASCADE,
+  submitted_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  reviewer_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'returned')),
+  reviewer_note TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  reviewed_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_approvals_org_status ON approval_requests(organization_id, status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS audit_logs (
+  id BIGSERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  actor_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  actor_name TEXT NOT NULL DEFAULT '',
+  actor_role TEXT NOT NULL DEFAULT '',
+  action TEXT NOT NULL,
+  resource_type TEXT NOT NULL,
+  resource_id TEXT NOT NULL DEFAULT '',
+  details JSONB NOT NULL DEFAULT '{}'::jsonb,
+  ip_address TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_logs_org_created ON audit_logs(organization_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS enterprise_leads (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  company_name TEXT NOT NULL,
+  tax_id TEXT NOT NULL,
+  contact_name TEXT NOT NULL,
+  contact_role TEXT NOT NULL,
+  corporate_email TEXT NOT NULL,
+  whatsapp_phone TEXT NOT NULL,
+  campaign_goal TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'new',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_enterprise_leads_created ON enterprise_leads(created_at DESC);
+
+CREATE TABLE IF NOT EXISTS campaign_leads (
+  id SERIAL PRIMARY KEY,
+  campaign_id INTEGER NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  full_name TEXT NOT NULL,
+  email TEXT NOT NULL DEFAULT '',
+  phone TEXT NOT NULL DEFAULT '',
+  notes TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_campaign_leads_org ON campaign_leads(organization_id, created_at DESC);
+
+

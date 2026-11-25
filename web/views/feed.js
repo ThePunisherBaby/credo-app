@@ -42,6 +42,10 @@ export async function mount({ root, app, signal }) {
         <h1 class="t-large-title" style="font-size:1.46rem;line-height:1.05;letter-spacing:-0.03em;margin:0">${app.esc(d.appName)}</h1>
       </div>
       <div class="page-head-actions">
+        <button type="button" class="credo-one-trigger" id="feedCredoOneBtn" aria-label="Abrir Familia Credo One">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M12 2l2.4 6.6L21 11l-6.6 2.4L12 20l-2.4-6.6L3 11l6.6-2.4z"/></svg>
+          <span>Credo One</span>
+        </button>
         <a href="#/explore" class="icon-btn-44" id="feedSearchToggle" aria-label="${app.esc(d.nav.explore || 'Explorar')}">
           <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
         </a>
@@ -71,6 +75,9 @@ export async function mount({ root, app, signal }) {
   const feedList = root.querySelector('#feedList');
   const sentinel = root.querySelector('#feedSentinel');
 
+  root.querySelector('#feedCredoOneBtn')?.addEventListener('click', () => {
+    app.openCredoOne();
+  });
   root.querySelector('#feedPublishBtn')?.addEventListener('click', () => {
     if (!app.user?.can_publish) return;
     app.openComposer();
@@ -253,27 +260,38 @@ export async function mount({ root, app, signal }) {
       : '';
 
     const commentsCount = Number(p.comments_count || 0);
+    const isSponsored = Boolean(p.is_sponsored && p.campaign_id);
+    const isEntSponsor = isSponsored && p.org_badge_type === 'enterprise_gold';
+    const sponsorCtaHtml = isSponsored
+      ? (p.cta_type === 'lead_form'
+          ? `<button type="button" class="ig-sponsored-cta-bar${isEntSponsor ? ' ig-sponsored-cta-bar--gold' : ''}" data-camp-cta="${p.campaign_id}" data-camp-lead="1"><span>✦ ${app.esc(p.cta_label || 'Solicitar Información')}</span><span>Abrir formulario ↗</span></button>`
+          : `<a href="${app.esc(p.cta_url || '#/explore')}" target="_blank" rel="noopener noreferrer" class="ig-sponsored-cta-bar${isEntSponsor ? ' ig-sponsored-cta-bar--gold' : ''}" data-camp-cta="${p.campaign_id}"><span>${app.esc(p.cta_label || 'Más información')}</span><span>↗</span></a>`)
+      : '';
 
     return `
-      <article class="ig-post${deferClass}${staggerClass}"${staggerAttr} data-post-id="${p.id}">
+      <article class="ig-post${deferClass}${staggerClass}"${staggerAttr} data-post-id="${p.id}"${isSponsored ? ` data-sponsored-campaign="${p.campaign_id}"` : ''}>
         <header class="ig-post-head">
-          <a href="#/user/${author.id}" class="avatar" data-zoomable data-zoom-name="${app.esc(authorDisplay)}" data-zoom-src="${app.esc(avUrl)}" data-zoom-bg="${app.esc(author.avatar_color || '#0F1E36')}" style="--av-bg:${app.esc(author.avatar_color || '#0F1E36')}" aria-label="${app.esc(author.full_name)}">
+          <a href="#/user/${author.id}" class="avatar${isEntSponsor ? ' ig-avatar-square' : ''}" data-zoomable data-zoom-name="${app.esc(authorDisplay)}" data-zoom-src="${app.esc(avUrl)}" data-zoom-bg="${app.esc(author.avatar_color || '#0F1E36')}" style="--av-bg:${app.esc(author.avatar_color || '#0F1E36')}" aria-label="${app.esc(author.full_name)}">
             ${avUrl ? `<img src="${app.esc(avUrl)}" alt="" loading="lazy" />` : app.initials(author.full_name)}
           </a>
           <div class="post-author-info">
             <div class="post-author-row">
               <a href="#/user/${author.id}" class="post-author-name">${app.esc(authorDisplay)}</a>
               ${author.is_ceo ? '<span class="rank-tag">CEO</span>' : ''}
+              ${isEntSponsor ? '<span class="co-badge-gold" style="padding:1px 7px;font-size:0.64rem">✦ Enterprise</span>' : ''}
             </div>
             <div class="post-meta-line">
-              ${sourcePillHtml}
-              <span>${app.relTime(p.created_at)}</span>
+              ${isSponsored
+                ? `<span class="ig-sponsored-pill${isEntSponsor ? ' ig-sponsored-pill--gold' : ''}">Patrocinado</span>`
+                : `${sourcePillHtml}<span>${app.relTime(p.created_at)}</span>`}
             </div>
           </div>
         </header>
 
         ${mediaBlock}
+        ${sponsorCtaHtml}
 
+        ${isSponsored ? '' : `
         <footer class="ig-actions">
           <div class="post-act-group">
             <button type="button" class="act-btn${isAmen ? ' is-active' : ''}" data-react-post="${p.id}" aria-pressed="${isAmen}">
@@ -294,13 +312,13 @@ export async function mount({ root, app, signal }) {
               <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
             </button>
           </div>
-        </footer>
+        </footer>`}
 
         <div class="ig-caption">
           ${p.title ? `<h2 class="post-title" data-open-post="${p.id}" style="cursor:pointer">${app.esc(p.title)}</h2>` : ''}
           ${cleanBody ? `<p class="post-excerpt" data-excerpt-post="${p.id}">${app.esc(shortBody)}${isLongBody ? `<button type="button" class="post-more-inline" data-expand-post="${p.id}">… más</button>` : ''}</p>` : ''}
           ${p.scripture_ref ? `<span class="post-scripture-pill">📖 ${app.esc(p.scripture_ref)}</span>` : ''}
-          <button type="button" class="post-comments-teaser" data-comment-post="${p.id}" data-comments-teaser="${p.id}" ${commentsCount > 0 ? '' : 'hidden'}>${commentsCount === 1 ? 'Ver 1 comentario' : `Ver los ${commentsCount} comentarios`}</button>
+          ${isSponsored ? '' : `<button type="button" class="post-comments-teaser" data-comment-post="${p.id}" data-comments-teaser="${p.id}" ${commentsCount > 0 ? '' : 'hidden'}>${commentsCount === 1 ? 'Ver 1 comentario' : `Ver los ${commentsCount} comentarios`}</button>`}
         </div>
       </article>
     `;
@@ -509,6 +527,55 @@ export async function mount({ root, app, signal }) {
       return;
     }
 
+    const campCta = e.target.closest('[data-camp-cta]');
+    if (campCta) {
+      const cid = Number(campCta.dataset.campCta);
+      if (cid) {
+        fetch(`/api/campaigns/${cid}/click`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(app.token ? { Authorization: `Bearer ${app.token}` } : {}),
+            'X-Credo-Device': app.getDeviceKey(),
+          },
+          body: JSON.stringify({ session_key: app.getDeviceKey() }),
+          keepalive: true,
+        }).catch(() => {});
+      }
+      if (campCta.dataset.campLead === '1') {
+        e.preventDefault();
+        const post = state.posts.find((x) => Number(x.campaign_id) === cid);
+        const dlg = app.openModal(
+          post?.title || 'Solicitar Información',
+          `
+          <form id="nativeCampLeadForm" style="display:flex;flex-direction:column;gap:12px">
+            <p class="t-footnote" style="margin:0">Completa tus datos y el equipo de <strong>${app.esc(post?.author?.full_name || 'la institución')}</strong> se pondrá en contacto contigo.</p>
+            <div class="field"><label for="nlName">Nombre completo *</label><input id="nlName" name="full_name" required value="${app.esc(app.user?.full_name || '')}" /></div>
+            <div class="field"><label for="nlEmail">Correo electrónico</label><input id="nlEmail" name="email" type="email" value="${app.esc(app.user?.email || '')}" /></div>
+            <div class="field"><label for="nlPhone">WhatsApp / Teléfono</label><input id="nlPhone" name="phone" type="tel" placeholder="+1 (809) 000-0000" /></div>
+            <div class="field"><label for="nlNotes">Consulta</label><textarea id="nlNotes" name="notes" rows="2" placeholder="¿En qué te podemos ayudar?"></textarea></div>
+            <button type="submit" class="btn btn-gold btn-block">Enviar solicitud</button>
+          </form>
+          `
+        );
+        dlg.querySelector('#nativeCampLeadForm')?.addEventListener('submit', async (ev) => {
+          ev.preventDefault();
+          try {
+            const fd = new FormData(ev.currentTarget);
+            await app.api(`/api/campaigns/${cid}/lead`, {
+              method: 'POST',
+              body: Object.fromEntries(fd.entries()),
+            });
+            app.closeModal();
+            app.toast('Solicitud enviada correctamente');
+          } catch (err) {
+            app.toast(err.message);
+          }
+        });
+      }
+      return;
+    }
+
     const openEl = e.target.closest('[data-open-post]');
     if (openEl) {
       const pid = Number(openEl.dataset.openPost);
@@ -516,6 +583,38 @@ export async function mount({ root, app, signal }) {
       if (post) openPostDetailModal(post, app, d, (n) => updateCardCommentsUI(pid, n));
     }
   });
+
+  // Sponsored campaign impression telemetry (fires once when >= 50% visible)
+  const trackedImpressions = new Set();
+  const impObserver = new IntersectionObserver(
+    (entries) => {
+      entries.forEach((en) => {
+        if (!en.isIntersecting) return;
+        const cid = Number(en.target.dataset.sponsoredCampaign);
+        if (!cid || trackedImpressions.has(cid)) return;
+        trackedImpressions.add(cid);
+        impObserver.unobserve(en.target);
+        fetch(`/api/campaigns/${cid}/impression`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(app.token ? { Authorization: `Bearer ${app.token}` } : {}),
+            'X-Credo-Device': app.getDeviceKey(),
+          },
+          body: JSON.stringify({ session_key: app.getDeviceKey() }),
+          keepalive: true,
+        }).catch(() => {});
+      });
+    },
+    { threshold: 0.5 }
+  );
+  const mutObs = new MutationObserver(() => {
+    feedList.querySelectorAll('[data-sponsored-campaign]').forEach((el) => {
+      const cid = Number(el.dataset.sponsoredCampaign);
+      if (cid && !trackedImpressions.has(cid)) impObserver.observe(el);
+    });
+  });
+  mutObs.observe(feedList, { childList: true });
 
   // Infinite scroll sentinel
   observer = new IntersectionObserver(
@@ -550,6 +649,8 @@ export async function mount({ root, app, signal }) {
       clearTimeout(searchTimer);
       clearTimeout(tapTimer);
       if (observer) observer.disconnect();
+      impObserver.disconnect();
+      mutObs.disconnect();
     },
   };
 }

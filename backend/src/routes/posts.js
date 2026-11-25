@@ -178,15 +178,88 @@ router.get('/', optionalAuth, async (req, res) => {
 
       const posts = await hydratePosts(rows, viewerId);
       const last = posts[posts.length - 1];
+
+      // Interleave active Credo One campaigns for non-ad-free viewers on the global feed
+      const isAdFreeViewer = Boolean(req.user && req.user.ad_free);
+      const viewerCountry = String(req.user?.country_code || req.query.country || 'DO').toUpperCase().slice(0, 4);
+      let finalPosts = posts;
+
+      if (!isAdFreeViewer && scope === 'global' && !author_id && !q && posts.length >= 2) {
+        const campRes = await pool
+          .query(
+            `SELECT c.id, c.organization_id, c.post_id, c.title, c.body, c.media_url, c.media_kind,
+                    c.objective, c.cta_type, c.cta_label, c.cta_url, c.target_country, c.created_at,
+                    o.name AS org_name, o.slug AS org_slug, o.badge_type AS org_badge_type,
+                    o.avatar_style AS org_avatar_style, o.avatar_url AS org_avatar_url,
+                    o.avatar_color AS org_avatar_color, o.owner_user_id
+               FROM campaigns c
+               JOIN organizations o ON o.id = c.organization_id
+              WHERE c.status = 'active'
+                AND c.impressions_served < c.impressions_allocated
+                AND (c.starts_at IS NULL OR c.starts_at <= NOW())
+                AND (c.ends_at IS NULL OR c.ends_at >= NOW())
+                AND (c.target_country = 'ALL' OR c.target_country = $1)
+              ORDER BY (c.impressions_allocated - c.impressions_served) DESC, c.updated_at DESC
+              LIMIT 3`,
+            [viewerCountry]
+          )
+          .catch(() => ({ rows: [] }));
+
+        if (campRes.rows.length > 0) {
+          finalPosts = [];
+          let campIdx = 0;
+          for (let i = 0; i < posts.length; i++) {
+            finalPosts.push(posts[i]);
+            if ((i === 1 || (i > 1 && (i - 1) % 6 === 0)) && campIdx < campRes.rows.length) {
+              const c = campRes.rows[campIdx++];
+              finalPosts.push({
+                id: `camp-${c.id}`,
+                campaign_id: c.id,
+                is_sponsored: true,
+                post_type: 'announcement',
+                title: c.title,
+                content: c.body,
+                image_url: c.media_url || '',
+                media_kind: c.media_kind || 'photo',
+                youtube_id: '',
+                channel_name: 'Patrocinado',
+                source_url: c.cta_url || '',
+                cta_type: c.cta_type,
+                cta_label: c.cta_label,
+                cta_url: c.cta_url,
+                org_badge_type: c.org_badge_type,
+                org_avatar_style: c.org_avatar_style,
+                created_at: c.created_at,
+                author: {
+                  id: c.owner_user_id,
+                  username: c.org_slug,
+                  full_name: c.org_name,
+                  title_prefix: '',
+                  avatar_url: c.org_avatar_url || '',
+                  avatar_color: c.org_avatar_color || '#0A84FF',
+                  is_ceo: false,
+                  one_badge: c.org_badge_type,
+                  avatar_style: c.org_avatar_style,
+                },
+                reactions: { amen: 0, pray: 0, gratitude: 0 },
+                my_reactions: [],
+                comments_count: 0,
+              });
+            }
+          }
+        }
+      }
+
       return {
-        posts,
+        posts: finalPosts,
         next_cursor: last ? { before_ts: last.created_at, before_id: last.id } : null,
       };
     };
 
     // Anonymous / public feed reads coalesce into one shared PostgreSQL query via singleflight cache
     if (!viewerId && scope === 'global' && !q) {
-      const cacheKey = `posts:pub:${author_id || ''}:${post_type || ''}:${media_kind || ''}:${safeLimit}:${safeOffset}:${before_id || ''}`;
+      const countryKey = String(req.query.country || 'DO').toUpperCase().slice(0, 4);
+      const cacheKey = `posts:pub:${countryKey}:${author_id || ''}:${post_type || ''}:${media_kind || ''}:${safeLimit}:${safeOffset}:${before_id || ''}`;
       const cached = await apiCache.getOrLoad(cacheKey, 12000, runFeedQuery);
       res.setHeader('Cache-Control', 'public, max-age=12, stale-while-revalidate=45');
       return res.json(cached);

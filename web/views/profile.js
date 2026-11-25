@@ -18,7 +18,11 @@ function renderAuthGate({ root, app, signal }) {
           <img class="brand-logo" src="/icons/credo-192.png" alt="" width="30" height="30" />
           <span>Credo</span>
         </div>
-        <div class="ig-prof-actions">
+        <div class="ig-prof-actions" style="gap:8px">
+          <button type="button" class="credo-one-trigger" id="authGateCredoOneBtn" aria-label="Abrir Familia Credo One">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M12 2l2.4 6.6L21 11l-6.6 2.4L12 20l-2.4-6.6L3 11l6.6-2.4z"/></svg>
+            <span>Credo One</span>
+          </button>
           <a href="#/settings" class="ig-icon-btn" aria-label="Configuración">
             <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>
           </a>
@@ -78,6 +82,7 @@ function renderAuthGate({ root, app, signal }) {
       </div>
     `;
 
+    root.querySelector('#authGateCredoOneBtn')?.addEventListener('click', () => app.openCredoOne());
     root.querySelectorAll('[data-auth-mode]').forEach((btn) => {
       btn.addEventListener('click', () => {
         mode = btn.dataset.authMode;
@@ -241,7 +246,11 @@ export async function mount({ root, app, signal }) {
           <span>@${app.esc(profile.username || 'credo')}</span>
           ${profile.is_ceo ? '<span class="rank-tag" style="background:#0A84FF;color:#FFFFFF;font-size:0.68rem">CEO</span>' : ''}
         </div>
-        <div class="ig-prof-actions">
+        <div class="ig-prof-actions" style="gap:6px">
+          <button type="button" class="credo-one-trigger" id="profCredoOneBtn" aria-label="Abrir Familia Credo One">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M12 2l2.4 6.6L21 11l-6.6 2.4L12 20l-2.4-6.6L3 11l6.6-2.4z"/></svg>
+            <span>Credo One</span>
+          </button>
           ${profile.can_publish ? `
             <button type="button" class="ig-icon-btn" id="igAddPostBtn" aria-label="Nueva publicación">
               <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
@@ -299,6 +308,12 @@ export async function mount({ root, app, signal }) {
         <button type="button" class="btn btn-soft btn-sm" id="igEditProfBtn">Editar perfil</button>
         <button type="button" class="btn btn-soft btn-sm" id="igShareProfBtn">Compartir perfil</button>
       </div>
+      ${profile.studio_eligible ? `
+        <div style="margin-top:8px">
+          <a href="#/studio/overview" class="co-cta-btn ${profile.active_plan_sku === 'biz_one_enterprise' || profile.is_ceo ? 'co-cta-gold' : 'co-cta-sapphire'}" style="min-height:40px;font-size:0.84rem">
+            <span>✦ Abrir Credo One Studio</span>
+          </a>
+        </div>` : ''}
 
       <div class="ig-prof-tabs" role="tablist">
         <button type="button" class="ig-prof-tab is-active" data-ptab="posts" aria-label="Publicaciones">
@@ -315,6 +330,7 @@ export async function mount({ root, app, signal }) {
       <div id="igProfGrid"></div>
     `;
 
+    root.querySelector('#profCredoOneBtn')?.addEventListener('click', () => app.openCredoOne());
     root.querySelector('#igAddPostBtn')?.addEventListener('click', () => app.openComposer());
     root.querySelector('#igEditProfBtn').addEventListener('click', openEditModal);
     root.querySelector('#igShareProfBtn').addEventListener('click', async () => {

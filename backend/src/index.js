@@ -9,6 +9,7 @@ const rateLimit = require('express-rate-limit');
 const { PORT, CLERGY_RANKS } = require('./config');
 const { pool, initDatabase } = require('./db/pool');
 const { seedIfEmpty, purgeMockDataAndSyncReal } = require('./db/seed');
+const { seedCredoOnePlans } = require('./db/credoOneSeed');
 const { syncOfficialSources } = require('./utils/officialSync');
 const { warmUpRosaryCache } = require('./services/rosaryRadio');
 const { optionalAuth } = require('./middleware/auth');
@@ -23,6 +24,9 @@ const storiesRoutes = require('./routes/stories');
 const liveRoutes = require('./routes/live');
 const prayersRoutes = require('./routes/prayers');
 const rosaryRoutes = require('./routes/rosary');
+const credoOneRoutes = require('./routes/credoOne');
+const studioRoutes = require('./routes/studio');
+const campaignsTelemetryRoutes = require('./routes/campaignsTelemetry');
 
 const app = express();
 app.set('trust proxy', 1);
@@ -53,7 +57,13 @@ app.use(
       useDefaults: true,
       directives: {
         defaultSrc: ["'self'"],
-        scriptSrc: ["'self'", "'unsafe-inline'"],
+        scriptSrc: [
+          "'self'",
+          "'unsafe-inline'",
+          'https://www.paypal.com',
+          'https://www.sandbox.paypal.com',
+          'https://www.paypalobjects.com',
+        ],
         styleSrc: ["'self'", "'unsafe-inline'"],
         fontSrc: ["'self'", 'data:'],
         imgSrc: [
@@ -67,10 +77,27 @@ app.use(
           'https://i2.ytimg.com',
           'https://i3.ytimg.com',
           'https://i4.ytimg.com',
+          'https://www.paypalobjects.com',
+          'https://www.paypal.com',
+          'https://*.paypal.com',
+          'https:',
         ],
         mediaSrc: ["'self'", 'blob:', 'https://paginas.moisespaulino.com'],
-        frameSrc: ["'self'", 'https://www.youtube-nocookie.com', 'https://www.youtube.com'],
-        connectSrc: ["'self'", 'https://paginas.moisespaulino.com'],
+        frameSrc: [
+          "'self'",
+          'https://www.youtube-nocookie.com',
+          'https://www.youtube.com',
+          'https://www.paypal.com',
+          'https://www.sandbox.paypal.com',
+        ],
+        connectSrc: [
+          "'self'",
+          'https://paginas.moisespaulino.com',
+          'https://www.paypal.com',
+          'https://www.sandbox.paypal.com',
+          'https://api-m.paypal.com',
+          'https://api-m.sandbox.paypal.com',
+        ],
         upgradeInsecureRequests: [],
       },
     },
@@ -124,6 +151,12 @@ app.use('/api/v1/stories', storiesRoutes);
 app.use('/api/v1/live', liveRoutes);
 app.use('/api/v1/prayers', prayersRoutes);
 app.use('/api/v1/rosary', rosaryRoutes);
+app.use('/api/v1/credo-one', credoOneRoutes);
+app.use('/api/v1/studio', studioRoutes);
+app.use('/api/campaigns', campaignsTelemetryRoutes);
+app.use('/api/v1/campaigns', campaignsTelemetryRoutes);
+app.post('/api/webhooks/paypal', credoOneRoutes.handlePayPalWebhook);
+app.post('/api/v1/webhooks/paypal', credoOneRoutes.handlePayPalWebhook);
 
 // Credo Official Video Reels endpoint (internal clergy/church videos only — zero external EWTN/Vatican feeds)
 app.get(['/api/v1/vids', '/api/v1/reels'], optionalAuth, async (_req, res) => {
@@ -248,6 +281,7 @@ async function start() {
   while (attempts < 20) {
     try {
       await initDatabase();
+      await seedCredoOnePlans();
       await seedIfEmpty();
       await purgeMockDataAndSyncReal();
       break;

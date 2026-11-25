@@ -77,6 +77,10 @@ function getJwtSecret() {
   return 'credo-local-dev-secret-change-in-production-2026';
 }
 
+const PAYPAL_MODE = (process.env.PAYPAL_MODE || 'sandbox').toLowerCase() === 'live' ? 'live' : 'sandbox';
+const PAYPAL_API_BASE =
+  PAYPAL_MODE === 'live' ? 'https://api-m.paypal.com' : 'https://api-m.sandbox.paypal.com';
+
 module.exports = {
   PORT: Number(process.env.PORT || 8080),
   DATABASE_URL: process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/credo',
@@ -88,4 +92,10 @@ module.exports = {
   UNIT_TYPES,
   POST_TYPES,
   isClergyRank,
+  PAYPAL_MODE,
+  PAYPAL_API_BASE,
+  PAYPAL_CLIENT_ID: (process.env.PAYPAL_CLIENT_ID || '').trim(),
+  PAYPAL_CLIENT_SECRET: (process.env.PAYPAL_CLIENT_SECRET || '').trim(),
+  PAYPAL_WEBHOOK_ID: (process.env.PAYPAL_WEBHOOK_ID || '').trim(),
+  ENTERPRISE_WHATSAPP_NUMBER: (process.env.ENTERPRISE_WHATSAPP_NUMBER || '18095550199').replace(/[^\d]/g, ''),
 };

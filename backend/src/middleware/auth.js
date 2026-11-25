@@ -19,7 +19,8 @@ async function loadUserFromToken(token) {
               religious_order_initials, primary_unit_id, religious_order_id,
               current_office_title, bio, motto, ordination_date, country_code,
               languages, preferred_locale, avatar_color, avatar_url, verification_status,
-              verification_note, is_admin, is_credo_plus, credo_plus_plan, is_ceo, website_links, created_at
+              verification_note, is_admin, is_credo_plus, credo_plus_plan, is_ceo, website_links,
+              active_plan_sku, ad_free, studio_eligible, one_badge, created_at
          FROM users
         WHERE id = $1`,
       [payload.sub]
@@ -52,10 +53,14 @@ function requireClergy(req, res, next) {
   if (!req.user) {
     return res.status(401).json({ error: 'Authentication required' });
   }
-  if (!isClergyRank(req.user.ecclesiastical_rank)) {
+  const hasOnePublish = ['user_one_pro', 'biz_one_plus', 'biz_one_pro', 'biz_one_enterprise'].includes(
+    req.user.active_plan_sku || ''
+  );
+  if (!isClergyRank(req.user.ecclesiastical_rank) && !hasOnePublish) {
     return res.status(403).json({
       error: 'CLERGY_ONLY_PUBLISH',
-      message: 'Solo los miembros del clero (Diáconos, Sacerdotes, Monseñores, Obispos, Arzobispos, Cardenales) pueden publicar en Credo.',
+      message:
+        'Publicar requiere cuenta clerical o una suscripción Credo One Pro / Empresas.',
     });
   }
   next();

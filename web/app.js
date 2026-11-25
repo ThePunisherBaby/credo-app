@@ -5,6 +5,7 @@ import { detectLocale, getDict } from './i18n.js?v=23';
 import { attachDismissableSheet, createSpringPill, attachSpringPress, attachSegSpringPills } from './springs.mjs?v=23';
 import { enhanceLiquidGlass } from './glass.js?v=23';
 import { audioEngine } from './audio-engine.js?v=23';
+import { createCredoOneController } from './credo-one-sheet.js?v=26';
 
 const ICON_PLAY = '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" style="margin-left:2px"><path d="M8 5v14l11-7z"/></svg>';
 const ICON_PAUSE = '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M6 5h4v14H6zm8 0h4v14h-4z"/></svg>';
@@ -410,7 +411,7 @@ class CredoApp {
       // Preload core ES view modules silently so dock switching never waits for JS parsing
       import('./views/explore.js?v=25').catch(() => {});
       import('./views/prayer.js?v=23').catch(() => {});
-      import('./views/profile.js?v=23').catch(() => {});
+      import('./views/profile.js?v=26').catch(() => {});
       import('./views/vids.js?v=23').catch(() => {});
     };
     if ('requestIdleCallback' in window) {
@@ -420,7 +421,39 @@ class CredoApp {
     }
   }
 
+  openCredoOne(opts = {}) {
+    if (!this._credoOne) {
+      this._credoOne = createCredoOneController(this);
+    }
+    return this._credoOne.open(opts);
+  }
+
+  closeDialogAnimated(dlg) {
+    return closeTopLayer(dlg);
+  }
+
+  async refreshSession() {
+    if (!this.token) return null;
+    try {
+      const me = await this.api('/api/v1/auth/me', { noCache: true });
+      if (me?.user) {
+        this.user = me.user;
+        try { localStorage.setItem('credo-user-cache', JSON.stringify(me.user)); } catch {}
+        this.renderChrome();
+      }
+      return this.user;
+    } catch {
+      return this.user;
+    }
+  }
+
   async bootstrap() {
+    // Support clean /studio URL paths seamlessly in hash router
+    if (location.pathname.startsWith('/studio') && !location.hash.startsWith('#/studio')) {
+      const sub = location.pathname.replace(/^\/studio\/?/, '') || 'overview';
+      history.replaceState(null, '', `/#/studio/${sub}`);
+    }
+
     // Register Offline-First Service Worker (caches app shell & all feed/profile images locally in 0ms)
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('/sw.js').catch(() => {});
@@ -428,7 +461,9 @@ class CredoApp {
 
     // Wire top-layer dialogs
     wireDialogAccessibility(document.getElementById('modalDialog'));
+    wireDialogAccessibility(document.getElementById('credoOneDialog'));
     wireDialogAccessibility(document.getElementById('storyDialog'));
+    this._credoOne = createCredoOneController(this);
 
     // Cross-tab color-scheme sync (per dark-mode-toggle guide)
     window.addEventListener('storage', (e) => {
@@ -689,7 +724,12 @@ class CredoApp {
       }
     }
 
-    // Desktop & Mobile Publish buttons (Strictly Clergy Only) & Account chip
+    const coBtn = document.getElementById('desktopCredoOneBtn');
+    if (coBtn) {
+      coBtn.onclick = () => this.openCredoOne();
+    }
+
+    // Desktop & Mobile Publish buttons (Clergy or Credo One Pro/Business) & Account chip
     const pubBtn = document.getElementById('desktopPublishBtn');
     if (pubBtn) {
       pubBtn.hidden = !this.user?.can_publish;
@@ -726,6 +766,7 @@ class CredoApp {
     const [raw, qs = ''] = rawFull.split('?');
     const sp = new URLSearchParams(qs);
     const [seg, arg] = raw.split('/');
+    if (seg === 'studio') return { route: 'studio', tab: 'profile', params: { section: arg || 'overview' } };
     if (seg === 'vids' || seg === 'reels') return { route: 'vids', tab: 'vids', params: {} };
     if (seg === 'explore') return { route: 'explore', tab: 'explore', params: { filter: arg || sp.get('filter') || 'all' } };
     if (seg === 'live') return { route: 'explore', tab: 'explore', params: { filter: 'live' } };
@@ -767,7 +808,7 @@ class CredoApp {
     if (!root) return;
     const stage = root.parentElement;
     const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-    const shouldSlide = dir !== 0 && !reduceMotion && route !== 'vids' && prevRoute !== 'vids';
+    const shouldSlide = dir !== 0 && !reduceMotion && route !== 'vids' && prevRoute !== 'vids' && route !== 'studio';
 
     // Capture exiting view layer for side-by-side horizontal slide + motion blur
     if (stage) {
@@ -794,14 +835,15 @@ class CredoApp {
     // Lazy-import ONLY the required view module
     let mod;
     try {
-      if (route === 'feed') mod = await import('./views/feed.js?v=23');
+      if (route === 'feed') mod = await import('./views/feed.js?v=26');
+      else if (route === 'studio') mod = await import('./views/studio.js?v=26');
       else if (route === 'vids') mod = await import('./views/vids.js?v=23');
       else if (route === 'explore') mod = await import('./views/explore.js?v=25');
       else if (route === 'prayer') mod = await import('./views/prayer.js?v=23');
       else if (route === 'user') mod = await import('./views/parishes.js?v=23');
       else if (route === 'settings') mod = await import('./views/settings.js?v=23');
-      else if (route === 'profile') mod = await import('./views/profile.js?v=23');
-      else mod = await import('./views/feed.js?v=23');
+      else if (route === 'profile') mod = await import('./views/profile.js?v=26');
+      else mod = await import('./views/feed.js?v=26');
     } catch (err) {
       root.innerHTML = `<div class="empty-box">Error cargando vista: ${this.esc(err.message)}</div>`;
       return;
