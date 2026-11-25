@@ -8,23 +8,29 @@ import { attachDismissableSheet, attachSegSpringPills } from './springs.mjs?v=23
 const INITIAL_PLANS = [];
 
 let paypalSdkPromise = null;
-let paypalLoadedClientId = '';
+let paypalLoadedKey = '';
 
-function loadPayPalSdk(clientId) {
+function loadPayPalSdk(clientId, mode = 'capture') {
   if (!clientId) return Promise.reject(new Error('PAYPAL_CLIENT_ID no configurado'));
-  if (window.paypal && paypalLoadedClientId === clientId) {
+  const key = `${clientId}:${mode}`;
+  if (window.paypal && paypalLoadedKey === key) {
     return Promise.resolve(window.paypal);
   }
-  if (paypalSdkPromise && paypalLoadedClientId === clientId) {
+  if (paypalSdkPromise && paypalLoadedKey === key) {
     return paypalSdkPromise;
   }
-  paypalLoadedClientId = clientId;
+  paypalLoadedKey = key;
   paypalSdkPromise = new Promise((resolve, reject) => {
     const existing = document.getElementById('credo-paypal-sdk');
     if (existing) existing.remove();
+    try { delete window.paypal; } catch {}
     const s = document.createElement('script');
     s.id = 'credo-paypal-sdk';
-    s.src = `https://www.paypal.com/sdk/js?client-id=${encodeURIComponent(clientId)}&vault=true&intent=subscription&currency=USD`;
+    const qs =
+      mode === 'subscription'
+        ? `client-id=${encodeURIComponent(clientId)}&vault=true&intent=subscription&currency=USD`
+        : `client-id=${encodeURIComponent(clientId)}&intent=capture&currency=USD`;
+    s.src = `https://www.paypal.com/sdk/js?${qs}`;
     s.async = true;
     s.onload = () => (window.paypal ? resolve(window.paypal) : reject(new Error('PayPal SDK no disponible')));
     s.onerror = () => reject(new Error('No se pudo cargar el SDK oficial de PayPal'));
@@ -335,11 +341,10 @@ export function createCredoOneController(app) {
                 <p>Inicia sesión o crea tu cuenta en Credo para vincular tu suscripción y desbloquear Credo One al instante.</p>
                 <button type="button" class="co-cta-btn co-cta-sapphire" id="coCheckoutLoginBtn">Iniciar sesión en Credo</button>
               </div>
-            ` : !state.paypal.configured || !ppPlanId ? `
+            ` : !state.paypal.client_id ? `
               <div class="co-paypal-pending">
                 <strong>Integración PayPal lista para activación de credenciales</strong>
-                <p>El servidor aún no tiene configurado <code>PAYPAL_CLIENT_ID</code> o los planes sincronizados (<code>P-...</code>) en este entorno (${app.esc(state.paypal.mode)}).</p>
-                <p class="co-hint-small">Ejecuta <code>npm run setup-paypal-plans</code> tras agregar <code>PAYPAL_CLIENT_ID</code> y <code>PAYPAL_CLIENT_SECRET</code> en las variables de entorno del VPS para renderizar aquí los botones oficiales de PayPal en 1 clic.</p>
+                <p>El servidor aún no tiene configurado <code>PAYPAL_CLIENT_ID</code> en este entorno (${app.esc(state.paypal.mode)}).</p>
               </div>
             ` : `
               <div id="coPayPalButtonsHost" class="co-paypal-host">
@@ -468,56 +473,107 @@ export function createCredoOneController(app) {
     const plan = state.selectedPlan;
     if (!host || !plan || !state.paypal.client_id) return;
 
-    const ppPlanId = state.cycle === 'annual' ? plan.paypal_plan_id_annual : plan.paypal_plan_id_monthly;
-    if (!ppPlanId) return;
+    const isAnnual = state.cycle === 'annual';
+    const ppPlanId = isAnnual ? plan.paypal_plan_id_annual : plan.paypal_plan_id_monthly;
+    const useSubscription = Boolean(ppPlanId && state.paypal.subscriptions_ready);
+    const amountUsd = ((isAnnual ? plan.price_annual_cents : plan.price_monthly_cents) / 100).toFixed(2);
 
     try {
-      const paypal = await loadPayPalSdk(state.paypal.client_id);
+      const paypal = await loadPayPalSdk(state.paypal.client_id, useSubscription ? 'subscription' : 'capture');
       host.innerHTML = '';
-      paypal.Buttons({
-        style: {
-          shape: 'pill',
-          color: 'blue',
-          layout: 'vertical',
-          label: 'subscribe',
-        },
-        createSubscription: (_data, actions) => {
-          return actions.subscription.create({
-            plan_id: ppPlanId,
-            custom_id: `${app.user?.id || 0}:${plan.sku}:${state.cycle}`,
-          });
-        },
-        onApprove: async (data) => {
-          try {
-            const orgName = dlg.querySelector('#coOrgName')?.value || '';
-            const res = await app.api('/api/v1/credo-one/subscriptions/confirm', {
-              method: 'POST',
-              body: {
-                subscription_id: data.subscriptionID,
-                plan_sku: plan.sku,
-                billing_cycle: state.cycle,
-                organization_name: orgName,
-              },
-            });
-            state.activatedSub = res.subscription;
-            await app.refreshSession?.();
-            state.view = 'success';
-            renderSheet();
-            app.toast(`${plan.display_name} activado`);
-          } catch (err) {
+
+      if (useSubscription) {
+        paypal.Buttons({
+          style: { shape: 'pill', color: 'blue', layout: 'vertical', label: 'subscribe' },
+          createSubscription: (_data, actions) =>
+            actions.subscription.create({
+              plan_id: ppPlanId,
+              custom_id: `${app.user?.id || 0}:${plan.sku}:${state.cycle}`,
+            }),
+          onApprove: async (data) => {
+            try {
+              const orgName = dlg.querySelector('#coOrgName')?.value || '';
+              const res = await app.api('/api/v1/credo-one/subscriptions/confirm', {
+                method: 'POST',
+                body: {
+                  subscription_id: data.subscriptionID,
+                  plan_sku: plan.sku,
+                  billing_cycle: state.cycle,
+                  organization_name: orgName,
+                },
+              });
+              state.activatedSub = res.subscription;
+              await app.refreshSession?.();
+              state.view = 'success';
+              renderSheet();
+              app.toast(`${plan.display_name} activado`);
+            } catch (err) {
+              if (errBox) {
+                errBox.textContent = err.message || 'No se pudo confirmar la suscripción';
+                errBox.hidden = false;
+              }
+            }
+          },
+          onError: (err) => {
             if (errBox) {
-              errBox.textContent = err.message || 'No se pudo confirmar la suscripción';
+              errBox.textContent = err?.message || 'Error procesando el pago con PayPal.';
               errBox.hidden = false;
             }
-          }
-        },
-        onError: (err) => {
-          if (errBox) {
-            errBox.textContent = err?.message || 'Error procesando el pago con PayPal.';
-            errBox.hidden = false;
-          }
-        },
-      }).render(host);
+          },
+        }).render(host);
+      } else {
+        paypal.Buttons({
+          style: { shape: 'pill', color: 'blue', layout: 'vertical', label: 'pay' },
+          createOrder: (_data, actions) =>
+            actions.order.create({
+              purchase_units: [
+                {
+                  description: `${plan.display_name} (${isAnnual ? 'Anual' : 'Mensual'}) · SKU ${plan.sku}`,
+                  custom_id: `${app.user?.id || 0}:${plan.sku}:${state.cycle}`,
+                  amount: {
+                    currency_code: 'USD',
+                    value: amountUsd,
+                  },
+                },
+              ],
+            }),
+          onApprove: async (data, actions) => {
+            try {
+              const details = await actions.order.capture();
+              const cap = details?.purchase_units?.[0]?.payments?.captures?.[0];
+              const orgName = dlg.querySelector('#coOrgName')?.value || '';
+              const res = await app.api('/api/v1/credo-one/orders/confirm', {
+                method: 'POST',
+                body: {
+                  order_id: details?.id || data.orderID,
+                  capture_id: cap?.id || '',
+                  status: details?.status || cap?.status || 'COMPLETED',
+                  amount_value: cap?.amount?.value || amountUsd,
+                  plan_sku: plan.sku,
+                  billing_cycle: state.cycle,
+                  organization_name: orgName,
+                },
+              });
+              state.activatedSub = res.subscription;
+              await app.refreshSession?.();
+              state.view = 'success';
+              renderSheet();
+              app.toast(`¡${plan.display_name} activado!`);
+            } catch (err) {
+              if (errBox) {
+                errBox.textContent = err.message || 'No se pudo confirmar tu pago con Credo.';
+                errBox.hidden = false;
+              }
+            }
+          },
+          onError: (err) => {
+            if (errBox) {
+              errBox.textContent = err?.message || 'Error procesando el pago con PayPal.';
+              errBox.hidden = false;
+            }
+          },
+        }).render(host);
+      }
     } catch (err) {
       host.innerHTML = '';
       if (errBox) {
@@ -634,7 +690,7 @@ export function createCredoOneController(app) {
     dlg.querySelector('#coDoneBtn')?.addEventListener('click', closeSheet);
 
     // Mount PayPal Buttons if on checkout view
-    if (state.view === 'checkout' && app.user && state.paypal.configured) {
+    if (state.view === 'checkout' && app.user && state.paypal.client_id) {
       mountPayPalButtons(dlg);
     }
 

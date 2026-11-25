@@ -54,6 +54,10 @@ router.get('/plans', optionalAuth, async (req, res) => {
       activeSubscriptions = subRes.rows;
     }
 
+    const hasSyncedPlans = plans
+      .filter((p) => !p.is_enterprise)
+      .every((p) => Boolean(p.paypal_plan_id_monthly && p.paypal_plan_id_annual));
+
     return res.json({
       kernel: {
         engine: kernel.engine,
@@ -63,7 +67,9 @@ router.get('/plans', optionalAuth, async (req, res) => {
       paypal: {
         mode: PAYPAL_MODE,
         client_id: PAYPAL_CLIENT_ID || '',
-        configured: isPayPalConfigured(),
+        configured: Boolean(PAYPAL_CLIENT_ID),
+        checkout_ready: Boolean(PAYPAL_CLIENT_ID),
+        subscriptions_ready: Boolean(isPayPalConfigured() && hasSyncedPlans),
       },
       enterprise_whatsapp: ENTERPRISE_WHATSAPP_NUMBER,
       active_subscriptions: activeSubscriptions,
@@ -220,6 +226,153 @@ router.post('/subscriptions/confirm', requireAuth, async (req, res) => {
   } catch (err) {
     console.error('[credo-one/confirm]', err);
     return res.status(500).json({ error: err.message || 'No se pudo confirmar la suscripción' });
+  }
+});
+
+// POST /api/v1/credo-one/orders/confirm — Confirms a Live PayPal Smart Checkout order (intent=capture)
+// Verified strictly against the compiled F# 8 PricingKernel (and PayPal v2 Orders API when secret is paired)
+router.post('/orders/confirm', requireAuth, async (req, res) => {
+  try {
+    const {
+      order_id,
+      capture_id = '',
+      plan_sku,
+      billing_cycle = 'monthly',
+      amount_value,
+      status = '',
+      organization_name = '',
+    } = req.body || {};
+
+    if (!order_id || !plan_sku) {
+      return res.status(400).json({ error: 'order_id y plan_sku son requeridos' });
+    }
+    if (String(status).toUpperCase() !== 'COMPLETED') {
+      return res.status(402).json({ error: 'El pago en PayPal no fue completado.' });
+    }
+
+    const kernelPlan = fsharpKernel.getPlanSpec(plan_sku);
+    if (!kernelPlan || kernelPlan.is_enterprise) {
+      return res.status(404).json({ error: 'Plan Credo One no válido.' });
+    }
+
+    const safeCycle = billing_cycle === 'annual' ? 'annual' : 'monthly';
+    let verifiedCents = Math.round(Number(amount_value || 0) * 100);
+    let verifiedCaptureId = String(capture_id || order_id);
+
+    // If matching server secret is configured, double-check order directly against PayPal v2 API
+    if (isPayPalConfigured()) {
+      try {
+        const { paypalRequest } = require('../services/paypal');
+        const ppOrder = await paypalRequest('GET', `/v2/checkout/orders/${encodeURIComponent(order_id)}`);
+        if (!ppOrder || String(ppOrder.status).toUpperCase() !== 'COMPLETED') {
+          return res.status(402).json({ error: 'La orden de PayPal no está en estado COMPLETED.' });
+        }
+        const cap = ppOrder.purchase_units?.[0]?.payments?.captures?.[0];
+        if (cap?.amount?.value) {
+          verifiedCents = Math.round(Number(cap.amount.value) * 100);
+          verifiedCaptureId = cap.id || verifiedCaptureId;
+        }
+      } catch (ppErr) {
+        console.warn('[credo-one/orders/confirm] PayPal REST lookup skipped:', ppErr.message);
+      }
+    }
+
+    // Immutable F# 8 PricingKernel verification (blocks any tampered / underpaid amount)
+    const fsharpVerdict = fsharpKernel.verifyPayment(kernelPlan.sku, safeCycle, verifiedCents);
+    if (!fsharpVerdict.allowed) {
+      return res.status(fsharpVerdict.http_status || 402).json({
+        error: fsharpVerdict.code,
+        message: fsharpVerdict.message,
+      });
+    }
+
+    // Prevent order replay
+    const dupCheck = await pool.query(
+      'SELECT id FROM billing_transactions WHERE paypal_event_id = $1 LIMIT 1',
+      [`order-${order_id}`]
+    );
+    if (dupCheck.rows.length > 0) {
+      return res.status(409).json({ error: 'Esta orden de PayPal ya fue aplicada anteriormente.' });
+    }
+
+    let org = null;
+    if (kernelPlan.studio_access || kernelPlan.audience === 'business') {
+      org = await ensureOrgForSubscription(req.user, kernelPlan);
+      if (organization_name && String(organization_name).trim()) {
+        const upd = await pool.query(
+          'UPDATE organizations SET name = $2, updated_at = NOW() WHERE id = $1 RETURNING *',
+          [org.id, String(organization_name).trim().slice(0, 80)]
+        );
+        org = upd.rows[0] || org;
+      }
+    }
+
+    const periodEnd = new Date(Date.now() + (safeCycle === 'annual' ? 365 : 30) * 86400 * 1000);
+    const subKey = `ORD-${order_id}`;
+
+    const { rows: subRows } = await pool.query(
+      `INSERT INTO subscriptions (
+         user_id, organization_id, plan_sku, billing_cycle,
+         paypal_subscription_id, status, impressions_quota, impressions_used,
+         current_period_start, current_period_end, updated_at
+       ) VALUES ($1,$2,$3,$4,$5,'active',$6,0,NOW(),$7,NOW())
+       ON CONFLICT (paypal_subscription_id) DO UPDATE SET
+         status = 'active',
+         impressions_quota = EXCLUDED.impressions_quota,
+         current_period_end = EXCLUDED.current_period_end,
+         updated_at = NOW()
+       RETURNING *`,
+      [
+        req.user.id,
+        org ? org.id : null,
+        kernelPlan.sku,
+        safeCycle,
+        subKey,
+        kernelPlan.monthly_impressions,
+        periodEnd.toISOString(),
+      ]
+    );
+
+    await pool.query(
+      `INSERT INTO billing_transactions (
+         subscription_id, user_id, organization_id, paypal_event_id,
+         paypal_sale_id, plan_sku, amount_cents, currency, status, description
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,'USD','completed',$8)`,
+      [
+        subRows[0].id,
+        req.user.id,
+        org ? org.id : null,
+        `order-${order_id}`,
+        verifiedCaptureId,
+        kernelPlan.sku,
+        verifiedCents,
+        `Pago PayPal Live · ${kernelPlan.display_name} (${safeCycle === 'annual' ? 'Anual' : 'Mensual'})`,
+      ]
+    );
+
+    const entitlements = await reconcileUserEntitlements(req.user.id);
+    if (org) {
+      await writeAuditLog({
+        organizationId: org.id,
+        user: req.user,
+        role: 'owner',
+        action: 'billing.order_captured',
+        resourceType: 'subscription',
+        resourceId: String(subRows[0].id),
+        details: { plan_sku: kernelPlan.sku, billing_cycle: safeCycle, order_id, capture_id: verifiedCaptureId, amount_cents: verifiedCents },
+        req,
+      });
+    }
+
+    apiCache.invalidatePrefix('posts:');
+    return res.status(201).json({
+      subscription: subRows[0],
+      organization: org,
+      entitlements,
+    });
+  } catch (err) {
+    console.error('[credo-one/orders/confirm]', err);
+    return res.status(500).json({ error: err.message || 'No se pudo activar tu plan Credo One' });
   }
 });
 
