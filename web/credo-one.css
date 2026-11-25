@@ -882,6 +882,13 @@ dialog.co-sheet-dialog[open] {
   display: block;
   width: 100%;
   min-height: 46px;
+  --paypal-button-width: 100%;
+  --paypal-button-max-width: 100%;
+  --paypal-button-height: 46px;
+  --paypal-button-border-radius: 999px;
+}
+paypal-basic-card-container.co-v6-el {
+  min-height: 46px;
 }
 .co-wallet-btn {
   width: 100%;

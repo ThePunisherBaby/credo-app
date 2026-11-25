@@ -332,9 +332,25 @@ async function createOrderV2({
     };
   }
 
-  return paypalRequest('POST', '/v2/checkout/orders', payload, {
-    requestId: requestId || `ord-${userId || 0}-${plan.sku}-${crypto.randomUUID().slice(0, 12)}`,
-  });
+  try {
+    return await paypalRequest('POST', '/v2/checkout/orders', payload, {
+      requestId: requestId || `ord-${userId || 0}-${plan.sku}-${crypto.randomUUID().slice(0, 12)}`,
+    });
+  } catch (err) {
+    if (vault && (err.status === 422 || /vault/i.test(err.message || ''))) {
+      return createOrderV2({
+        plan,
+        cycle,
+        userId,
+        returnUrl,
+        cancelUrl,
+        vault: false,
+        paymentSource,
+        requestId: null,
+      });
+    }
+    throw err;
+  }
 }
 
 async function getOrderV2(orderId) {
@@ -358,7 +374,6 @@ async function createSubscriptionV1({
   plan,
   cycle = 'monthly',
   userId,
-  userEmail = '',
   userName = '',
   returnUrl = 'https://credoapp.tech/?paypal_sub_return=1',
   cancelUrl = 'https://credoapp.tech/?paypal_cancel=1',
@@ -381,18 +396,13 @@ async function createSubscriptionV1({
     },
   };
 
-  if (userEmail) {
-    const parts = String(userName || '').trim().split(/\s+/);
+  const parts = String(userName || '').trim().split(/\s+/).filter(Boolean);
+  if (parts[0]) {
     payload.subscriber = {
-      email_address: userEmail,
-      ...(parts[0]
-        ? {
-            name: {
-              given_name: parts[0].slice(0, 140),
-              surname: (parts.slice(1).join(' ') || 'Credo').slice(0, 140),
-            },
-          }
-        : {}),
+      name: {
+        given_name: parts[0].slice(0, 140),
+        surname: (parts.slice(1).join(' ') || 'Credo').slice(0, 140),
+      },
     };
   }
 

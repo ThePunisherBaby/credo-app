@@ -956,7 +956,7 @@ export function createCredoOneController(app) {
     const paypalV6 = await loadPayPalSdkV6Core(tokenData.sdk_v6_url || state.paypal.sdk_v6_url);
     if (seq !== state.mountSeq) return;
 
-    const requestedComponents = [
+    const fullComponents = [
       'paypal-payments',
       'paypal-subscriptions',
       'paypal-guest-payments',
@@ -966,13 +966,30 @@ export function createCredoOneController(app) {
       'applepay-payments',
       'googlepay-payments',
     ];
+    const coreComponents = [
+      'paypal-payments',
+      'paypal-subscriptions',
+      'paypal-guest-payments',
+      'paypal-messages',
+      'card-fields',
+    ];
 
-    const sdkInstance = await paypalV6.createInstance({
-      clientToken: tokenData.client_token,
-      components: requestedComponents,
-      pageType: 'checkout',
-      locale: 'es-DO',
-    });
+    let sdkInstance;
+    try {
+      sdkInstance = await paypalV6.createInstance({
+        clientToken: tokenData.client_token,
+        components: fullComponents,
+        pageType: 'checkout',
+        locale: 'es-DO',
+      });
+    } catch {
+      sdkInstance = await paypalV6.createInstance({
+        clientToken: tokenData.client_token,
+        components: coreComponents,
+        pageType: 'checkout',
+        locale: 'es-DO',
+      });
+    }
     if (seq !== state.mountSeq) return;
 
     if (sdkBadge) {
@@ -980,14 +997,23 @@ export function createCredoOneController(app) {
       sdkBadge.classList.add('is-v6');
     }
 
-    const eligibleMethods = await sdkInstance.findEligibleMethods({
-      currencyCode: 'USD',
-      ...(useSubscription ? { paymentFlow: 'RECURRING_PAYMENT' } : {}),
-    });
+    let eligibleMethods;
+    try {
+      eligibleMethods = await sdkInstance.findEligibleMethods({
+        currencyCode: 'USD',
+        ...(useSubscription ? { paymentFlow: 'RECURRING_PAYMENT' } : {}),
+      });
+    } catch {
+      eligibleMethods = {
+        _fallback: true,
+        isEligible: (method) => method === 'paypal' || method === 'card',
+        getDetails: () => ({}),
+      };
+    }
     if (seq !== state.mountSeq) return;
 
     // 1. Dynamic Pay Later promotional messaging (<paypal-message>)
-    if (!useSubscription && msgSlot && typeof sdkInstance.createPayPalMessages === 'function') {
+    if (!useSubscription && !eligibleMethods._fallback && msgSlot && Number(amountUsd) >= 30 && typeof sdkInstance.createPayPalMessages === 'function') {
       try {
         sdkInstance.createPayPalMessages({ currencyCode: 'USD' });
         msgSlot.innerHTML = `<paypal-message amount="${app.esc(amountUsd)}" currency-code="USD" logo-position="inline" text-color="MONOCHROME" auto-bootstrap></paypal-message>`;
@@ -995,8 +1021,8 @@ export function createCredoOneController(app) {
       } catch {}
     }
 
-    // 2. Show 1-click PayPal Vaulting toggle for Orders v2
-    if (!useSubscription && vaultRow) {
+    // 2. Show 1-click PayPal Vaulting toggle only when merchant account has Reference Transactions/Vaulting eligible
+    if (!useSubscription && !eligibleMethods._fallback && vaultRow) {
       vaultRow.hidden = false;
       const chk = dlg.querySelector('#coVaultCheckbox');
       if (chk) {
@@ -1004,6 +1030,9 @@ export function createCredoOneController(app) {
           state.vaultPaymentMethod = Boolean(chk.checked);
         };
       }
+    } else if (vaultRow) {
+      vaultRow.hidden = true;
+      state.vaultPaymentMethod = false;
     }
 
     // Helper: create Orders v2 on server (strictly F# 8 PricingKernel amounts)
@@ -1123,6 +1152,17 @@ export function createCredoOneController(app) {
         );
       });
       stack.appendChild(subBtn);
+
+      const altCardBtn = document.createElement('button');
+      altCardBtn.type = 'button';
+      altCardBtn.className = 'co-cta-btn co-cta-glass';
+      altCardBtn.style.cssText = 'margin-top:2px;min-height:42px;font-size:0.85rem;';
+      altCardBtn.innerHTML = '<span>💳 Pagar con Tarjeta de Débito o Crédito</span>';
+      altCardBtn.addEventListener('click', () => {
+        state.checkoutFlow = 'direct';
+        renderSheet();
+      });
+      stack.appendChild(altCardBtn);
       return;
     }
 
@@ -1314,12 +1354,15 @@ export function createCredoOneController(app) {
           setErr(err?.message || 'Error en checkout con tarjeta.');
         },
       });
+      const guestContainer = document.createElement('paypal-basic-card-container');
+      guestContainer.className = 'co-v6-el';
       const guestBtn = document.createElement('paypal-basic-card-button');
       guestBtn.className = 'co-v6-el';
       guestBtn.addEventListener('click', () => {
         startWithPresentationCascade(guestSession, () => createServerOrder('paypal'), 'guest_card');
       });
-      stack.appendChild(guestBtn);
+      guestContainer.appendChild(guestBtn);
+      stack.appendChild(guestContainer);
     }
 
     // 10. PCI-DSS INLINE CARD FIELDS (Visa / Mastercard / Amex + 3DS/SCA inside Dark Liquid Glass!)
