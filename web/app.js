@@ -879,7 +879,7 @@ class CredoApp {
     return { route: 'feed', tab: 'feed', params: {} };
   }
 
-  // Strictly view-based on-demand mounting & lazy ES module loading with Horizontal Motion Blur Slide
+  // Strictly view-based on-demand mounting & lazy ES module loading with Crisp Compositor Slide
   async navigate() {
     const seq = ++this._routeSeq;
 
@@ -911,7 +911,7 @@ class CredoApp {
     const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
     const shouldSlide = dir !== 0 && !reduceMotion && route !== 'vids' && prevRoute !== 'vids' && route !== 'studio';
 
-    // Capture exiting view layer for side-by-side horizontal slide + motion blur
+    // Capture exiting view layer for crisp GPU-composited directional slide (zero motion blur)
     if (stage) {
       stage.querySelectorAll('.view-exit-layer').forEach((n) => n.remove());
       if (shouldSlide && root.children.length > 0) {
@@ -922,7 +922,7 @@ class CredoApp {
         ghost.querySelectorAll('[id]').forEach((el) => el.removeAttribute('id'));
         ghost.querySelectorAll('iframe, video, audio').forEach((el) => el.remove());
         stage.appendChild(ghost);
-        setTimeout(() => ghost.remove(), 290);
+        setTimeout(() => ghost.remove(), 270);
       }
     }
 
@@ -952,7 +952,7 @@ class CredoApp {
 
     if (seq !== this._routeSeq || controller.signal.aborted) return;
 
-    // Side-by-side directional presentation slide + motion blur (and clear transform after settle)
+    // Side-by-side directional presentation slide (compositor transform + opacity only, clear after settle)
     root.classList.remove('view-mount', 'view-enter-from-right', 'view-enter-from-left', 'view-enter-subtle');
     void root.offsetWidth;
     const enterCls = shouldSlide ? (dir > 0 ? 'view-enter-from-right' : 'view-enter-from-left') : 'view-enter-subtle';
