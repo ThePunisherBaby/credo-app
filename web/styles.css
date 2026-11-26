@@ -4326,5 +4326,42 @@ html, body {
   }
 }
 
+.visually-hidden {
+  position: absolute;
+  clip-path: inset(50%);
+  overflow: hidden;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  white-space: nowrap;
+}
+
+.search-field:focus-within {
+  border-color: #0A84FF;
+  outline: 2px solid rgba(10, 132, 255, 0.35);
+  outline-offset: 1px;
+}
+#exploreSearchInput {
+  font: inherit;
+  font-size: max(1rem, 1em);
+  font-weight: 600;
+}
+
+.entity-row--cto {
+  border-color: light-dark(rgba(14, 165, 233, 0.34), rgba(56, 189, 248, 0.36));
+  background: light-dark(
+    linear-gradient(135deg, rgba(240, 249, 255, 0.9), rgba(255, 255, 255, 0.98)),
+    linear-gradient(135deg, rgba(8, 22, 43, 0.88), rgba(15, 23, 42, 0.92))
+  );
+}
+.entity-handle {
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--label-2);
+}
+
+
 
 

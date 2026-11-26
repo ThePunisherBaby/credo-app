@@ -592,9 +592,12 @@ class CredoApp {
           this.api('/api/v1/vids', { ttlMs: 20_000 }).catch(() => {});
         }
       } else if (navId === 'explore') {
-        import('./views/explore.js?v=43').catch(() => {});
+        import('./views/explore.js?v=44').catch(() => {});
         if (!this._isFresh('/api/v1/live', 30_000)) {
           this.api('/api/v1/live', { ttlMs: 30_000 }).catch(() => {});
+        }
+        if (!this._isFresh('/api/v1/users?limit=50', 25_000)) {
+          this.api('/api/v1/users?limit=50', { ttlMs: 25_000 }).catch(() => {});
         }
       } else if (navId === 'prayer') {
         import('./views/prayer.js?v=23').catch(() => {});
@@ -1048,7 +1051,7 @@ class CredoApp {
       if (route === 'feed') mod = await import('./views/feed.js?v=43');
       else if (route === 'studio') mod = await import('./views/studio.js?v=26');
       else if (route === 'vids') mod = await import('./views/vids.js?v=43');
-      else if (route === 'explore') mod = await import('./views/explore.js?v=43');
+      else if (route === 'explore') mod = await import('./views/explore.js?v=44');
       else if (route === 'prayer') mod = await import('./views/prayer.js?v=23');
       else if (route === 'user') mod = await import('./views/parishes.js?v=43');
       else if (route === 'settings') mod = await import('./views/settings.js?v=23');

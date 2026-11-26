@@ -13,49 +13,75 @@ function proxyImg(url) {
 const FILTERS = [
   { id: 'all', label: 'Todos' },
   { id: 'live', label: '● En Vivo', isLive: true },
-  { id: 'clergy', label: 'Presbíteros' },
+  { id: 'accounts', label: 'Cuentas' },
   { id: 'vids', label: 'Vids' },
   { id: 'posts', label: 'Publicaciones' },
 ];
 
+function normText(s) {
+  return String(s || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+}
+
 export async function mount({ root, app, signal, params }) {
   const d = app.dict();
-  let activeFilter = FILTERS.some((f) => f.id === params?.filter) ? params.filter : 'all';
+  const rawFilter = params?.filter === 'clergy' ? 'accounts' : params?.filter;
+  let activeFilter = FILTERS.some((f) => f.id === rawFilter) ? rawFilter : 'all';
   let activeVideoSlug = '';
   let searchQ = '';
   let searchTimer = 0;
+  let remoteSearchAbort = null;
+  let lastCompositionEndAt = null;
 
   let liveData = null;
-  let clergyList = [];
+  let usersList = [];
+  let remoteUsers = null;
   let vidsList = [];
   let postsList = [];
+  let remotePosts = null;
   let loading = true;
+  let searchingRemote = false;
   let audioUnsub = null;
 
   root.innerHTML = `
     <div class="explore-sticky-top">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px">
-        <h1 class="t-title-2" style="margin:0;font-size:1.35rem;letter-spacing:-0.025em">${app.esc(d.nav.explore || 'Explorar')}</h1>
-        <span class="t-caption" style="color:var(--label-2);font-weight:700">Radios · Presbíteros · Vids</span>
+        <h1 class="t-title-2" id="exploreHeading" style="margin:0;font-size:1.35rem;letter-spacing:-0.025em">${app.esc(d.nav.explore || 'Explorar')}</h1>
+        <span class="t-caption" style="color:var(--label-2);font-weight:700">Cuentas · Radios · Vids</span>
       </div>
-      <div class="explore-search-row">
-        <div class="search-field" style="margin:0;min-height:42px;background:var(--surface-2)">
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
-          <input type="search" id="exploreSearchInput" placeholder="Buscar radios, videos o cuentas…" />
-        </div>
-      </div>
+      <search aria-labelledby="exploreHeading">
+        <form id="exploreSearchForm" action="#/explore" method="GET" class="explore-search-row" style="margin:0">
+          <label for="exploreSearchInput" class="visually-hidden">Buscar cuentas, usuarios, radios o videos</label>
+          <div class="search-field" style="margin:0;min-height:44px;background:var(--surface-2);width:100%">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+            <input
+              type="search"
+              id="exploreSearchInput"
+              name="q"
+              placeholder="Buscar personas, @usuario, radios o videos…"
+              autocorrect="off"
+              autocapitalize="none"
+              spellcheck="false"
+              enterkeyhint="search"
+            />
+          </div>
+          <button type="submit" class="visually-hidden">Buscar</button>
+        </form>
 
-      <div class="explore-filter-strip" id="exploreFilters" role="tablist" aria-label="Filtros de exploración">
-        ${FILTERS.map((f) => `
-          <button type="button" class="explore-pill${activeFilter === f.id ? ' is-active' : ''}" data-efilter="${f.id}" role="tab" aria-selected="${activeFilter === f.id}">
-            ${f.isLive ? '<span class="live-dot" style="width:7px;height:7px"></span>' : ''}
-            <span>${app.esc(f.label.replace(/^●\s*/, ''))}</span>
-          </button>
-        `).join('')}
-      </div>
+        <div class="explore-filter-strip" id="exploreFilters" role="tablist" aria-label="Filtros de exploración">
+          ${FILTERS.map((f) => `
+            <button type="button" class="explore-pill${activeFilter === f.id ? ' is-active' : ''}" data-efilter="${f.id}" role="tab" aria-selected="${activeFilter === f.id}">
+              ${f.isLive ? '<span class="live-dot" style="width:7px;height:7px" aria-hidden="true"></span>' : ''}
+              <span>${app.esc(f.label.replace(/^●\s*/, ''))}</span>
+            </button>
+          `).join('')}
+        </div>
+      </search>
     </div>
 
-    <div id="exploreBody">
+    <div id="exploreBody" role="region" aria-live="polite">
       <div class="skeleton" style="height:170px;margin-bottom:14px"></div>
       <div class="skeleton" style="height:82px;margin-bottom:10px"></div>
       <div class="skeleton" style="height:82px"></div>
@@ -63,12 +89,31 @@ export async function mount({ root, app, signal, params }) {
   `;
 
   const bodyEl = root.querySelector('#exploreBody');
+  const searchForm = root.querySelector('#exploreSearchForm');
   const searchInput = root.querySelector('#exploreSearchInput');
 
   function filterByQuery(items, extractor) {
     if (!searchQ) return items;
-    const ql = searchQ.toLowerCase();
-    return items.filter((item) => extractor(item).toLowerCase().includes(ql));
+    const rawQ = searchQ.replace(/^@+/, '');
+    const ql = normText(rawQ);
+    const compactQ = ql.replace(/[^a-z0-9]/g, '');
+    return items.filter((item) => {
+      const hay = normText(extractor(item));
+      if (hay.includes(ql)) return true;
+      if (compactQ.length >= 2 && hay.replace(/[^a-z0-9]/g, '').includes(compactQ)) return true;
+      return false;
+    });
+  }
+
+  function mergeUniqueById(primary, secondary) {
+    const map = new Map();
+    for (const item of primary || []) {
+      if (item?.id != null) map.set(item.id, item);
+    }
+    for (const item of secondary || []) {
+      if (item?.id != null && !map.has(item.id)) map.set(item.id, item);
+    }
+    return [...map.values()];
   }
 
   function renderLiveFilterSection() {
@@ -80,7 +125,7 @@ export async function mount({ root, app, signal, params }) {
     const heroIsPlaying = st.playing && st.channel?.id === hero?.id;
 
     return `
-      ${hero && (!searchQ || `${hero.name} ${hero.tagline} ${hero.current_program}`.toLowerCase().includes(searchQ.toLowerCase())) ? `
+      ${hero && (!searchQ || normText(`${hero.name} ${hero.tagline} ${hero.current_program}`).includes(normText(searchQ))) ? `
         <article class="hero-live-card" data-channel-id="${hero.id}">
           ${heroArt ? `<img class="hero-live-bg" src="${app.esc(heroArt)}" alt="" aria-hidden="true" />` : ''}
           <div class="hero-live-scrim" aria-hidden="true"></div>
@@ -142,25 +187,32 @@ export async function mount({ root, app, signal, params }) {
     `;
   }
 
-  function renderClergyRows(users) {
-    if (!users || users.length === 0) return `<div class="empty-box">No se encontraron presbíteros.</div>`;
+  function renderAccountRows(users) {
+    if (!users || users.length === 0) {
+      return `<div class="empty-box">${searchingRemote ? 'Buscando cuentas…' : 'No se encontraron cuentas con ese nombre.'}</div>`;
+    }
     return `
       <div class="entity-list">
         ${users.map((u) => {
           const av = proxyImg(u.avatar_url);
+          const isCto = app.isCtoUser(u);
           const rank = d.ranks[u.ecclesiastical_rank] || u.ecclesiastical_rank;
+          const subtitle = u.current_office_title || (isCto ? 'Chief Technology Officer · Credo' : rank);
           return `
-            <a href="#/user/${u.id}" class="entity-row">
-              <span class="avatar" data-zoomable data-zoom-name="${app.esc(`${u.title_prefix ? `${u.title_prefix} ` : ''}${u.full_name}`)}" data-zoom-src="${app.esc(av)}" style="--av-bg:${app.esc(u.avatar_color || '#0F1E36')}">
-                ${av ? `<img src="${app.esc(av)}" alt="" />` : app.initials(u.full_name)}
+            <a href="#/user/${u.id}" class="entity-row${isCto ? ' entity-row--cto' : ''}">
+              <span class="avatar" data-zoomable data-zoom-name="${app.esc(`${u.title_prefix ? `${u.title_prefix} ` : ''}${u.full_name}`)}" data-zoom-src="${app.esc(av)}" style="--av-bg:${app.esc(u.avatar_color || '#0F1E36')};${isCto ? 'box-shadow:0 0 0 2px #38BDF8;font-family:ui-monospace,SFMono-Regular,Menlo,monospace' : ''}">
+                ${av ? `<img src="${app.esc(av)}" alt="" />` : (isCto ? '&lt;P/&gt;' : app.initials(u.full_name))}
               </span>
               <div class="entity-main">
-                <div class="entity-title">
+                <div class="entity-title" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
                   <span>${app.esc(u.title_prefix ? `${u.title_prefix} ` : '')}${app.esc(u.full_name)}</span>
                   ${u.is_ceo ? '<span class="rank-tag" style="background:#0A84FF;color:#FFFFFF">CEO</span>' : ''}
                   ${app.renderCtoInsignia(u)}
+                  ${app.renderPlanInsignia(u)}
                 </div>
-                <div class="entity-sub">${app.esc(u.current_office_title || rank)}</div>
+                <div class="entity-sub">
+                  ${u.username ? `<span class="entity-handle">@${app.esc(u.username)}</span> · ` : ''}${app.esc(subtitle)}
+                </div>
               </div>
               <span class="t-caption">›</span>
             </a>
@@ -224,6 +276,24 @@ export async function mount({ root, app, signal, params }) {
     `;
   }
 
+  function getMatchedAccounts() {
+    const localHits = filterByQuery(
+      usersList,
+      (u) => `${u.full_name || ''} ${u.username || ''} ${u.current_office_title || ''} ${u.bio || ''} ${app.isCtoUser(u) ? 'cto' : ''} ${u.is_ceo ? 'ceo' : ''}`
+    );
+    if (!searchQ) return usersList;
+    return remoteUsers ? mergeUniqueById(remoteUsers, localHits) : localHits;
+  }
+
+  function getMatchedPosts() {
+    const localHits = filterByQuery(
+      postsList,
+      (p) => `${p.title || ''} ${p.content || ''} ${p.channel_name || ''} ${p.author?.full_name || ''} ${p.author?.username || ''}`
+    );
+    if (!searchQ) return postsList;
+    return remotePosts ? mergeUniqueById(remotePosts, localHits) : localHits;
+  }
+
   function render() {
     root.querySelectorAll('[data-efilter]').forEach((b) => {
       const active = b.dataset.efilter === activeFilter;
@@ -231,7 +301,7 @@ export async function mount({ root, app, signal, params }) {
       b.setAttribute('aria-selected', String(active));
     });
 
-    if (loading && !liveData && clergyList.length === 0) {
+    if (loading && !liveData && usersList.length === 0) {
       return;
     }
 
@@ -241,14 +311,14 @@ export async function mount({ root, app, signal, params }) {
       return;
     }
 
-    const fClergy = filterByQuery(clergyList, (u) => `${u.full_name} ${u.username}`);
+    const fAccounts = getMatchedAccounts();
     const fVids = filterByQuery(vidsList, (v) => `${v.title || ''} ${v.channel_name || ''} ${v.description || ''}`);
-    const fPosts = filterByQuery(postsList, (p) => `${p.title || ''} ${p.content || ''} ${p.channel_name || ''}`);
+    const fPosts = getMatchedPosts();
 
-    if (activeFilter === 'clergy') {
+    if (activeFilter === 'accounts') {
       bodyEl.innerHTML = `
-        <div class="section-bar"><h2 class="t-title-2">Presbíteros</h2><span class="t-footnote">${fClergy.length}</span></div>
-        ${renderClergyRows(fClergy)}
+        <div class="section-bar"><h2 class="t-title-2">Cuentas y Comunidad</h2><span class="t-footnote">${fAccounts.length}</span></div>
+        ${renderAccountRows(fAccounts)}
       `;
       bindHandlers();
       return;
@@ -276,6 +346,60 @@ export async function mount({ root, app, signal, params }) {
     const st = audioEngine.getState();
     const quickRadios = filterByQuery(liveData?.radios || [], (c) => `${c.name} ${c.tagline} ${c.current_program}`);
 
+    if (searchQ) {
+      // Active search mode: prioritize matching user accounts right at the top!
+      const totalHits = fAccounts.length + quickRadios.length + fVids.length + fPosts.length;
+      bodyEl.innerHTML = totalHits === 0 && !searchingRemote
+        ? `<div class="empty-box">No encontramos resultados para «${app.esc(searchQ)}».</div>`
+        : `
+          <div class="section-bar">
+            <h2 class="t-title-3">Cuentas</h2>
+            <span class="t-footnote">${fAccounts.length}</span>
+          </div>
+          ${renderAccountRows(fAccounts.slice(0, 12))}
+
+          ${quickRadios.length > 0 ? `
+            <div class="section-bar" style="margin-top:20px">
+              <h2 class="t-title-3" style="display:flex;align-items:center;gap:7px"><span class="live-dot"></span>Emisoras En Vivo</h2>
+              <button type="button" class="btn btn-sm btn-soft" data-jump-filter="live">Ver todas</button>
+            </div>
+            <div class="explore-quick-live">
+              ${quickRadios.map((ch) => {
+                const art = proxyImg(ch.cover_url);
+                const active = st.playing && st.channel?.id === ch.id;
+                return `
+                  <button type="button" class="explore-live-chip${active ? ' is-playing' : ''}" data-play-ch="${ch.id}">
+                    ${art ? `<img src="${app.esc(art)}" alt="" width="42" height="42" />` : ''}
+                    <div>
+                      <strong style="display:block;font-size:0.84rem;line-height:1.2">${app.esc(ch.name)}</strong>
+                      <span class="t-caption" style="color:${active ? 'var(--gold-text)' : 'var(--label-2)'}">${active ? '⏸ Escuchando' : `▶ ${app.esc(ch.frequency || 'En Vivo')}`}</span>
+                    </div>
+                  </button>
+                `;
+              }).join('')}
+            </div>
+          ` : ''}
+
+          ${fVids.length > 0 ? `
+            <div class="section-bar" style="margin-top:20px">
+              <h2 class="t-title-3">Vids</h2>
+              <button type="button" class="btn btn-sm btn-soft" data-jump-filter="vids">Ver todos</button>
+            </div>
+            ${renderVidsGrid(fVids.slice(0, 4))}
+          ` : ''}
+
+          ${fPosts.length > 0 ? `
+            <div class="section-bar" style="margin-top:20px">
+              <h2 class="t-title-3">Publicaciones</h2>
+              <button type="button" class="btn btn-sm btn-soft" data-jump-filter="posts">Ver todas</button>
+            </div>
+            ${renderPostsRows(fPosts.slice(0, 6))}
+          ` : ''}
+        `;
+      bindHandlers();
+      return;
+    }
+
     bodyEl.innerHTML = `
       ${quickRadios.length > 0 ? `
         <div class="section-bar">
@@ -300,10 +424,10 @@ export async function mount({ root, app, signal, params }) {
       ` : ''}
 
       <div class="section-bar">
-        <h2 class="t-title-3">Presbíteros</h2>
-        <button type="button" class="btn btn-sm btn-soft" data-jump-filter="clergy">Ver más</button>
+        <h2 class="t-title-3">Cuentas Destacadas</h2>
+        <button type="button" class="btn btn-sm btn-soft" data-jump-filter="accounts">Ver todas</button>
       </div>
-      ${renderClergyRows(fClergy.slice(0, 4))}
+      ${renderAccountRows(fAccounts.slice(0, 6))}
 
       ${fVids.length > 0 ? `
         <div class="section-bar" style="margin-top:20px">
@@ -383,6 +507,38 @@ export async function mount({ root, app, signal, params }) {
     });
   }
 
+  async function triggerRemoteSearch(qStr) {
+    if (remoteSearchAbort) {
+      remoteSearchAbort.abort();
+      remoteSearchAbort = null;
+    }
+    if (!qStr) {
+      remoteUsers = null;
+      remotePosts = null;
+      searchingRemote = false;
+      render();
+      return;
+    }
+    const ctrl = new AbortController();
+    remoteSearchAbort = ctrl;
+    searchingRemote = true;
+    render();
+    try {
+      const [uRes, pRes] = await Promise.allSettled([
+        app.api(`/api/v1/users?q=${encodeURIComponent(qStr)}&limit=40`, { signal: ctrl.signal, noCache: true }),
+        app.api(`/api/v1/posts?scope=global&q=${encodeURIComponent(qStr)}&limit=20`, { signal: ctrl.signal, noCache: true }),
+      ]);
+      if (ctrl.signal.aborted || signal.aborted) return;
+      if (uRes.status === 'fulfilled') remoteUsers = uRes.value.users || [];
+      if (pRes.status === 'fulfilled') remotePosts = pRes.value.posts || [];
+    } catch {} finally {
+      if (!ctrl.signal.aborted && !signal.aborted) {
+        searchingRemote = false;
+        render();
+      }
+    }
+  }
+
   root.querySelector('#exploreFilters').addEventListener('click', (e) => {
     const btn = e.target.closest('[data-efilter]');
     if (!btn) return;
@@ -391,27 +547,59 @@ export async function mount({ root, app, signal, params }) {
     render();
   });
 
-  searchInput.addEventListener('input', () => {
+  searchForm.addEventListener('submit', (e) => {
+    e.preventDefault();
     clearTimeout(searchTimer);
+    searchQ = searchInput.value.trim();
+    triggerRemoteSearch(searchQ);
+    searchInput.blur();
+  });
+
+  searchInput.addEventListener('compositionend', (ev) => {
+    lastCompositionEndAt = ev.timeStamp;
+  });
+
+  searchInput.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter') {
+      ev.preventDefault();
+      if (
+        ev.isComposing ||
+        ev.keyCode === 229 ||
+        (lastCompositionEndAt !== null && Math.abs(ev.timeStamp - lastCompositionEndAt) < 50)
+      ) {
+        return;
+      }
+      searchForm.requestSubmit();
+    }
+  });
+
+  searchInput.addEventListener('input', () => {
+    const nextQ = searchInput.value.trim();
+    searchQ = nextQ;
+    render(); // 0ms instant local match
+    clearTimeout(searchTimer);
+    if (!nextQ) {
+      triggerRemoteSearch('');
+      return;
+    }
     searchTimer = setTimeout(() => {
-      searchQ = searchInput.value.trim();
-      render();
-    }, 180);
+      triggerRemoteSearch(nextQ);
+    }, 130);
   });
 
   audioUnsub = audioEngine.subscribe(() => render());
 
   // Instant 0ms synchronous paint from local cache (zero skeletons on cached visits!)
   const cLive = app.getCached('/api/v1/live');
-  const cClergy = app.getCached('/api/v1/users?clergy_only=true&limit=25');
+  const cUsers = app.getCached('/api/v1/users?limit=50') || app.getCached('/api/v1/users?clergy_only=true&limit=25');
   const cVids = app.getCached('/api/v1/vids');
   const cPosts = app.getCached('/api/v1/posts?scope=global&limit=20') || app.getCached('/api/v1/posts?scope=global&limit=6&offset=0');
-  if (cLive || cClergy || cPosts) {
+  if (cLive || cUsers || cPosts) {
     if (cLive) {
       liveData = cLive;
       app.setLiveQueue(liveData.all || []);
     }
-    if (cClergy) clergyList = cClergy.users || [];
+    if (cUsers) usersList = cUsers.users || [];
     if (cVids) vidsList = cVids.reels || cVids.vids || cVids.items || [];
     if (cPosts) postsList = cPosts.posts || [];
     loading = false;
@@ -419,9 +607,9 @@ export async function mount({ root, app, signal, params }) {
   }
 
   try {
-    const [liveRes, clergyRes, vidsRes, postsRes] = await Promise.allSettled([
+    const [liveRes, usersRes, vidsRes, postsRes] = await Promise.allSettled([
       app.api('/api/v1/live', { signal }),
-      app.api('/api/v1/users?clergy_only=true&limit=25', { signal }),
+      app.api('/api/v1/users?limit=50', { signal }),
       app.api('/api/v1/vids', { signal }),
       app.api('/api/v1/posts?scope=global&limit=20', { signal }),
     ]);
@@ -431,13 +619,13 @@ export async function mount({ root, app, signal, params }) {
       liveData = liveRes.value;
       app.setLiveQueue(liveData.all || []);
     }
-    if (clergyRes.status === 'fulfilled') clergyList = clergyRes.value.users || [];
+    if (usersRes.status === 'fulfilled') usersList = usersRes.value.users || [];
     if (vidsRes.status === 'fulfilled') vidsList = vidsRes.value.reels || vidsRes.value.vids || vidsRes.value.items || [];
     if (postsRes.status === 'fulfilled') postsList = postsRes.value.posts || [];
     loading = false;
     render();
   } catch (err) {
-    if (err.name !== 'AbortError' && !liveData && clergyList.length === 0) {
+    if (err.name !== 'AbortError' && !liveData && usersList.length === 0) {
       loading = false;
       bodyEl.innerHTML = `<div class="empty-box">${app.esc(err.message)}</div>`;
     }
@@ -446,6 +634,7 @@ export async function mount({ root, app, signal, params }) {
   return {
     cleanup() {
       clearTimeout(searchTimer);
+      if (remoteSearchAbort) remoteSearchAbort.abort();
       if (audioUnsub) audioUnsub();
     },
   };

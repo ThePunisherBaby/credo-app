@@ -47,10 +47,27 @@ router.get('/', async (req, res) => {
       }
 
       if (q && String(q).trim()) {
-        params.push(`%${String(q).trim()}%`);
-        const idx = params.length;
+        const rawQ = String(q).trim().replace(/^@+/, '');
+        const normQ = rawQ
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .toLowerCase();
+        const compactQ = normQ.replace(/[^a-z0-9]/g, '');
+        params.push(`%${normQ}%`);
+        const idxNorm = params.length;
+        params.push(`%${compactQ || normQ}%`);
+        const idxCompact = params.length;
         clauses.push(
-          `(u.full_name ILIKE $${idx} OR u.username ILIKE $${idx} OR u.current_office_title ILIKE $${idx} OR u.bio ILIKE $${idx})`
+          `(
+            TRANSLATE(LOWER(u.full_name), 'áéíóúüñ', 'aeiouun') LIKE $${idxNorm}
+            OR LOWER(u.username) LIKE $${idxNorm}
+            OR REGEXP_REPLACE(LOWER(u.username), '[^a-z0-9]', '', 'g') LIKE $${idxCompact}
+            OR REGEXP_REPLACE(TRANSLATE(LOWER(u.full_name), 'áéíóúüñ', 'aeiouun'), '[^a-z0-9]', '', 'g') LIKE $${idxCompact}
+            OR TRANSLATE(LOWER(COALESCE(u.current_office_title, '')), 'áéíóúüñ', 'aeiouun') LIKE $${idxNorm}
+            OR TRANSLATE(LOWER(COALESCE(u.bio, '')), 'áéíóúüñ', 'aeiouun') LIKE $${idxNorm}
+            OR (COALESCE(u.is_cto, FALSE) = TRUE AND $${idxCompact} LIKE '%cto%')
+            OR (COALESCE(u.is_ceo, FALSE) = TRUE AND $${idxCompact} LIKE '%ceo%')
+          )`
         );
       }
 
