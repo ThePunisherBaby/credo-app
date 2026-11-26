@@ -605,7 +605,7 @@ class CredoApp {
           this.api('/api/v1/prayers/intentions?filter=recent', { ttlMs: 20_000 }).catch(() => {});
         }
       } else if (navId === 'profile') {
-        import('./views/profile.js?v=43').catch(() => {});
+        import('./views/profile.js?v=45').catch(() => {});
         if (this.user?.id) {
           const uPath = `/api/v1/posts?author_id=${this.user.id}&limit=24`;
           if (!this._isFresh(uPath, 20_000)) {
@@ -1054,8 +1054,8 @@ class CredoApp {
       else if (route === 'explore') mod = await import('./views/explore.js?v=44');
       else if (route === 'prayer') mod = await import('./views/prayer.js?v=23');
       else if (route === 'user') mod = await import('./views/parishes.js?v=43');
-      else if (route === 'settings') mod = await import('./views/settings.js?v=23');
-      else if (route === 'profile') mod = await import('./views/profile.js?v=43');
+      else if (route === 'settings') mod = await import('./views/settings.js?v=45');
+      else if (route === 'profile') mod = await import('./views/profile.js?v=45');
       else mod = await import('./views/feed.js?v=43');
     } catch (err) {
       root.innerHTML = `<div class="empty-box">Error cargando vista: ${this.esc(err.message)}</div>`;
@@ -1739,107 +1739,571 @@ class CredoApp {
     show();
   }
 
-  openAuthModal() {
+  renderAuthWidget(container, { initialMode = 'login', uidPrefix = 'm', onAuthenticated } = {}) {
     const d = this.dict();
-    let mode = 'login';
+    let mode = initialMode;
+    let roleKind = 'lay'; // 'lay' | 'clergy'
+    let probeTimer = 0;
+    let probeSeq = 0;
+    let verifyState = {
+      checkedCedula: '',
+      checkedName: '',
+      validCedula: false,
+      duplicate: false,
+      nameMatches: false,
+      requiresApproval: false,
+      errorField: '',
+      message: '',
+    };
 
-    const renderAuth = () => {
-      const dlg = this.openModal(
-        mode === 'login' ? d.profile.signIn : 'Crear cuenta',
-        `
-        <div class="segmented" id="authModeSeg">
-          <button type="button" class="seg-btn${mode === 'login' ? ' is-active' : ''}" data-amode="login">${this.esc(d.profile.signIn)}</button>
-          <button type="button" class="seg-btn${mode === 'register' ? ' is-active' : ''}" data-amode="register">Crear cuenta</button>
+    const fmtCedula = (raw) => {
+      const dg = String(raw || '').replace(/\D/g, '').slice(0, 11);
+      if (dg.length <= 3) return dg;
+      if (dg.length <= 10) return `${dg.slice(0, 3)}-${dg.slice(3)}`;
+      return `${dg.slice(0, 3)}-${dg.slice(3, 10)}-${dg.slice(10)}`;
+    };
+
+    const linkAriaError = (input, errorId, show) => {
+      if (!input) return;
+      input.setAttribute('aria-invalid', show ? 'true' : 'false');
+      const cur = (input.getAttribute('aria-describedby') || '')
+        .split(/\s+/)
+        .filter((x) => x && x !== errorId);
+      if (show && errorId) cur.push(errorId);
+      if (cur.length) input.setAttribute('aria-describedby', cur.join(' '));
+      else input.removeAttribute('aria-describedby');
+    };
+
+    const renderPendingCard = (msg) => {
+      container.innerHTML = `
+        <div style="display:flex;flex-direction:column;align-items:center;text-align:center;gap:12px;padding:12px 4px">
+          <div style="width:54px;height:54px;border-radius:50%;background:rgba(48,209,88,0.15);color:#30D158;display:grid;place-items:center;font-size:1.5rem;font-weight:900">✓</div>
+          <h3 style="margin:0;font-size:1.08rem">Solicitud enviada a revisión</h3>
+          <p style="margin:0;font-size:0.86rem;line-height:1.48;color:var(--label-2)">${this.esc(msg || 'Tu solicitud fue recibida en el panel administrativo de Credo. Una vez confirmada tu identidad podrás iniciar sesión con tu correo y contraseña.')}</p>
+          <button type="button" class="btn btn-gold btn-block" id="${uidPrefix}BackLoginBtn">Ir a Iniciar sesión</button>
         </div>
-        ${mode === 'login' ? `
-          <form id="authLoginForm" style="display:flex;flex-direction:column;gap:12px">
+      `;
+      container.querySelector(`#${uidPrefix}BackLoginBtn`)?.addEventListener('click', () => {
+        mode = 'login';
+        render();
+      });
+    };
+
+    const render = () => {
+      const isReg = mode === 'register';
+      const isClergy = roleKind === 'clergy';
+
+      container.innerHTML = `
+        <div class="segmented" id="${uidPrefix}ModeSeg" style="margin-bottom:12px">
+          <button type="button" class="seg-btn${!isReg ? ' is-active' : ''}" data-amode="login">${this.esc(d.profile.signIn)}</button>
+          <button type="button" class="seg-btn${isReg ? ' is-active' : ''}" data-amode="register">Crear cuenta</button>
+        </div>
+
+        ${!isReg ? `
+          <form id="${uidPrefix}LoginForm" style="display:flex;flex-direction:column;gap:12px">
             <div class="field">
-              <label for="authEmail">Correo o usuario</label>
-              <input id="authEmail" name="identifier" type="text" placeholder="correo@ejemplo.com" required autocomplete="username" />
+              <label for="${uidPrefix}LogId">Correo o usuario</label>
+              <input id="${uidPrefix}LogId" name="identifier" type="text" placeholder="tu@correo.com" required autocomplete="username" autocorrect="off" autocapitalize="none" spellcheck="false" />
             </div>
             <div class="field">
-              <label for="authPass">Contraseña</label>
-              <input id="authPass" name="password" type="password" placeholder="••••••••" required autocomplete="current-password" />
+              <label for="${uidPrefix}LogPass">Contraseña</label>
+              <div class="pass-wrap">
+                <input id="${uidPrefix}LogPass" name="password" type="password" placeholder="••••••••" required autocomplete="current-password" />
+                <button type="button" class="pass-toggle-btn" data-toggle-pass="${uidPrefix}LogPass" aria-pressed="false">Mostrar</button>
+              </div>
             </div>
-            <button type="submit" class="btn btn-gold btn-block">${this.esc(d.profile.signIn)}</button>
+            <div id="${uidPrefix}LogErr" class="claim-form-err" hidden role="alert"></div>
+            <button type="submit" class="btn btn-gold btn-block" id="${uidPrefix}LogSubmit">${this.esc(d.profile.signIn)}</button>
           </form>
         ` : `
-          <form id="authRegisterForm" style="display:flex;flex-direction:column;gap:12px">
-            <div class="field">
-              <label for="regName">Nombre completo</label>
-              <input id="regName" name="full_name" type="text" placeholder="Tu nombre y apellido" required />
+          <form id="${uidPrefix}RegForm" style="display:flex;flex-direction:column;gap:11px" novalidate>
+            <div class="reg-role-cards" role="group" aria-label="Tipo de registro">
+              <button type="button" class="reg-role-btn" data-rkind="lay" aria-pressed="${!isClergy}">
+                <strong>Fiel Laico</strong>
+                <small>Acceso con verificación de cédula</small>
+              </button>
+              <button type="button" class="reg-role-btn" data-rkind="clergy" aria-pressed="${isClergy}">
+                <strong>Clero / Consagrados</strong>
+                <small>Sacerdotes, diáconos, monjas e iglesias</small>
+              </button>
             </div>
-            <div class="field">
-              <label for="regEmail">Correo electrónico</label>
-              <input id="regEmail" name="email" type="email" placeholder="correo@ejemplo.com" required autocomplete="email" />
+
+            ${isClergy ? `
+              <div style="padding:9px 11px;border-radius:10px;background:light-dark(rgba(10,132,255,0.08),rgba(10,132,255,0.16));font-size:0.78rem;line-height:1.38;color:var(--label)">
+                <strong>Solicitud oficial:</strong> Las cuentas de presbíteros, diáconos, vida consagrada e iglesias pasan por confirmación en el panel de Credo antes de activarse.
+              </div>
+              <div class="field">
+                <label for="${uidPrefix}RegRank">Ministerio en la Iglesia</label>
+                <select id="${uidPrefix}RegRank" name="ecclesiastical_rank">
+                  <option value="priest">Sacerdote / Presbítero</option>
+                  <option value="deacon">Diácono</option>
+                  <option value="religious">Religiosa / Monja / Religioso</option>
+                  <option value="seminarian">Seminarista</option>
+                  <option value="monsignor">Monseñor</option>
+                  <option value="bishop">Obispo / Arzobispo</option>
+                  <option value="church">Parroquia / Iglesia</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="${uidPrefix}RegOffice">Parroquia, Diócesis o Congregación</label>
+                <input id="${uidPrefix}RegOffice" name="current_office_title" type="text" required placeholder="Ej. Parroquia San Juan Bautista · Santo Domingo" />
+              </div>
+            ` : '<input type="hidden" name="ecclesiastical_rank" value="lay" />'}
+
+            <div class="field" id="${uidPrefix}NameGroup">
+              <label for="${uidPrefix}RegName">${isClergy ? 'Nombre y apellidos completos' : 'Nombre y apellidos (exactos a tu cédula)'}</label>
+              <input
+                id="${uidPrefix}RegName"
+                name="full_name"
+                type="text"
+                required
+                autocomplete="name"
+                enterkeyhint="next"
+                aria-invalid="false"
+                placeholder="Ej. Juan Carlos Pérez Gómez"
+              />
+              <div id="${uidPrefix}NameErr" class="field-error-msg">
+                <span role="img" aria-label="Error">❌</span>
+                <span id="${uidPrefix}NameErrTxt">Los datos de tu nombre no coinciden con los de tu cédula.</span>
+              </div>
             </div>
-            <div class="field">
-              <label for="regPass">Contraseña (mín. 6 caracteres)</label>
-              <input id="regPass" name="password" type="password" minlength="6" required autocomplete="new-password" />
+
+            <div class="field" id="${uidPrefix}PhoneGroup">
+              <label for="${uidPrefix}RegPhone">Teléfono / WhatsApp</label>
+              <input
+                id="${uidPrefix}RegPhone"
+                name="phone"
+                type="tel"
+                required
+                autocomplete="tel"
+                enterkeyhint="next"
+                aria-invalid="false"
+                placeholder="809-000-0000"
+              />
+              <div id="${uidPrefix}PhoneErr" class="field-error-msg">
+                <span role="img" aria-label="Error">❌</span> Ingresa un número de teléfono válido.
+              </div>
             </div>
-            <div class="field">
-              <label for="regRank">Estado en la Iglesia</label>
-              <select id="regRank" name="ecclesiastical_rank">
-                <option value="lay">Fiel Laico</option>
-                <option value="catechist">Catequista</option>
-                <option value="seminarian">Seminarista</option>
-                <option value="religious">Religioso/a</option>
-                <option value="deacon">Diácono (requiere verificación)</option>
-                <option value="priest">Sacerdote (requiere verificación)</option>
-                <option value="bishop">Obispo (requiere verificación)</option>
-              </select>
+
+            <div class="field" id="${uidPrefix}EmailGroup">
+              <label for="${uidPrefix}RegEmail">Correo electrónico</label>
+              <input
+                id="${uidPrefix}RegEmail"
+                name="email"
+                type="email"
+                required
+                autocomplete="username"
+                spellcheck="false"
+                enterkeyhint="next"
+                aria-invalid="false"
+                placeholder="tu@correo.com"
+              />
+              <div id="${uidPrefix}EmailErr" class="field-error-msg">
+                <span role="img" aria-label="Error">❌</span> Ingresa un correo electrónico válido.
+              </div>
             </div>
-            <button type="submit" class="btn btn-gold btn-block">Crear cuenta en Credo</button>
+
+            <div class="field" id="${uidPrefix}PassGroup">
+              <label for="${uidPrefix}RegPass">Contraseña (mín. 6 caracteres)</label>
+              <div class="pass-wrap">
+                <input
+                  id="${uidPrefix}RegPass"
+                  name="password"
+                  type="password"
+                  minlength="6"
+                  required
+                  autocomplete="new-password"
+                  enterkeyhint="next"
+                  aria-invalid="false"
+                  placeholder="Mínimo 6 caracteres"
+                />
+                <button type="button" class="pass-toggle-btn" data-toggle-pass="${uidPrefix}RegPass" aria-pressed="false">Mostrar</button>
+              </div>
+              <div id="${uidPrefix}PassErr" class="field-error-msg">
+                <span role="img" aria-label="Error">❌</span> La contraseña debe tener al menos 6 caracteres.
+              </div>
+            </div>
+
+            <div class="field" id="${uidPrefix}CedulaGroup">
+              <label for="${uidPrefix}RegCedula">Número de Cédula (11 dígitos)</label>
+              <input
+                id="${uidPrefix}RegCedula"
+                name="cedula"
+                type="text"
+                inputmode="numeric"
+                maxlength="13"
+                required
+                autocorrect="off"
+                autocapitalize="none"
+                spellcheck="false"
+                enterkeyhint="done"
+                aria-invalid="false"
+                placeholder="000-0000000-0"
+              />
+              <div id="${uidPrefix}CedulaErr" class="field-error-msg">
+                <span role="img" aria-label="Error">❌</span>
+                <span id="${uidPrefix}CedulaErrTxt">Ingresa una cédula válida de 11 dígitos.</span>
+              </div>
+              <div id="${uidPrefix}CedulaStatus" hidden></div>
+            </div>
+
+            <div id="${uidPrefix}RegGlobalErr" class="claim-form-err" hidden role="alert"></div>
+            <div id="${uidPrefix}LiveAnnouncer" class="visually-hidden" aria-live="polite"></div>
+
+            <button type="submit" class="btn btn-gold btn-block" id="${uidPrefix}RegSubmit">
+              ${isClergy ? 'Enviar solicitud de ingreso' : 'Verificar cédula y entrar'}
+            </button>
           </form>
         `}
-        `
-      );
+      `;
 
-      dlg.querySelector('#authModeSeg').onclick = (e) => {
+      container.querySelector(`#${uidPrefix}ModeSeg`)?.addEventListener('click', (e) => {
         const b = e.target.closest('[data-amode]');
         if (!b || b.dataset.amode === mode) return;
         mode = b.dataset.amode;
-        renderAuth();
+        render();
+      });
+
+      container.querySelectorAll('[data-toggle-pass]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const inp = container.querySelector(`#${btn.dataset.togglePass}`);
+          if (!inp) return;
+          const showing = inp.type === 'text';
+          inp.type = showing ? 'password' : 'text';
+          btn.setAttribute('aria-pressed', String(!showing));
+          btn.textContent = showing ? 'Mostrar' : 'Ocultar';
+        });
+      });
+
+      container.querySelectorAll('[data-rkind]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          if (btn.dataset.rkind === roleKind) return;
+          roleKind = btn.dataset.rkind;
+          render();
+        });
+      });
+
+      const loginForm = container.querySelector(`#${uidPrefix}LoginForm`);
+      if (loginForm) {
+        loginForm.addEventListener('submit', async (ev) => {
+          ev.preventDefault();
+          const fd = new FormData(loginForm);
+          const errBox = container.querySelector(`#${uidPrefix}LogErr`);
+          const subBtn = container.querySelector(`#${uidPrefix}LogSubmit`);
+          errBox.hidden = true;
+          subBtn.disabled = true;
+          try {
+            const res = await this.api('/api/v1/auth/login', {
+              method: 'POST',
+              body: { identifier: fd.get('identifier'), password: fd.get('password') },
+            });
+            this._applySession(res);
+            onAuthenticated?.(res);
+          } catch (err) {
+            errBox.textContent = err.message || 'Credenciales incorrectas.';
+            errBox.hidden = false;
+            subBtn.disabled = false;
+          }
+        });
+        return;
+      }
+
+      const regForm = container.querySelector(`#${uidPrefix}RegForm`);
+      if (!regForm) return;
+
+      const nameGroup = container.querySelector(`#${uidPrefix}NameGroup`);
+      const nameInput = container.querySelector(`#${uidPrefix}RegName`);
+      const nameErrTxt = container.querySelector(`#${uidPrefix}NameErrTxt`);
+      const cedulaGroup = container.querySelector(`#${uidPrefix}CedulaGroup`);
+      const cedulaInput = container.querySelector(`#${uidPrefix}RegCedula`);
+      const cedulaErrTxt = container.querySelector(`#${uidPrefix}CedulaErrTxt`);
+      const cedulaStatus = container.querySelector(`#${uidPrefix}CedulaStatus`);
+      const globalErr = container.querySelector(`#${uidPrefix}RegGlobalErr`);
+      const announcer = container.querySelector(`#${uidPrefix}LiveAnnouncer`);
+      const submitBtn = container.querySelector(`#${uidPrefix}RegSubmit`);
+      let announceTimer = 0;
+
+      const announcePolite = (text) => {
+        if (!announcer) return;
+        clearTimeout(announceTimer);
+        announcer.textContent = '';
+        if (!text) return;
+        announceTimer = setTimeout(() => {
+          announcer.textContent = text;
+        }, 500);
       };
 
-      dlg.querySelector('#authLoginForm')?.addEventListener('submit', async (ev) => {
-        ev.preventDefault();
-        const fd = new FormData(ev.target);
+      [
+        [`#${uidPrefix}RegPhone`, `${uidPrefix}PhoneErr`],
+        [`#${uidPrefix}RegEmail`, `${uidPrefix}EmailErr`],
+        [`#${uidPrefix}RegPass`, `${uidPrefix}PassErr`],
+      ].forEach(([sel, errId]) => {
+        const inp = container.querySelector(sel);
+        inp?.addEventListener('input', () => {
+          if (inp.getAttribute('aria-invalid') === 'true') {
+            linkAriaError(inp, errId, false);
+          }
+        });
+      });
+
+      const applyVerifyVisuals = (st, { announce = false } = {}) => {
+        nameGroup.classList.remove('field--mismatch', 'field--verified');
+        cedulaGroup.classList.remove('field--mismatch', 'field--verified');
+        linkAriaError(nameInput, `${uidPrefix}NameErr`, false);
+        linkAriaError(cedulaInput, `${uidPrefix}CedulaErr`, false);
+
+        if (!st) {
+          cedulaStatus.hidden = true;
+          announcePolite('');
+          return;
+        }
+
+        if (st.errorField === 'cedula') {
+          cedulaGroup.classList.add('field--mismatch');
+          const msg = st.message || 'Cédula no válida.';
+          if (cedulaErrTxt) cedulaErrTxt.textContent = msg;
+          linkAriaError(cedulaInput, `${uidPrefix}CedulaErr`, true);
+          cedulaStatus.hidden = true;
+          if (announce) announcePolite(`Error en cédula: ${msg}`);
+          return;
+        }
+
+        if (st.errorField === 'full_name') {
+          nameGroup.classList.add('field--mismatch');
+          const msg =
+            st.message ||
+            'Los datos de tu nombre no coinciden con los de tu cédula. Corrige tu nombre y apellido exactos.';
+          if (nameErrTxt) {
+            nameErrTxt.textContent = msg;
+          }
+          linkAriaError(nameInput, `${uidPrefix}NameErr`, true);
+          cedulaStatus.className = 'cedula-status-pill cedula-status-pill--err';
+          cedulaStatus.textContent = '⚠ El nombre escrito arriba no coincide con esta cédula.';
+          cedulaStatus.hidden = false;
+          if (announce) announcePolite(`Error en nombre: ${msg}`);
+          return;
+        }
+
+        if (st.validCedula && (st.nameMatches || isClergy)) {
+          nameGroup.classList.add('field--verified');
+          cedulaGroup.classList.add('field--verified');
+          cedulaStatus.className = 'cedula-status-pill cedula-status-pill--ok';
+          cedulaStatus.textContent = `✓ ${st.message || 'Identidad verificada con tu cédula.'}`;
+          cedulaStatus.hidden = false;
+          announcePolite('');
+        }
+      };
+
+      const runLiveCedulaCheck = async ({ announce = true } = {}) => {
+        const digits = String(cedulaInput.value || '').replace(/\D/g, '');
+        const curName = String(nameInput.value || '').trim();
+        const curRank = isClergy
+          ? container.querySelector(`#${uidPrefix}RegRank`)?.value || 'priest'
+          : 'lay';
+
+        if (digits.length < 11) {
+          verifyState = { checkedCedula: '', checkedName: '', validCedula: false };
+          applyVerifyVisuals(null);
+          return null;
+        }
+
+        const seq = ++probeSeq;
+        cedulaStatus.className = 'cedula-status-pill cedula-status-pill--checking';
+        cedulaStatus.textContent = 'Verificando cédula con tus datos…';
+        cedulaStatus.hidden = false;
+
         try {
-          const res = await this.api('/api/v1/auth/login', {
+          const res = await this.api('/api/v1/auth/verify-cedula', {
             method: 'POST',
-            body: { identifier: fd.get('identifier'), password: fd.get('password') },
+            body: { cedula: digits, full_name: curName, ecclesiastical_rank: curRank },
           });
-          this._applySession(res);
-          this.closeModal();
+          if (seq !== probeSeq) return null;
+          verifyState = {
+            checkedCedula: digits,
+            checkedName: curName,
+            validCedula: Boolean(res.valid_cedula),
+            duplicate: Boolean(res.duplicate),
+            nameMatches: Boolean(res.name_matches),
+            requiresApproval: Boolean(res.requires_approval),
+            errorField: res.error_field || '',
+            message: res.message || '',
+          };
+          applyVerifyVisuals(verifyState, { announce });
+          return verifyState;
         } catch (err) {
-          this.toast(err.message);
+          if (seq !== probeSeq) return null;
+          cedulaStatus.className = 'cedula-status-pill cedula-status-pill--err';
+          cedulaStatus.textContent = err.message || 'Error al verificar la cédula.';
+          cedulaStatus.hidden = false;
+          return null;
+        }
+      };
+
+      cedulaInput.addEventListener('input', () => {
+        const formatted = fmtCedula(cedulaInput.value);
+        if (cedulaInput.value !== formatted) cedulaInput.value = formatted;
+        globalErr.hidden = true;
+        clearTimeout(probeTimer);
+        const digits = formatted.replace(/\D/g, '');
+        if (digits.length === 11) {
+          probeTimer = setTimeout(() => runLiveCedulaCheck({ announce: true }), 180);
+        } else {
+          applyVerifyVisuals(null);
         }
       });
 
-      dlg.querySelector('#authRegisterForm')?.addEventListener('submit', async (ev) => {
+      cedulaInput.addEventListener('blur', () => {
+        const digits = cedulaInput.value.replace(/\D/g, '');
+        if (digits.length > 0 && digits.length < 11) {
+          applyVerifyVisuals(
+            {
+              errorField: 'cedula',
+              message: 'Completa los 11 dígitos de tu cédula (000-0000000-0).',
+            },
+            { announce: true }
+          );
+        } else if (digits.length === 11) {
+          runLiveCedulaCheck({ announce: true });
+        }
+      });
+
+      nameInput.addEventListener('input', () => {
+        globalErr.hidden = true;
+        if (nameGroup.classList.contains('field--mismatch')) {
+          nameGroup.classList.remove('field--mismatch');
+          linkAriaError(nameInput, `${uidPrefix}NameErr`, false);
+        }
+        const digits = cedulaInput.value.replace(/\D/g, '');
+        if (digits.length === 11) {
+          clearTimeout(probeTimer);
+          probeTimer = setTimeout(() => runLiveCedulaCheck({ announce: true }), 320);
+        }
+      });
+
+      regForm.addEventListener('submit', async (ev) => {
         ev.preventDefault();
-        const fd = new FormData(ev.target);
+        globalErr.hidden = true;
+
+        const fd = new FormData(regForm);
+        const cleanName = String(fd.get('full_name') || '').trim();
+        const cleanPhone = String(fd.get('phone') || '').trim();
+        const cleanEmail = String(fd.get('email') || '').trim();
+        const cleanPass = String(fd.get('password') || '');
+        const digits = String(fd.get('cedula') || '').replace(/\D/g, '');
+
+        if (cleanName.split(/\s+/).filter(Boolean).length < 2) {
+          applyVerifyVisuals({
+            errorField: 'full_name',
+            message: 'Escribe tu nombre y apellido completos tal como figuran en tu cédula.',
+          });
+          nameInput.focus();
+          return;
+        }
+        if (cleanPhone.replace(/\D/g, '').length < 8) {
+          const pInp = container.querySelector(`#${uidPrefix}RegPhone`);
+          linkAriaError(pInp, `${uidPrefix}PhoneErr`, true);
+          pInp?.focus();
+          return;
+        }
+        if (!cleanEmail.includes('@')) {
+          const eInp = container.querySelector(`#${uidPrefix}RegEmail`);
+          linkAriaError(eInp, `${uidPrefix}EmailErr`, true);
+          eInp?.focus();
+          return;
+        }
+        if (cleanPass.length < 6) {
+          const pwInp = container.querySelector(`#${uidPrefix}RegPass`);
+          linkAriaError(pwInp, `${uidPrefix}PassErr`, true);
+          pwInp?.focus();
+          return;
+        }
+        if (digits.length !== 11) {
+          applyVerifyVisuals({
+            errorField: 'cedula',
+            message: 'Ingresa los 11 dígitos de tu cédula (000-0000000-0).',
+          });
+          cedulaInput.focus();
+          return;
+        }
+
+        submitBtn.disabled = true;
+        const origLabel = submitBtn.textContent;
+        submitBtn.textContent = 'Verificando identidad…';
+
         try {
+          if (verifyState.checkedCedula !== digits || verifyState.checkedName !== cleanName) {
+            await runLiveCedulaCheck();
+          }
+
+          if (verifyState.errorField === 'cedula' || !verifyState.validCedula || verifyState.duplicate) {
+            cedulaInput.focus();
+            submitBtn.disabled = false;
+            submitBtn.textContent = origLabel;
+            return;
+          }
+
+          if (!isClergy && verifyState.errorField === 'full_name') {
+            nameInput.focus();
+            submitBtn.disabled = false;
+            submitBtn.textContent = origLabel;
+            return;
+          }
+
           const res = await this.api('/api/v1/auth/register', {
             method: 'POST',
             body: {
-              full_name: fd.get('full_name'),
-              email: fd.get('email'),
-              password: fd.get('password'),
-              ecclesiastical_rank: fd.get('ecclesiastical_rank'),
+              full_name: cleanName,
+              phone: cleanPhone,
+              email: cleanEmail,
+              password: cleanPass,
+              cedula: digits,
+              ecclesiastical_rank: fd.get('ecclesiastical_rank') || 'lay',
+              current_office_title: fd.get('current_office_title') || '',
               preferred_locale: this.locale,
             },
           });
+
+          if (res.pending_approval) {
+            renderPendingCard(res.message);
+            return;
+          }
+
           this._applySession(res);
-          this.closeModal();
+          onAuthenticated?.(res);
         } catch (err) {
-          this.toast(err.message);
+          const msg = err.message || 'No se pudo completar el registro.';
+          if (/nombre.*c[eé]dula|coinciden/i.test(msg)) {
+            applyVerifyVisuals({ errorField: 'full_name', message: msg });
+            nameInput.focus();
+          } else if (/c[eé]dula/i.test(msg)) {
+            applyVerifyVisuals({ errorField: 'cedula', message: msg });
+            cedulaInput.focus();
+          } else {
+            globalErr.textContent = msg;
+            globalErr.hidden = false;
+          }
+          submitBtn.disabled = false;
+          submitBtn.textContent = origLabel;
         }
       });
     };
 
-    renderAuth();
+    render();
+  }
+
+  openAuthModal(initialMode = 'login') {
+    const dlg = this.openModal(
+      'Acceso a Credo',
+      `<div id="modalAuthMount"></div>`
+    );
+    const mountEl = dlg.querySelector('#modalAuthMount');
+    this.renderAuthWidget(mountEl, {
+      initialMode,
+      uidPrefix: 'dlgAuth',
+      onAuthenticated: () => {
+        this.closeModal();
+      },
+    });
   }
 
   async openClaimProfileModal(claimToken) {

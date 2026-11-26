@@ -9,113 +9,45 @@ function proxySrc(url) {
 }
 
 function renderAuthGate({ root, app, signal }) {
-  let mode = 'login';
-  const render = () => {
-    const isReg = mode === 'register';
-    root.innerHTML = `
-      <div class="ig-prof-top">
-        <div class="ig-prof-username">
-          <img class="brand-logo" src="/icons/credo-192.png" alt="" width="30" height="30" />
-          <span>Credo</span>
-        </div>
-        <div class="ig-prof-actions" style="gap:8px">
-          <button type="button" class="credo-one-trigger" id="authGateCredoOneBtn" aria-label="Abrir Familia Credo One">
-            <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M12 2l2.4 6.6L21 11l-6.6 2.4L12 20l-2.4-6.6L3 11l6.6-2.4z"/></svg>
-            <span>Credo One</span>
-          </button>
-          <a href="#/settings" class="ig-icon-btn" aria-label="Configuración">
-            <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>
-          </a>
-        </div>
+  root.innerHTML = `
+    <div class="ig-prof-top">
+      <div class="ig-prof-username">
+        <img class="brand-logo" src="/icons/credo-192.png" alt="" width="30" height="30" />
+        <span>Credo</span>
       </div>
-
-      <div class="ig-auth-gate">
-        <div class="ig-auth-card">
-          <div style="text-align:center;margin-bottom:4px">
-            <img src="/icons/credo-192.png" alt="Credo" width="64" height="64" style="display:block;margin:0 auto 10px" />
-            <h1 class="t-title-2" style="margin:0">${isReg ? 'Crear cuenta en Credo' : 'Inicia sesión en Credo'}</h1>
-            <p class="t-footnote" style="margin:4px 0 0">Tu comunidad católica, tus publicaciones y tu parroquia cercana</p>
-          </div>
-
-          <div class="seg-tabs" style="margin-bottom:4px">
-            <button type="button" class="seg-tab${!isReg ? ' is-active' : ''}" data-auth-mode="login">Iniciar sesión</button>
-            <button type="button" class="seg-tab${isReg ? ' is-active' : ''}" data-auth-mode="register">Crear cuenta</button>
-          </div>
-
-          <form id="igAuthForm" style="display:flex;flex-direction:column;gap:12px">
-            ${isReg ? `
-              <div class="field">
-                <label for="authName">Nombre completo</label>
-                <input id="authName" name="full_name" required placeholder="Ej. María Pérez" />
-              </div>
-              <div class="field">
-                <label for="authUser">Usuario</label>
-                <input id="authUser" name="username" placeholder="Ej. maria_perez" autocomplete="username" />
-              </div>
-              <div class="field">
-                <label for="authCountry">País (para conectar con tu parroquia)</label>
-                <select id="authCountry" name="country_code">
-                  <option value="DO" selected>República Dominicana</option>
-                  <option value="ES">España</option>
-                  <option value="MX">México</option>
-                  <option value="CO">Colombia</option>
-                  <option value="US">Estados Unidos</option>
-                  <option value="AR">Argentina</option>
-                  <option value="PE">Perú</option>
-                  <option value="VA">Ciudad del Vaticano / Universal</option>
-                </select>
-              </div>` : ''}
-            <div class="field">
-              <label for="authEmail">Correo electrónico</label>
-              <input id="authEmail" name="email" type="email" required placeholder="tu@correo.com" autocomplete="email" />
-            </div>
-            <div class="field">
-              <label for="authPass">Contraseña</label>
-              <input id="authPass" name="password" type="password" required minlength="6" placeholder="Mínimo 6 caracteres" autocomplete="${isReg ? 'new-password' : 'current-password'}" />
-            </div>
-            <div id="igAuthError" style="color:var(--live-red);font-size:0.82rem;font-weight:700;display:none"></div>
-            <button type="submit" class="btn btn-gold btn-block" id="igAuthSubmit">
-              ${isReg ? 'Crear cuenta' : 'Entrar'}
-            </button>
-          </form>
-        </div>
+      <div class="ig-prof-actions" style="gap:8px">
+        <button type="button" class="credo-one-trigger" id="authGateCredoOneBtn" aria-label="Abrir Familia Credo One">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M12 2l2.4 6.6L21 11l-6.6 2.4L12 20l-2.4-6.6L3 11l6.6-2.4z"/></svg>
+          <span>Credo One</span>
+        </button>
+        <a href="#/settings" class="ig-icon-btn" aria-label="Configuración">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>
+        </a>
       </div>
-    `;
+    </div>
 
-    root.querySelector('#authGateCredoOneBtn')?.addEventListener('click', () => app.openCredoOne());
-    root.querySelectorAll('[data-auth-mode]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        mode = btn.dataset.authMode;
-        render();
-      });
-    });
+    <div class="ig-auth-gate">
+      <div class="ig-auth-card">
+        <div style="text-align:center;margin-bottom:10px">
+          <img src="/icons/credo-192.png" alt="Credo" width="60" height="60" style="display:block;margin:0 auto 8px" />
+          <h1 class="t-title-2" style="margin:0">Comunidad Verificada Credo</h1>
+          <p class="t-footnote" style="margin:4px 0 0">Identidad protegida con cédula contra cuentas falsas y bots</p>
+        </div>
+        <div id="profAuthWidgetMount"></div>
+      </div>
+    </div>
+  `;
 
-    root.querySelector('#igAuthForm').addEventListener('submit', async (ev) => {
-      ev.preventDefault();
-      const fd = new FormData(ev.currentTarget);
-      const errBox = root.querySelector('#igAuthError');
-      const submitBtn = root.querySelector('#igAuthSubmit');
-      errBox.style.display = 'none';
-      submitBtn.disabled = true;
-      submitBtn.textContent = isReg ? 'Creando cuenta...' : 'Entrando...';
+  root.querySelector('#authGateCredoOneBtn')?.addEventListener('click', () => app.openCredoOne());
+  app.renderAuthWidget(root.querySelector('#profAuthWidgetMount'), {
+    initialMode: 'login',
+    uidPrefix: 'pgAuth',
+    onAuthenticated: async (res) => {
+      app.toast(`Bienvenido, ${res.user.full_name}`);
+      await mount({ root, app, signal });
+    },
+  });
 
-      try {
-        const endpoint = isReg ? '/api/v1/auth/register' : '/api/v1/auth/login';
-        const payload = Object.fromEntries(fd.entries());
-        const res = await app.api(endpoint, { method: 'POST', body: payload });
-        app.setAuth(res.token, res.user);
-        app.toast(`Bienvenido, ${res.user.full_name}`);
-        await mount({ root, app, signal });
-      } catch (err) {
-        errBox.textContent = err.message || 'No se pudo completar el acceso';
-        errBox.style.display = 'block';
-        submitBtn.disabled = false;
-        submitBtn.textContent = isReg ? 'Crear cuenta' : 'Entrar';
-      }
-    });
-  };
-
-  render();
   return { cleanup() {} };
 }
 
@@ -177,28 +109,35 @@ export async function mount({ root, app, signal }) {
     const links = Array.isArray(profile.website_links) ? profile.website_links : [];
     let activeTab = 'posts';
 
-    const openEditModal = () => {
+    const openEditModal = ({ autoPickPhoto = false } = {}) => {
       const firstLink = links[0] || { label: '', url: '' };
       let nextAvatarUrl = profile.avatar_url || '';
+      let uploadInFlight = null;
+
       const dlg = app.openModal(
         isCto ? 'Personalizar Perfil CTO' : 'Editar perfil',
         `
         <form id="editProfForm" style="display:flex;flex-direction:column;gap:12px">
-          <div style="display:flex;align-items:center;gap:12px">
-            <span class="avatar" id="epAvatarPreview" style="--av-sz:58px;--av-bg:${app.esc(profile.avatar_color || '#081226')}">
-              ${avUrl ? `<img src="${app.esc(avUrl)}" alt="" />` : app.initials(profile.full_name)}
-            </span>
-            <div style="display:flex;flex-direction:column;gap:4px">
-              <label class="btn btn-soft btn-sm" style="cursor:pointer;width:fit-content">
+          <div style="display:flex;align-items:center;gap:14px;padding:10px 12px;border-radius:14px;background:var(--surface-2);border:var(--hairline) solid var(--sep)">
+            <button type="button" id="epAvatarTapBtn" aria-label="Seleccionar foto de perfil" style="position:relative;padding:0;border:none;background:none;cursor:pointer;flex-shrink:0">
+              <span class="avatar" id="epAvatarPreview" style="--av-sz:64px;--av-bg:${app.esc(profile.avatar_color || '#081226')}">
+                ${avUrl ? `<img src="${app.esc(avUrl)}" alt="" />` : app.initials(profile.full_name)}
+              </span>
+              <span class="prof-avatar-cam-btn" aria-hidden="true" style="width:24px;height:24px;right:-2px;bottom:-2px">
+                <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+              </span>
+            </button>
+            <div style="display:flex;flex-direction:column;gap:5px;min-width:0">
+              <label class="btn btn-gold btn-sm" style="cursor:pointer;width:fit-content">
                 <input type="file" id="epAvatarFile" accept="image/*" hidden />
-                <span id="epAvatarBtnLbl">📷 Cambiar foto HD</span>
+                <span id="epAvatarBtnLbl">📷 Subir foto de perfil</span>
               </label>
-              <small class="t-caption" id="epAvatarHint">Subida directa a Credo Turbo Edge CDN</small>
+              <small class="t-caption" id="epAvatarHint">Toca tu foto o el botón para elegir desde tu galería o cámara</small>
             </div>
           </div>
           <div class="field">
             <label for="epName">Nombre completo</label>
-            <input id="epName" name="full_name" required value="${app.esc(profile.full_name || '')}" />
+            <input id="epName" name="full_name" required autocomplete="name" value="${app.esc(profile.full_name || '')}" />
           </div>
           ${isCto || profile.is_ceo ? `
           <div class="field">
@@ -207,7 +146,7 @@ export async function mount({ root, app, signal }) {
           </div>` : ''}
           <div class="field">
             <label for="epBio">Biografía</label>
-            <textarea id="epBio" name="bio" placeholder="Comparte tu servicio, ingeniería o comunidad...">${app.esc(profile.bio || '')}</textarea>
+            <textarea id="epBio" name="bio" placeholder="Comparte tu servicio, parroquia o comunidad...">${app.esc(profile.bio || '')}</textarea>
           </div>
           <div class="field">
             <label for="epMotto">Lema personal</label>
@@ -216,7 +155,7 @@ export async function mount({ root, app, signal }) {
           <div style="display:grid;grid-template-columns:1fr 1.4fr;gap:8px">
             <div class="field">
               <label for="epLinkLabel">Etiqueta enlace</label>
-              <input id="epLinkLabel" name="link_label" value="${app.esc(firstLink.label || '')}" placeholder="Ej. Paulino's Studios" />
+              <input id="epLinkLabel" name="link_label" value="${app.esc(firstLink.label || '')}" placeholder="Ej. Mi Parroquia" />
             </div>
             <div class="field">
               <label for="epLinkUrl">URL (https://...)</label>
@@ -229,33 +168,75 @@ export async function mount({ root, app, signal }) {
       );
 
       const avInput = dlg.querySelector('#epAvatarFile');
+      const avTapBtn = dlg.querySelector('#epAvatarTapBtn');
       const avPreview = dlg.querySelector('#epAvatarPreview');
       const avHint = dlg.querySelector('#epAvatarHint');
       const avBtnLbl = dlg.querySelector('#epAvatarBtnLbl');
+      const saveBtn = dlg.querySelector('#epSaveBtn');
 
-      avInput?.addEventListener('change', async () => {
+      avTapBtn?.addEventListener('click', () => avInput?.click());
+
+      avInput?.addEventListener('change', () => {
         const file = avInput.files?.[0];
         if (!file) return;
         avBtnLbl.textContent = 'Subiendo HD…';
-        try {
-          const uploaded = await app.uploadMediaFast(file, {
-            maxDim: 900,
-            onProgress: ({ pct, mbPerSec }) => {
-              if (avHint) avHint.textContent = `Turbo Edge: ${pct}% · ${mbPerSec.toFixed(1)} MB/s`;
-            },
-          });
-          nextAvatarUrl = uploaded.url;
-          if (avPreview) avPreview.innerHTML = `<img src="${app.esc(nextAvatarUrl)}" alt="" />`;
-          if (avHint) avHint.textContent = '✓ Foto HD lista en Edge CDN';
-        } catch (err) {
-          if (avHint) avHint.textContent = err.message || 'No se pudo subir la imagen';
-        } finally {
-          avBtnLbl.textContent = '📷 Cambiar foto HD';
+        if (saveBtn) {
+          saveBtn.disabled = true;
+          saveBtn.textContent = 'Subiendo foto…';
         }
+        uploadInFlight = (async () => {
+          try {
+            const uploaded = await app.uploadMediaFast(file, {
+              maxDim: 900,
+              onProgress: ({ pct, mbPerSec }) => {
+                if (avHint) avHint.textContent = `Turbo Edge: ${pct}% · ${mbPerSec.toFixed(1)} MB/s`;
+              },
+            });
+            nextAvatarUrl = uploaded.url;
+            if (avPreview) avPreview.innerHTML = `<img src="${app.esc(nextAvatarUrl)}" alt="" />`;
+            // Persist avatar immediately so even closing the dialog keeps the new profile photo!
+            const saved = await app.api('/api/v1/users/me', {
+              method: 'PUT',
+              body: { avatar_url: nextAvatarUrl },
+            });
+            if (saved?.user) {
+              profile.avatar_url = saved.user.avatar_url;
+              app.user = { ...app.user, ...saved.user };
+              try { localStorage.setItem('credo-user', JSON.stringify(app.user)); } catch {}
+              app.clearLocalCache('/api/v1/users');
+              app.clearLocalCache('/api/v1/posts');
+              app.renderChrome();
+              const mainAv = root.querySelector('.ig-prof-avatar');
+              if (mainAv) {
+                mainAv.dataset.zoomSrc = nextAvatarUrl;
+                mainAv.innerHTML = `<img src="${app.esc(nextAvatarUrl)}" alt="${app.esc(profile.full_name || '')}" />`;
+              }
+            }
+            if (avHint) avHint.textContent = '✓ Foto de perfil guardada en HD';
+            app.toast('Foto de perfil actualizada');
+          } catch (err) {
+            if (avHint) avHint.textContent = err.message || 'No se pudo subir la imagen';
+            app.toast(err.message || 'Error al subir la foto');
+          } finally {
+            avBtnLbl.textContent = '📷 Cambiar foto';
+            if (saveBtn) {
+              saveBtn.disabled = false;
+              saveBtn.textContent = 'Guardar cambios';
+            }
+            uploadInFlight = null;
+          }
+        })();
       });
+
+      if (autoPickPhoto) {
+        setTimeout(() => avInput?.click(), 80);
+      }
 
       dlg.querySelector('#editProfForm').addEventListener('submit', async (ev) => {
         ev.preventDefault();
+        if (uploadInFlight) {
+          await uploadInFlight;
+        }
         const fd = new FormData(ev.currentTarget);
         const linkLabel = String(fd.get('link_label') || '').trim();
         const linkUrl = String(fd.get('link_url') || '').trim();
@@ -266,6 +247,7 @@ export async function mount({ root, app, signal }) {
               ? links.slice(1)
               : links;
 
+        if (saveBtn) saveBtn.disabled = true;
         try {
           const bodyPayload = {
             full_name: fd.get('full_name'),
@@ -282,13 +264,17 @@ export async function mount({ root, app, signal }) {
             body: bodyPayload,
           });
           if (res.user) {
-            app.user = res.user;
+            app.user = { ...app.user, ...res.user };
+            try { localStorage.setItem('credo-user', JSON.stringify(app.user)); } catch {}
+            app.clearLocalCache('/api/v1/users');
+            app.clearLocalCache('/api/v1/posts');
             app.renderChrome();
           }
           app.closeModal();
           app.toast('Perfil actualizado');
           mount({ root, app, signal });
         } catch (err) {
+          if (saveBtn) saveBtn.disabled = false;
           app.toast(err.message);
         }
       });
@@ -384,6 +370,9 @@ export async function mount({ root, app, signal }) {
                     ${avUrl ? `<img src="${app.esc(avUrl)}" alt="${app.esc(profile.full_name)}" />` : '&lt;P/&gt;'}
                   </div>
                 </div>
+                <button type="button" class="prof-avatar-cam-btn" id="igQuickPhotoBtn" aria-label="Cambiar foto de perfil" style="right:-4px;top:2px;bottom:auto;z-index:3">
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+                </button>
                 <span class="cto-avatar-crest" aria-hidden="true">&lt;/&gt; CTO</span>
               </div>
 
@@ -446,16 +435,21 @@ export async function mount({ root, app, signal }) {
       `
       : `
         <section class="ig-prof-head">
-          <div
-            class="ig-prof-avatar"
-            data-zoomable
-            data-zoom-name="${app.esc(`${profile.title_prefix ? `${profile.title_prefix} ` : ''}${profile.full_name || 'Mi Perfil'}`)}"
-            data-zoom-src="${app.esc(avUrl)}"
-            data-zoom-bg="${app.esc(profile.avatar_color || '#0F1E36')}"
-            style="${profile.avatar_color ? `background:${app.esc(profile.avatar_color)}` : ''}"
-            title="Mantén presionado para ampliar"
-          >
-            ${avUrl ? `<img src="${app.esc(avUrl)}" alt="${app.esc(profile.full_name)}" />` : app.initials(profile.full_name)}
+          <div class="prof-avatar-outer">
+            <div
+              class="ig-prof-avatar"
+              data-zoomable
+              data-zoom-name="${app.esc(`${profile.title_prefix ? `${profile.title_prefix} ` : ''}${profile.full_name || 'Mi Perfil'}`)}"
+              data-zoom-src="${app.esc(avUrl)}"
+              data-zoom-bg="${app.esc(profile.avatar_color || '#0F1E36')}"
+              style="${profile.avatar_color ? `background:${app.esc(profile.avatar_color)}` : ''}"
+              title="Mantén presionado para ampliar"
+            >
+              ${avUrl ? `<img src="${app.esc(avUrl)}" alt="${app.esc(profile.full_name)}" />` : app.initials(profile.full_name)}
+            </div>
+            <button type="button" class="prof-avatar-cam-btn" id="igQuickPhotoBtn" aria-label="Cambiar foto de perfil">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+            </button>
           </div>
           <div class="ig-prof-stats">
             <div>
@@ -556,7 +550,8 @@ export async function mount({ root, app, signal }) {
     profCoBtn?.addEventListener('click', () => app.openCredoOne(planMeta ? { view: 'billing' } : {}));
     root.querySelector('#profPlanStripBtn')?.addEventListener('click', () => app.openCredoOne({ view: 'billing' }));
     root.querySelector('#igAddPostBtn')?.addEventListener('click', () => app.openComposer());
-    root.querySelector('#igEditProfBtn').addEventListener('click', openEditModal);
+    root.querySelector('#igEditProfBtn')?.addEventListener('click', () => openEditModal());
+    root.querySelector('#igQuickPhotoBtn')?.addEventListener('click', () => openEditModal({ autoPickPhoto: true }));
     root.querySelector('#igShareProfBtn').addEventListener('click', async () => {
       const shareUrl = `${location.origin}/#/user/${profile.id}`;
       try {
@@ -577,6 +572,11 @@ export async function mount({ root, app, signal }) {
     });
 
     renderGrid();
+
+    if (location.hash.includes('edit=1')) {
+      try { history.replaceState(null, '', '#/profile'); } catch {}
+      openEditModal();
+    }
   } catch (err) {
     if (err.name !== 'AbortError') root.innerHTML = `<div class="empty-box">${app.esc(err.message)}</div>`;
   }

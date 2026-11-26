@@ -53,6 +53,13 @@ export async function mount({ root, app }) {
       <div class="ios-list">
         <div class="ios-row">
           <div>
+            <div class="ios-row-label">Foto y datos de perfil</div>
+            <div class="ios-row-sub">Sube tu foto de perfil y edita tu biografía</div>
+          </div>
+          <a href="#/profile?edit=1" class="btn btn-sm btn-soft">Editar perfil</a>
+        </div>
+        <div class="ios-row">
+          <div>
             <div class="ios-row-label">${app.esc(app.user.full_name)}</div>
             <div class="ios-row-sub">@${app.esc(app.user.username || 'credo')} · ${app.esc(d.ranks[app.user.ecclesiastical_rank] || 'Fiel')}</div>
           </div>

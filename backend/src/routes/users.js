@@ -71,7 +71,8 @@ router.get('/', async (req, res) => {
         );
       }
 
-      const whereSql = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+      clauses.push(`COALESCE(u.account_status, 'active') = 'active'`);
+      const whereSql = `WHERE ${clauses.join(' AND ')}`;
       params.push(safeLimit);
 
       const { rows } = await pool.query(
@@ -196,7 +197,10 @@ router.get('/:id', optionalAuth, async (req, res) => {
     }
 
     const baseUser = await apiCache.getOrLoad(`users:prof:${userId}`, 15000, async () => {
-      const { rows } = await pool.query(`SELECT ${USER_PUBLIC_COLS} FROM users WHERE id = $1 LIMIT 1`, [userId]);
+      const { rows } = await pool.query(
+        `SELECT ${USER_PUBLIC_COLS} FROM users WHERE id = $1 AND COALESCE(account_status, 'active') = 'active' LIMIT 1`,
+        [userId]
+      );
       const user = rows[0];
       if (!user) return null;
       return {
@@ -254,6 +258,22 @@ router.put('/me', requireAuth, async (req, res) => {
       website_links,
       request_verification,
     } = req.body || {};
+
+    if (
+      full_name !== undefined &&
+      req.user.ecclesiastical_rank === 'lay' &&
+      !req.user.is_ceo &&
+      req.user.cedula_verified &&
+      req.user.cedula_official_name
+    ) {
+      const { verifyNameMatchesCedula } = require('../services/cedulaVerifier');
+      if (!verifyNameMatchesCedula(full_name, req.user.cedula_official_name)) {
+        return res.status(422).json({
+          error: 'Tu nombre de perfil debe coincidir con los datos verificados de tu cédula.',
+          code: 'NAME_CEDULA_MISMATCH',
+        });
+      }
+    }
 
     let nextVerification = req.user.verification_status;
     if (

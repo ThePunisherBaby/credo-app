@@ -27,6 +27,7 @@ const rosaryRoutes = require('./routes/rosary');
 const credoOneRoutes = require('./routes/credoOne');
 const studioRoutes = require('./routes/studio');
 const campaignsTelemetryRoutes = require('./routes/campaignsTelemetry');
+const panelAdminRoutes = require('./routes/panelAdmin');
 
 const app = express();
 app.set('trust proxy', 1);
@@ -200,6 +201,7 @@ app.use('/api/v1/prayers', prayersRoutes);
 app.use('/api/v1/rosary', rosaryRoutes);
 app.use('/api/v1/credo-one', credoOneRoutes);
 app.use('/api/v1/studio', studioRoutes);
+app.use('/api/v1/panel-admin', panelAdminRoutes);
 app.use('/api/campaigns', campaignsTelemetryRoutes);
 app.use('/api/v1/campaigns', campaignsTelemetryRoutes);
 app.post('/api/webhooks/paypal', credoOneRoutes.handlePayPalWebhook);

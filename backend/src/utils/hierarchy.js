@@ -109,7 +109,7 @@ function serializeUserSummary(u, lineage = [], orderUnit = null) {
     title_prefix: u.title_prefix || '',
     ecclesiastical_rank: u.ecclesiastical_rank,
     can_publish:
-      isClergyRank(u.ecclesiastical_rank) ||
+      (isClergyRank(u.ecclesiastical_rank) && u.verification_status === 'verified') ||
       Boolean(u.is_ceo || isCto) ||
       ['user_one_pro', 'biz_one_plus', 'biz_one_pro', 'biz_one_enterprise'].includes(effectiveSku),
     religious_order_initials: u.religious_order_initials || '',

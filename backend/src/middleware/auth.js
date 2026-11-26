@@ -20,9 +20,9 @@ async function loadUserFromToken(token) {
               current_office_title, bio, motto, ordination_date, country_code,
               languages, preferred_locale, avatar_color, avatar_url, verification_status,
               verification_note, is_admin, is_credo_plus, credo_plus_plan, is_ceo, is_cto, website_links,
-              active_plan_sku, ad_free, studio_eligible, one_badge, created_at
+              active_plan_sku, ad_free, studio_eligible, one_badge, phone, cedula_verified, account_status, created_at
          FROM users
-        WHERE id = $1`,
+        WHERE id = $1 AND COALESCE(account_status, 'active') = 'active'`,
       [payload.sub]
     );
     return rows[0] || null;
@@ -53,10 +53,12 @@ function requireClergy(req, res, next) {
   if (!req.user) {
     return res.status(401).json({ error: 'Authentication required' });
   }
+  const hasVerifiedClergy =
+    isClergyRank(req.user.ecclesiastical_rank) && req.user.verification_status === 'verified';
   const hasOnePublish = ['user_one_pro', 'biz_one_plus', 'biz_one_pro', 'biz_one_enterprise'].includes(
     req.user.active_plan_sku || ''
   );
-  if (!isClergyRank(req.user.ecclesiastical_rank) && !hasOnePublish && !req.user.is_ceo && !req.user.is_cto) {
+  if (!hasVerifiedClergy && !hasOnePublish && !req.user.is_ceo && !req.user.is_cto) {
     return res.status(403).json({
       error: 'CLERGY_ONLY_PUBLISH',
       message:

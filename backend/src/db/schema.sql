@@ -848,3 +848,63 @@ CREATE INDEX IF NOT EXISTS idx_posts_video_reels
   ON posts(created_at DESC)
   WHERE media_kind = 'video' OR youtube_id <> '' OR video_url <> '';
 
+-- ============================================================================
+-- Cédula Identity Verification & Anti-Bot Registration Approval Queue
+-- ============================================================================
+ALTER TABLE users ADD COLUMN IF NOT EXISTS phone TEXT NOT NULL DEFAULT '';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS cedula_hash TEXT NOT NULL DEFAULT '';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS cedula_encrypted TEXT NOT NULL DEFAULT '';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS cedula_masked TEXT NOT NULL DEFAULT '';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS cedula_official_name TEXT NOT NULL DEFAULT '';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS cedula_verified BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS account_status TEXT NOT NULL DEFAULT 'active';
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_cedula_hash_unique
+  ON users(cedula_hash)
+  WHERE cedula_hash <> '';
+
+CREATE TABLE IF NOT EXISTS cedula_lookup_cache (
+  cedula_hash CHAR(64) PRIMARY KEY,
+  official_name TEXT NOT NULL,
+  citizen_status TEXT NOT NULL DEFAULT 'ACTIVO',
+  source TEXT NOT NULL DEFAULT 'dgii_ciudadanos',
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS registration_requests (
+  id SERIAL PRIMARY KEY,
+  request_kind TEXT NOT NULL DEFAULT 'clergy' CHECK (request_kind IN ('clergy', 'lay_manual')),
+  full_name TEXT NOT NULL,
+  username TEXT NOT NULL DEFAULT '',
+  email TEXT NOT NULL,
+  phone TEXT NOT NULL DEFAULT '',
+  password_hash TEXT NOT NULL,
+  ecclesiastical_rank TEXT NOT NULL DEFAULT 'priest',
+  title_prefix TEXT NOT NULL DEFAULT '',
+  current_office_title TEXT NOT NULL DEFAULT '',
+  bio TEXT NOT NULL DEFAULT '',
+  country_code TEXT NOT NULL DEFAULT 'DO',
+  preferred_locale TEXT NOT NULL DEFAULT 'es',
+  cedula_hash CHAR(64) NOT NULL,
+  cedula_encrypted TEXT NOT NULL,
+  cedula_masked TEXT NOT NULL,
+  cedula_official_name TEXT NOT NULL DEFAULT '',
+  cedula_name_matched BOOLEAN NOT NULL DEFAULT FALSE,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
+  review_note TEXT NOT NULL DEFAULT '',
+  approved_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  ip_address TEXT NOT NULL DEFAULT '',
+  reviewed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_reg_requests_status_created
+  ON registration_requests(status, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_reg_requests_email_lower
+  ON registration_requests(LOWER(email));
+
+CREATE INDEX IF NOT EXISTS idx_reg_requests_cedula_hash
+  ON registration_requests(cedula_hash);
+
+
