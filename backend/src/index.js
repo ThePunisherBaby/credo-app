@@ -85,6 +85,8 @@ app.use(
           "'self'",
           'data:',
           'blob:',
+          'https://media.credoapp.tech',
+          'https://st91130.ispot.cc',
           'https://aire96fm.com.do',
           'https://reflexionandolapalabra.com',
           'https://i.ytimg.com',
@@ -99,7 +101,13 @@ app.use(
           'https://pay.google.com',
           'https:',
         ],
-        mediaSrc: ["'self'", 'blob:', 'https://paginas.moisespaulino.com'],
+        mediaSrc: [
+          "'self'",
+          'blob:',
+          'https://media.credoapp.tech',
+          'https://st91130.ispot.cc',
+          'https://paginas.moisespaulino.com',
+        ],
         frameSrc: [
           "'self'",
           'https://www.youtube-nocookie.com',
@@ -114,6 +122,8 @@ app.use(
         ],
         connectSrc: [
           "'self'",
+          'https://media.credoapp.tech',
+          'https://st91130.ispot.cc',
           'https://paginas.moisespaulino.com',
           'https://www.paypal.com',
           'https://www.sandbox.paypal.com',
@@ -200,14 +210,16 @@ app.get(['/api/v1/vids', '/api/v1/reels'], optionalAuth, async (_req, res) => {
   try {
     const reels = await apiCache.getOrLoad('vids:global', 15000, async () => {
       const dbRes = await pool.query(
-        `SELECT p.id, p.title, p.content, p.image_url, p.youtube_id, p.video_duration,
+        `SELECT p.id, p.title, p.content, p.image_url, p.video_url, p.youtube_id, p.video_duration,
                 p.channel_name, p.source_url, p.scripture_ref, p.created_at,
                 p.amen_count, p.comments_count,
                 u.id AS author_id, u.full_name AS author_full_name, u.title_prefix AS author_title_prefix,
                 u.avatar_color AS author_avatar_color, u.avatar_url AS author_avatar_url, u.is_ceo AS author_is_ceo
            FROM posts p
            JOIN users u ON u.id = p.author_id
-          WHERE p.media_kind = 'video' OR (p.youtube_id IS NOT NULL AND p.youtube_id <> '')
+          WHERE p.media_kind = 'video'
+             OR (p.youtube_id IS NOT NULL AND p.youtube_id <> '')
+             OR (p.video_url IS NOT NULL AND p.video_url <> '')
           ORDER BY p.created_at DESC
           LIMIT 30`
       );
@@ -216,6 +228,7 @@ app.get(['/api/v1/vids', '/api/v1/reels'], optionalAuth, async (_req, res) => {
         id: `post-${r.id}`,
         post_id: r.id,
         is_external: false,
+        video_url: r.video_url || '',
         youtube_id: r.youtube_id || '',
         title: r.title || '',
         description: r.content || '',

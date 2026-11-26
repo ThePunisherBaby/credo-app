@@ -754,3 +754,96 @@ CREATE TABLE IF NOT EXISTS profile_claim_tokens (
 );
 
 CREATE INDEX IF NOT EXISTS idx_profile_claim_tokens_user ON profile_claim_tokens(user_id);
+
+ALTER TABLE posts ADD COLUMN IF NOT EXISTS video_url TEXT NOT NULL DEFAULT '';
+
+-- ============================================================================
+-- CREDO TURBO EDGE STORAGE & CONTENT-ADDRESSED MEDIA CATALOG (4TB + CDN)
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS storage_nodes (
+  id SERIAL PRIMARY KEY,
+  node_key TEXT NOT NULL UNIQUE,
+  provider TEXT NOT NULL,
+  endpoint_url TEXT NOT NULL DEFAULT '',
+  public_base_url TEXT NOT NULL,
+  capacity_bytes BIGINT NOT NULL DEFAULT 4401032855552,
+  used_bytes BIGINT NOT NULL DEFAULT 0,
+  is_primary BOOLEAN NOT NULL DEFAULT TRUE,
+  is_healthy BOOLEAN NOT NULL DEFAULT TRUE,
+  last_checked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+INSERT INTO storage_nodes (node_key, provider, endpoint_url, public_base_url, capacity_bytes, is_primary, is_healthy)
+VALUES (
+  'interserver-4tb-edge',
+  'InterServer 4TB ZFS + Cloudflare HTTP/3 Edge CDN',
+  'https://st91130.ispot.cc/credo-media/_gateway.php',
+  'https://media.credoapp.tech/credo-media/files',
+  4401032855552,
+  TRUE,
+  TRUE
+)
+ON CONFLICT (node_key) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS media_objects (
+  id BIGSERIAL PRIMARY KEY,
+  sha256_hash CHAR(64),
+  storage_node_key TEXT NOT NULL DEFAULT 'interserver-4tb-edge' REFERENCES storage_nodes(node_key),
+  object_key TEXT NOT NULL UNIQUE,
+  public_url TEXT NOT NULL,
+  uploader_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  media_kind TEXT NOT NULL CHECK (media_kind IN ('image', 'video', 'audio', 'document')),
+  mime_type TEXT NOT NULL,
+  size_bytes BIGINT NOT NULL CHECK (size_bytes >= 0),
+  width INTEGER,
+  height INTEGER,
+  duration_sec NUMERIC(10, 2),
+  poster_url TEXT NOT NULL DEFAULT '',
+  ref_count INTEGER NOT NULL DEFAULT 1,
+  status TEXT NOT NULL DEFAULT 'ready' CHECK (status IN ('uploading', 'ready', 'deleted')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_media_objects_sha256_ready
+  ON media_objects(sha256_hash)
+  WHERE sha256_hash IS NOT NULL AND status = 'ready';
+
+CREATE INDEX IF NOT EXISTS idx_media_objects_uploader_created
+  ON media_objects(uploader_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_media_objects_kind_status
+  ON media_objects(media_kind, status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS media_upload_sessions (
+  session_id TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  object_key TEXT NOT NULL UNIQUE,
+  mime_type TEXT NOT NULL,
+  media_kind TEXT NOT NULL,
+  declared_bytes BIGINT NOT NULL CHECK (declared_bytes > 0),
+  sha256_hash CHAR(64),
+  chunks_total INTEGER NOT NULL DEFAULT 1,
+  public_url TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'issued' CHECK (status IN ('issued', 'completed', 'expired', 'aborted')),
+  ip_address TEXT NOT NULL DEFAULT '',
+  expires_at TIMESTAMPTZ NOT NULL,
+  completed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_media_upload_sessions_user_status
+  ON media_upload_sessions(user_id, status, created_at DESC);
+
+-- High-speed sub-millisecond covering indexes for Feed, Profile & Vids pagination
+CREATE INDEX IF NOT EXISTS idx_posts_feed_cursor
+  ON posts(created_at DESC, id DESC);
+
+CREATE INDEX IF NOT EXISTS idx_posts_author_cursor
+  ON posts(author_id, created_at DESC, id DESC);
+
+CREATE INDEX IF NOT EXISTS idx_posts_video_reels
+  ON posts(created_at DESC)
+  WHERE media_kind = 'video' OR youtube_id <> '' OR video_url <> '';
+

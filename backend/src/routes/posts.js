@@ -42,6 +42,7 @@ async function hydratePosts(rows, viewerId) {
     title: r.title || '',
     content: r.content,
     image_url: r.image_url || '',
+    video_url: r.video_url || '',
     visual_theme: r.visual_theme || '',
     media_kind: r.media_kind || 'article',
     youtube_id: r.youtube_id || '',
@@ -87,7 +88,7 @@ async function hydratePosts(rows, viewerId) {
 }
 
 const POST_SELECT = `
-  SELECT p.id, p.author_id, p.post_type, p.title, p.content, p.image_url, p.visual_theme,
+  SELECT p.id, p.author_id, p.post_type, p.title, p.content, p.image_url, p.video_url, p.visual_theme,
          p.media_kind, p.youtube_id, p.video_duration, p.channel_name, p.source_url,
          p.scripture_ref, p.event_date, p.event_location, p.language, p.is_pinned, p.created_at,
          p.amen_count, p.pray_count, p.gratitude_count, p.comments_count,
@@ -313,6 +314,7 @@ router.post('/', requireAuth, requireClergy, async (req, res) => {
       post_type = 'reflection',
       scope_unit_id,
       image_url = '',
+      video_url = '',
       visual_theme = '',
       media_kind = 'article',
       youtube_id = '',
@@ -333,14 +335,19 @@ router.post('/', requireAuth, requireClergy, async (req, res) => {
     }
 
     const ytId = extractYouTubeId(youtube_url || youtube_id);
-    const safeMediaKind = ytId ? 'video' : (['article', 'video', 'photo'].includes(media_kind) ? media_kind : 'article');
+    const cleanVideoUrl = String(video_url || '').trim().slice(0, 1000);
+    const hasNativeVideo = /^https:\/\/(media\.credoapp\.tech|st91130\.ispot\.cc)\//i.test(cleanVideoUrl);
+    const safeVideoUrl = hasNativeVideo ? cleanVideoUrl : '';
+    const safeMediaKind = (ytId || safeVideoUrl)
+      ? 'video'
+      : (image_url ? 'photo' : (['article', 'video', 'photo'].includes(media_kind) ? media_kind : 'article'));
     const resolvedImage = String(image_url).trim() || (ytId ? `https://i.ytimg.com/vi/${ytId}/hqdefault.jpg` : '');
     const { rows } = await pool.query(
       `INSERT INTO posts (
          author_id, scope_unit_id, post_type, title, content,
-         image_url, visual_theme, media_kind, youtube_id, video_duration, channel_name,
+         image_url, video_url, visual_theme, media_kind, youtube_id, video_duration, channel_name,
          scripture_ref, event_date, event_location, language
-       ) VALUES ($1,NULL,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+       ) VALUES ($1,NULL,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
        RETURNING id`,
       [
         req.user.id,
@@ -348,6 +355,7 @@ router.post('/', requireAuth, requireClergy, async (req, res) => {
         String(title).trim().slice(0, 200),
         String(content).trim().slice(0, 8000),
         resolvedImage.slice(0, 1000),
+        safeVideoUrl,
         String(visual_theme).trim().slice(0, 120),
         safeMediaKind,
         ytId,

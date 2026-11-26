@@ -1,6 +1,8 @@
 // views/feed.js — Pantalla 1: Inicio (Feed Curado Oficial estilo Instagram Edge-to-Edge)
 // Loaded on demand ONLY when on #/feed. Cleans up IntersectionObserver and aborts fetches on leave.
 
+const supportsLazyMedia = typeof HTMLMediaElement !== 'undefined' && Object.hasOwn(HTMLMediaElement.prototype, 'loading');
+
 export async function mount({ root, app, signal }) {
   const d = app.dict();
   const state = {
@@ -207,14 +209,15 @@ export async function mount({ root, app, signal }) {
   function postCardHTML(p, globalIndex) {
     const author = p.author || {};
     const unitName = p.channel_name || '';
-    const isVideo = p.media_kind === 'video' && p.youtube_id;
+    const hasNativeVid = Boolean(p.video_url);
+    const isYoutubeVideo = !hasNativeVid && p.media_kind === 'video' && p.youtube_id;
     const isAmen = (p.my_reactions || []).includes('amen');
     const isSaved = Boolean(p.is_saved);
     const deferClass = globalIndex >= 2 ? ' deferred-card' : '';
     const staggerAttr = globalIndex < 5 ? ` style="--stagger-i:${globalIndex + 1}"` : '';
     const staggerClass = globalIndex < 5 ? ' stagger-in' : '';
     // optimize-image-priority: fetchpriority="high" ONLY on index 0 LCP image, NEVER combined with loading="lazy"
-    const imgAttrs = globalIndex === 0 ? 'fetchpriority="high"' : 'loading="lazy"';
+    const imgAttrs = globalIndex === 0 ? 'fetchpriority="high" decoding="async"' : 'loading="lazy" decoding="async"';
     const avUrl = proxyImg(author.avatar_url);
     const mediaSrc = proxyImg(p.image_url);
     const authorDisplay = `${author.title_prefix ? `${author.title_prefix} ` : ''}${author.full_name || 'Credo'}`;
@@ -227,7 +230,33 @@ export async function mount({ root, app, signal }) {
     const shortBody = isLongBody ? cleanBody.slice(0, 110).trimEnd() : cleanBody;
 
     let mediaBlock = '';
-    if (isVideo) {
+    if (hasNativeVid) {
+      if (globalIndex === 0) {
+        const posterAttr = mediaSrc ? ` poster="${app.esc(mediaSrc)}"` : '';
+        mediaBlock = `
+          <div class="ig-media">
+            <video class="ig-media-photo" width="640" height="640" controls playsinline preload="metadata"${posterAttr} src="${app.esc(p.video_url)}"></video>
+            ${p.video_duration ? `<span class="video-duration-pill">${app.esc(p.video_duration)}</span>` : ''}
+          </div>
+        `;
+      } else if (supportsLazyMedia) {
+        const posterAttr = mediaSrc ? ` poster="${app.esc(mediaSrc)}"` : '';
+        mediaBlock = `
+          <div class="ig-media">
+            <video class="ig-media-photo" width="640" height="640" controls playsinline loading="lazy" preload="metadata"${posterAttr} src="${app.esc(p.video_url)}"></video>
+            ${p.video_duration ? `<span class="video-duration-pill">${app.esc(p.video_duration)}</span>` : ''}
+          </div>
+        `;
+      } else {
+        const dataPosterAttr = mediaSrc ? ` data-poster="${app.esc(mediaSrc)}"` : '';
+        mediaBlock = `
+          <div class="ig-media">
+            <video class="ig-media-photo" width="640" height="640" controls playsinline loading="lazy" preload="none" data-preload="metadata"${dataPosterAttr} data-src="${app.esc(p.video_url)}"></video>
+            ${p.video_duration ? `<span class="video-duration-pill">${app.esc(p.video_duration)}</span>` : ''}
+          </div>
+        `;
+      }
+    } else if (isYoutubeVideo) {
       mediaBlock = `
         <div class="ig-media" data-video-box="${p.id}" data-yt="${app.esc(p.youtube_id)}" data-yt-title="${app.esc(p.title || authorDisplay)}" data-yt-artist="${app.esc(unitName || authorDisplay)}" data-yt-thumb="${app.esc(mediaSrc)}">
           <img class="ig-media-photo" src="${app.esc(mediaSrc)}" alt="${app.esc(p.title || d.feed.officialChannel)}" ${imgAttrs} width="640" height="640" />
@@ -611,12 +640,45 @@ export async function mount({ root, app, signal }) {
     },
     { threshold: 0.5 }
   );
-  const mutObs = new MutationObserver(() => {
+  const lazyMediaObserver = !supportsLazyMedia
+    ? new IntersectionObserver(
+        (entries, obs) => {
+          for (const entry of entries) {
+            if (!entry.isIntersecting) continue;
+            const media = entry.target;
+            if (media.dataset.poster) {
+              media.poster = media.dataset.poster;
+              delete media.dataset.poster;
+            }
+            if (media.dataset.preload) {
+              media.preload = media.dataset.preload;
+              delete media.dataset.preload;
+            }
+            if (media.dataset.src) {
+              media.src = media.dataset.src;
+              delete media.dataset.src;
+            }
+            media.load();
+            obs.unobserve(media);
+          }
+        },
+        { rootMargin: '250px 0px' }
+      )
+    : null;
+
+  const observeNewCards = () => {
     feedList.querySelectorAll('[data-sponsored-campaign]').forEach((el) => {
       const cid = Number(el.dataset.sponsoredCampaign);
       if (cid && !trackedImpressions.has(cid)) impObserver.observe(el);
     });
-  });
+    if (lazyMediaObserver) {
+      feedList.querySelectorAll('video[loading="lazy"][data-src]').forEach((vid) => {
+        lazyMediaObserver.observe(vid);
+      });
+    }
+  };
+
+  const mutObs = new MutationObserver(observeNewCards);
   mutObs.observe(feedList, { childList: true });
 
   // Infinite scroll sentinel
@@ -637,6 +699,7 @@ export async function mount({ root, app, signal }) {
     renderStories();
   }
   loadPage(true);
+  observeNewCards();
   app.swr(
     '/api/v1/stories',
     (val) => {
@@ -653,6 +716,7 @@ export async function mount({ root, app, signal }) {
       clearTimeout(tapTimer);
       if (observer) observer.disconnect();
       impObserver.disconnect();
+      lazyMediaObserver?.disconnect();
       mutObs.disconnect();
     },
   };

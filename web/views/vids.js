@@ -65,6 +65,11 @@ export async function mount({ root, app, signal }) {
     if (!card) return;
     const media = card.querySelector('.vid-media');
     if (!media) return;
+    const vidEl = media.querySelector('video');
+    if (vidEl) {
+      try { vidEl.pause(); } catch {}
+      vidEl.remove();
+    }
     const iframe = media.querySelector('iframe');
     if (iframe) iframe.remove();
     const img = media.querySelector('img');
@@ -78,8 +83,9 @@ export async function mount({ root, app, signal }) {
   }
 
   function playCard(card, item) {
-    const embed = makeEmbedUrl(item);
-    if (!embed) {
+    const directVideo = item.video_url || '';
+    const embed = directVideo ? '' : makeEmbedUrl(item);
+    if (!directVideo && !embed) {
       const watch = makeWatchUrl(item);
       if (watch) window.open(watch, '_blank', 'noopener,noreferrer');
       return;
@@ -93,12 +99,25 @@ export async function mount({ root, app, signal }) {
     if (img) img.hidden = true;
     if (playBtn) playBtn.hidden = true;
 
-    const iframe = document.createElement('iframe');
-    iframe.src = embed;
-    iframe.title = item.title || 'Credo Vid';
-    iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share';
-    iframe.allowFullscreen = true;
-    media.appendChild(iframe);
+    if (directVideo) {
+      const v = document.createElement('video');
+      v.src = directVideo;
+      v.width = 720;
+      v.height = 1280;
+      v.controls = true;
+      v.playsInline = true;
+      v.autoplay = !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+      v.style.cssText = 'width:100%;height:100%;object-fit:contain;background:#000';
+      media.appendChild(v);
+      v.play?.().catch(() => {});
+    } else {
+      const iframe = document.createElement('iframe');
+      iframe.src = embed;
+      iframe.title = item.title || 'Credo Vid';
+      iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share';
+      iframe.allowFullscreen = true;
+      media.appendChild(iframe);
+    }
     activeCard = card;
 
     window.__CREDO_AUDIO__?.notifyExternalMedia?.({
@@ -125,7 +144,9 @@ export async function mount({ root, app, signal }) {
       const thumb = makeThumbUrl(it);
       const isInternal = Boolean(it.post_id) && !it.is_external;
       const av = isInternal && it.avatar_url
-        ? (/^https?:\/\//i.test(it.avatar_url) ? `/api/v1/media/proxy?url=${encodeURIComponent(it.avatar_url)}` : it.avatar_url)
+        ? (/^https?:\/\/(aire96fm\.com\.do|reflexionandolapalabra\.com)/i.test(it.avatar_url)
+            ? `/api/v1/media/proxy?url=${encodeURIComponent(it.avatar_url)}`
+            : it.avatar_url)
         : '/icons/credo-192.png';
       const channelLabel = isInternal && (it.author_name || it.channel_name)
         ? (it.author_name || it.channel_name)
@@ -136,14 +157,14 @@ export async function mount({ root, app, signal }) {
         .filter((l) => l && !/suscr[ií]b|youtube\.com|http|ewtn,\s*la\s*red/i.test(l))
         .slice(0, 2)
         .join(' · ');
-      const watch = makeWatchUrl(it);
       const countAmen = Number(it.amen_count || 0);
       const countComments = Number(it.comments_count || 0);
+      const thumbPriority = idx === 0 ? 'fetchpriority="high"' : (idx >= 2 ? 'loading="lazy"' : '');
 
       return `
         <article class="vid-card" data-idx="${idx}" data-id="${app.esc(String(it.id || idx))}">
           <div class="vid-media">
-            ${thumb ? `<img src="${app.esc(thumb)}" alt="${app.esc(it.title || channelLabel)}" loading="${idx < 2 ? 'eager' : 'lazy'}" />` : ''}
+            ${thumb ? `<img src="${app.esc(thumb)}" alt="${app.esc(it.title || channelLabel)}" width="720" height="1280" ${thumbPriority} />` : ''}
           </div>
           <div class="vid-scrim" aria-hidden="true"></div>
           <button type="button" class="vid-play-btn" aria-label="Reproducir video">

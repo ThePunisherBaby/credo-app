@@ -144,7 +144,379 @@ async function warmUpProxyImages() {
   }
 }
 
-// Upload compressed photo (for clergy posts/stories or user profile avatars)
+const {
+  MEDIA_STORAGE_URL,
+  MEDIA_STORAGE_SECRET,
+  MEDIA_PUBLIC_BASE_URL,
+  MEDIA_EDGE_UPLOAD_URL,
+} = require('../config');
+
+const ALLOWED_MEDIA = {
+  'image/webp': { ext: 'webp', kind: 'image', maxBytes: 20 * 1024 * 1024 },
+  'image/jpeg': { ext: 'jpg', kind: 'image', maxBytes: 20 * 1024 * 1024 },
+  'image/jpg': { ext: 'jpg', kind: 'image', maxBytes: 20 * 1024 * 1024 },
+  'image/png': { ext: 'png', kind: 'image', maxBytes: 20 * 1024 * 1024 },
+  'image/gif': { ext: 'gif', kind: 'image', maxBytes: 20 * 1024 * 1024 },
+  'video/mp4': { ext: 'mp4', kind: 'video', maxBytes: 500 * 1024 * 1024 },
+  'video/webm': { ext: 'webm', kind: 'video', maxBytes: 500 * 1024 * 1024 },
+  'video/quicktime': { ext: 'mov', kind: 'video', maxBytes: 500 * 1024 * 1024 },
+  'audio/mpeg': { ext: 'mp3', kind: 'audio', maxBytes: 120 * 1024 * 1024 },
+  'audio/mp3': { ext: 'mp3', kind: 'audio', maxBytes: 120 * 1024 * 1024 },
+  'audio/mp4': { ext: 'm4a', kind: 'audio', maxBytes: 120 * 1024 * 1024 },
+  'audio/x-m4a': { ext: 'm4a', kind: 'audio', maxBytes: 120 * 1024 * 1024 },
+};
+
+function isEdgeStorageReady() {
+  return Boolean(MEDIA_STORAGE_URL && MEDIA_STORAGE_SECRET);
+}
+
+function verifyMagicBytes(buf, mime) {
+  if (!Buffer.isBuffer(buf) || buf.length < 8) return false;
+  const spec = ALLOWED_MEDIA[mime];
+  if (!spec) return false;
+  if (spec.kind === 'image') {
+    if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return true; // JPEG
+    if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return true; // PNG
+    if (buf.subarray(0, 4).toString('ascii') === 'RIFF' && buf.subarray(8, 12).toString('ascii') === 'WEBP') return true; // WebP
+    if (buf.subarray(0, 4).toString('ascii') === 'GIF8') return true; // GIF
+    return false;
+  }
+  if (spec.kind === 'video' || spec.kind === 'audio') {
+    const box = buf.subarray(4, 8).toString('ascii');
+    if (['ftyp', 'moov', 'mdat', 'wide', 'free'].includes(box)) return true; // MP4 / MOV / M4A
+    if (buf[0] === 0x1a && buf[1] === 0x45 && buf[2] === 0xdf && buf[3] === 0xa3) return true; // WebM / Matroska
+    if (buf.subarray(0, 3).toString('ascii') === 'ID3' || (buf[0] === 0xff && (buf[1] & 0xe0) === 0xe0)) return true; // MP3
+    return false;
+  }
+  return false;
+}
+
+function buildDatePrefix() {
+  const now = new Date();
+  const y = now.getUTCFullYear();
+  const m = String(now.getUTCMonth() + 1).padStart(2, '0');
+  return `${y}/${m}`;
+}
+
+async function recordMediaObject({
+  sha256Hash = null,
+  objectKey,
+  publicUrl,
+  uploaderId = null,
+  mediaKind,
+  mimeType,
+  sizeBytes,
+  width = null,
+  height = null,
+  durationSec = null,
+  posterUrl = '',
+}) {
+  try {
+    await pool.query(
+      `INSERT INTO media_objects (
+         sha256_hash, storage_node_key, object_key, public_url, uploader_id,
+         media_kind, mime_type, size_bytes, width, height, duration_sec, poster_url, status
+       ) VALUES ($1, 'interserver-4tb-edge', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'ready')
+       ON CONFLICT (object_key) DO UPDATE SET
+         status = 'ready',
+         ref_count = media_objects.ref_count + 1,
+         updated_at = NOW()`,
+      [
+        sha256Hash && /^[a-f0-9]{64}$/.test(sha256Hash) ? sha256Hash : null,
+        objectKey,
+        publicUrl,
+        uploaderId,
+        mediaKind,
+        mimeType,
+        sizeBytes,
+        width,
+        height,
+        durationSec,
+        posterUrl || '',
+      ]
+    );
+  } catch (e) {
+    console.warn('[media_objects record]', e.message);
+  }
+}
+
+async function pushBufferToEdgeStorage(buffer, ext, { uploaderId = null, mediaKind = 'image', mimeType = 'image/webp' } = {}) {
+  const bodyHash = crypto.createHash('sha256').update(buffer).digest('hex');
+
+  // O(1) PostgreSQL SHA-256 lookup before network hop
+  try {
+    const existing = await pool.query(
+      `UPDATE media_objects
+          SET ref_count = ref_count + 1, updated_at = NOW()
+        WHERE sha256_hash = $1 AND status = 'ready'
+        RETURNING public_url, object_key, size_bytes`,
+      [bodyHash]
+    );
+    if (existing.rows[0]) {
+      return {
+        url: existing.rows[0].public_url,
+        key: existing.rows[0].object_key,
+        bytes: Number(existing.rows[0].size_bytes),
+        deduplicated: true,
+        storage: 'cloudflare-edge-4tb',
+      };
+    }
+  } catch {}
+
+  const key = `${buildDatePrefix()}/${bodyHash.slice(0, 32)}.${ext}`;
+  const ts = String(Math.floor(Date.now() / 1000));
+  const payload = `put\n${key}\n${ts}\n${bodyHash}`;
+  const sig = crypto.createHmac('sha256', MEDIA_STORAGE_SECRET).update(payload).digest('hex');
+
+  const res = await fetch(MEDIA_STORAGE_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/octet-stream',
+      'X-Credo-Action': 'put',
+      'X-Credo-Key': key,
+      'X-Credo-Ts': ts,
+      'X-Credo-Sig': sig,
+    },
+    body: buffer,
+    signal: AbortSignal.timeout(45_000),
+  });
+
+  if (!res.ok) {
+    const txt = await res.text().catch(() => '');
+    throw new Error(`Edge storage error (${res.status}): ${txt.slice(0, 140)}`);
+  }
+  const data = await res.json();
+  const publicUrl = data.url || `${MEDIA_PUBLIC_BASE_URL}/${key}`;
+
+  await recordMediaObject({
+    sha256Hash: bodyHash,
+    objectKey: key,
+    publicUrl,
+    uploaderId,
+    mediaKind,
+    mimeType,
+    sizeBytes: buffer.length,
+  });
+
+  return {
+    url: publicUrl,
+    key,
+    bytes: buffer.length,
+    deduplicated: Boolean(data.deduplicated),
+    storage: 'cloudflare-edge-4tb',
+  };
+}
+
+// POST /api/v1/media/presign — Mints a short-lived HMAC-SHA256 upload ticket + O(1) PostgreSQL SHA-256 instant deduplication
+router.post('/presign', requireAuth, async (req, res) => {
+  try {
+    const mime = String(req.body?.mime_type || '').trim().toLowerCase();
+    const sizeBytes = Number(req.body?.size_bytes || 0);
+    const sha256 = String(req.body?.sha256 || '').trim().toLowerCase();
+    const spec = ALLOWED_MEDIA[mime];
+
+    if (!spec) {
+      return res.status(415).json({ error: 'Formato de archivo no permitido.' });
+    }
+    if (!Number.isFinite(sizeBytes) || sizeBytes <= 0 || sizeBytes > spec.maxBytes) {
+      const mbLimit = Math.round(spec.maxBytes / (1024 * 1024));
+      return res.status(413).json({ error: `El archivo supera el límite permitido (${mbLimit} MB).` });
+    }
+
+    // Lightning 0-byte deduplication: if SHA-256 already exists in PostgreSQL media_objects, return CDN URL immediately!
+    if (/^[a-f0-9]{64}$/.test(sha256)) {
+      const hit = await pool.query(
+        `UPDATE media_objects
+            SET ref_count = ref_count + 1, updated_at = NOW()
+          WHERE sha256_hash = $1 AND status = 'ready'
+          RETURNING public_url, object_key, media_kind`,
+        [sha256]
+      );
+      if (hit.rows[0]) {
+        return res.status(200).json({
+          instant_dedup: true,
+          direct_supported: true,
+          public_url: hit.rows[0].public_url,
+          kind: hit.rows[0].media_kind,
+        });
+      }
+    }
+
+    if (!isEdgeStorageReady()) {
+      return res.status(200).json({ direct_supported: false });
+    }
+
+    const sessionId = crypto.randomUUID();
+    const randId = crypto.randomBytes(12).toString('hex');
+    const key = `${buildDatePrefix()}/u${req.user.id}-${randId}.${spec.ext}`;
+    const publicUrl = `${MEDIA_PUBLIC_BASE_URL}/${key}`;
+    const chunkBytes = 8 * 1024 * 1024;
+    const chunksTotal = Math.max(1, Math.ceil(sizeBytes / chunkBytes));
+    const maxBytes = Math.min(spec.maxBytes, Math.ceil(sizeBytes * 1.05) + 65536);
+    const exp = Math.floor(Date.now() / 1000) + 900; // 15 minutes
+    const payload = `upload\n${key}\n${mime}\n${maxBytes}\n${exp}`;
+    const sig = crypto.createHmac('sha256', MEDIA_STORAGE_SECRET).update(payload).digest('hex');
+
+    await pool.query(
+      `INSERT INTO media_upload_sessions (
+         session_id, user_id, object_key, mime_type, media_kind,
+         declared_bytes, sha256_hash, chunks_total, public_url, status, ip_address, expires_at
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'issued',$10,TO_TIMESTAMP($11))`,
+      [
+        sessionId,
+        req.user.id,
+        key,
+        mime,
+        spec.kind,
+        Math.round(sizeBytes),
+        /^[a-f0-9]{64}$/.test(sha256) ? sha256 : null,
+        chunksTotal,
+        publicUrl,
+        String(req.ip || '').slice(0, 64),
+        exp,
+      ]
+    );
+
+    return res.status(200).json({
+      session_id: sessionId,
+      instant_dedup: false,
+      direct_supported: true,
+      upload_url: MEDIA_EDGE_UPLOAD_URL,
+      public_url: publicUrl,
+      chunk_bytes: chunkBytes,
+      kind: spec.kind,
+      ticket: {
+        key,
+        mime,
+        max_bytes: String(maxBytes),
+        exp: String(exp),
+        sig,
+      },
+    });
+  } catch (err) {
+    console.error('[media/presign]', err);
+    return res.status(500).json({ error: 'No se pudo autorizar la transferencia.' });
+  }
+});
+
+// POST /api/v1/media/complete — Commits direct Edge upload into PostgreSQL media_objects catalog
+router.post('/complete', requireAuth, async (req, res) => {
+  try {
+    const { session_id, width = null, height = null, duration_sec = null, poster_url = '' } = req.body || {};
+    if (!session_id) {
+      return res.status(400).json({ error: 'session_id requerido' });
+    }
+    const { rows } = await pool.query(
+      `UPDATE media_upload_sessions
+          SET status = 'completed', completed_at = NOW()
+        WHERE session_id = $1 AND user_id = $2 AND status IN ('issued', 'completed')
+        RETURNING *`,
+      [String(session_id), req.user.id]
+    );
+    const sess = rows[0];
+    if (!sess) {
+      return res.status(404).json({ error: 'Sesión de subida no encontrada.' });
+    }
+
+    await recordMediaObject({
+      sha256Hash: sess.sha256_hash,
+      objectKey: sess.object_key,
+      publicUrl: sess.public_url,
+      uploaderId: req.user.id,
+      mediaKind: sess.media_kind,
+      mimeType: sess.mime_type,
+      sizeBytes: Number(sess.declared_bytes),
+      width: width ? Number(width) : null,
+      height: height ? Number(height) : null,
+      durationSec: duration_sec ? Number(duration_sec) : null,
+      posterUrl: String(poster_url || '').slice(0, 1000),
+    });
+
+    return res.status(200).json({ ok: true, url: sess.public_url, kind: sess.media_kind });
+  } catch (err) {
+    console.error('[media/complete]', err);
+    return res.status(500).json({ error: 'No se pudo registrar el objeto multimedia.' });
+  }
+});
+
+// GET /api/v1/media/storage-status — Live PostgreSQL catalog + InterServer 4TB ZFS telemetry
+router.get('/storage-status', requireAuth, async (req, res) => {
+  try {
+    const [nodeRes, aggRes] = await Promise.all([
+      pool.query(`SELECT * FROM storage_nodes WHERE is_primary = TRUE LIMIT 1`),
+      pool.query(
+        `SELECT COUNT(*)::int AS total_objects,
+                COALESCE(SUM(size_bytes), 0)::bigint AS catalog_bytes
+           FROM media_objects
+          WHERE status = 'ready'`
+      ),
+    ]);
+    return res.json({
+      node: nodeRes.rows[0] || null,
+      catalog: aggRes.rows[0] || { total_objects: 0, catalog_bytes: 0 },
+      edge_ready: isEdgeStorageReady(),
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/v1/media/binary — Zero-Base64 raw binary upload relay (358 Mbps VPS -> 4TB Edge Storage)
+router.post(
+  '/binary',
+  requireAuth,
+  express.raw({ type: '*/*', limit: '48mb' }),
+  async (req, res) => {
+    try {
+      const mime = String(req.headers['x-media-mime'] || req.headers['content-type'] || '')
+        .split(';')[0]
+        .trim()
+        .toLowerCase();
+      const spec = ALLOWED_MEDIA[mime];
+      if (!spec) {
+        return res.status(415).json({ error: 'Formato de archivo no soportado.' });
+      }
+
+      const buffer = req.body;
+      if (!Buffer.isBuffer(buffer) || buffer.length === 0 || buffer.length > spec.maxBytes) {
+        return res.status(413).json({ error: 'Tamaño de archivo inválido o excesivo.' });
+      }
+      if (!verifyMagicBytes(buffer, mime)) {
+        return res.status(415).json({ error: 'Cabecera binaria del archivo no válida.' });
+      }
+
+      if (isEdgeStorageReady()) {
+        const stored = await pushBufferToEdgeStorage(buffer, spec.ext, {
+          uploaderId: req.user.id,
+          mediaKind: spec.kind,
+          mimeType: mime,
+        });
+        return res.status(201).json({
+          url: stored.url,
+          kind: spec.kind,
+          bytes: stored.bytes,
+          deduplicated: stored.deduplicated,
+          storage: stored.storage,
+        });
+      }
+
+      if (spec.kind !== 'image' || buffer.length > MAX_BYTES) {
+        return res.status(503).json({ error: 'Almacenamiento multimedia de alta capacidad no disponible.' });
+      }
+
+      const { rows } = await pool.query(
+        `INSERT INTO media_assets (uploader_id, mime_type, data) VALUES ($1, $2, $3) RETURNING id`,
+        [req.user.id, mime, buffer]
+      );
+      return res.status(201).json({ id: rows[0].id, url: `/api/v1/media/${rows[0].id}`, kind: 'image' });
+    } catch (err) {
+      console.error('[media/binary]', err);
+      return res.status(500).json({ error: 'Error transfiriendo archivo.' });
+    }
+  }
+);
+
+// Upload compressed photo (legacy data_url caller compatibility — automatically offloads to 4TB Edge CDN!)
 router.post('/', requireAuth, async (req, res) => {
   try {
     const { data_url } = req.body || {};
@@ -158,12 +530,36 @@ router.post('/', requireAuth, async (req, res) => {
     }
 
     const mimeType = match[1].toLowerCase();
-    if (!ALLOWED_MIMES.has(mimeType)) {
-      return res.status(400).json({ error: 'Unsupported image format (use JPEG, PNG, or WebP)' });
+    const spec = ALLOWED_MEDIA[mimeType];
+    if (!spec || spec.kind !== 'image') {
+      return res.status(400).json({ error: 'Unsupported image format (use WebP, JPEG, or PNG)' });
     }
 
     const buffer = Buffer.from(match[2], 'base64');
-    if (buffer.length === 0 || buffer.length > MAX_BYTES) {
+    if (buffer.length === 0 || buffer.length > spec.maxBytes) {
+      return res.status(413).json({ error: 'Image too large' });
+    }
+    if (!verifyMagicBytes(buffer, mimeType)) {
+      return res.status(415).json({ error: 'Invalid image binary signature' });
+    }
+
+    if (isEdgeStorageReady()) {
+      try {
+        const stored = await pushBufferToEdgeStorage(buffer, spec.ext, {
+          uploaderId: req.user.id,
+          mediaKind: 'image',
+          mimeType,
+        });
+        return res.status(201).json({
+          url: stored.url,
+          storage: stored.storage,
+        });
+      } catch (edgeErr) {
+        console.warn('[media/upload edge fallback]', edgeErr.message);
+      }
+    }
+
+    if (buffer.length > MAX_BYTES) {
       return res.status(413).json({ error: 'Image too large (max 3 MB)' });
     }
 

@@ -3933,3 +3933,36 @@ html, body {
   font-weight: 600;
 }
 
+/* 11. Turbo Edge Upload Progress Telemetry */
+.turbo-upload-box {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: light-dark(rgba(10, 132, 255, 0.06), rgba(10, 132, 255, 0.12));
+  border: 1px solid light-dark(rgba(10, 132, 255, 0.2), rgba(56, 189, 248, 0.28));
+}
+.turbo-upload-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.78rem;
+  color: var(--label);
+}
+.turbo-upload-track {
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+.turbo-upload-fill {
+  height: 100%;
+  width: 0%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #0A84FF, #38BDF8);
+  transition: width 120ms ease-out;
+}
+
+

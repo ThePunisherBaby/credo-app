@@ -98,4 +98,9 @@ module.exports = {
   PAYPAL_CLIENT_SECRET: (process.env.PAYPAL_CLIENT_SECRET || '').trim(),
   PAYPAL_WEBHOOK_ID: (process.env.PAYPAL_WEBHOOK_ID || '').trim(),
   ENTERPRISE_WHATSAPP_NUMBER: (process.env.ENTERPRISE_WHATSAPP_NUMBER || '18095550199').replace(/[^\d]/g, ''),
+  MEDIA_STORAGE_URL: (process.env.MEDIA_STORAGE_URL || '').trim(),
+  MEDIA_STORAGE_SECRET: (process.env.MEDIA_STORAGE_SECRET || '').trim(),
+  MEDIA_PUBLIC_BASE_URL: (process.env.MEDIA_PUBLIC_BASE_URL || 'https://media.credoapp.tech/credo-media/files').trim().replace(/\/+$/, ''),
+  MEDIA_EDGE_UPLOAD_URL: (process.env.MEDIA_EDGE_UPLOAD_URL || 'https://media.credoapp.tech/credo-media/_upload.php').trim(),
 };
+
