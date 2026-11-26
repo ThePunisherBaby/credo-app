@@ -1988,6 +1988,39 @@ async function purgeMockDataAndSyncReal() {
     await pool.query(`UPDATE users SET is_ceo = FALSE WHERE id <> $1 AND is_ceo = TRUE`, [ceoUserId]);
   }
 
+  // 5b. Ensure CTO account (@paulinosstudios / paulinosstudios@gmail.com) — preserves active plan & custom edits
+  await pool.query(
+    `UPDATE users
+        SET is_cto = TRUE,
+            is_admin = TRUE,
+            studio_eligible = TRUE,
+            verification_status = 'verified',
+            current_office_title = CASE
+              WHEN COALESCE(current_office_title, '') = '' THEN 'Chief Technology Officer · Arquitectura & Edge Cloud'
+              ELSE current_office_title
+            END,
+            bio = CASE
+              WHEN COALESCE(bio, '') = '' THEN 'Ingeniería principal de Credo · F# Core Kernel (.NET 8), Liquid Glass UI y red global Credo Turbo Edge 4 TB.'
+              ELSE bio
+            END,
+            motto = CASE
+              WHEN COALESCE(motto, '') = '' THEN 'Fiat Lux · Ingeniería de precisión al servicio de la Fe'
+              ELSE motto
+            END,
+            avatar_color = CASE
+              WHEN COALESCE(avatar_color, '') IN ('', '#2A6F6B', '#007AFF') THEN '#081226'
+              ELSE avatar_color
+            END
+      WHERE LOWER(username) = 'paulinosstudios' OR LOWER(email) = 'paulinosstudios@gmail.com'`
+  );
+  await pool.query(
+    `UPDATE users
+        SET is_cto = FALSE
+      WHERE LOWER(username) <> 'paulinosstudios'
+        AND LOWER(email) <> 'paulinosstudios@gmail.com'
+        AND is_cto = TRUE`
+  );
+
   await pool.query(
     `UPDATE stories
         SET image_url = '/icons/p_domingo_vasquez.png'

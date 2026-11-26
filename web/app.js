@@ -582,17 +582,17 @@ class CredoApp {
     const warmRoute = (navId) => {
       if (!navId) return;
       if (navId === 'feed') {
-        import('./views/feed.js?v=42').catch(() => {});
+        import('./views/feed.js?v=43').catch(() => {});
         if (!this._isFresh('/api/v1/posts?scope=global&limit=6&offset=0', 15_000)) {
           this.api('/api/v1/posts?scope=global&limit=6&offset=0', { ttlMs: 20_000 }).catch(() => {});
         }
       } else if (navId === 'vids') {
-        import('./views/vids.js?v=42').catch(() => {});
+        import('./views/vids.js?v=43').catch(() => {});
         if (!this._isFresh('/api/v1/vids', 20_000)) {
           this.api('/api/v1/vids', { ttlMs: 20_000 }).catch(() => {});
         }
       } else if (navId === 'explore') {
-        import('./views/explore.js?v=25').catch(() => {});
+        import('./views/explore.js?v=43').catch(() => {});
         if (!this._isFresh('/api/v1/live', 30_000)) {
           this.api('/api/v1/live', { ttlMs: 30_000 }).catch(() => {});
         }
@@ -602,7 +602,7 @@ class CredoApp {
           this.api('/api/v1/prayers/intentions?filter=recent', { ttlMs: 20_000 }).catch(() => {});
         }
       } else if (navId === 'profile') {
-        import('./views/profile.js?v=36').catch(() => {});
+        import('./views/profile.js?v=43').catch(() => {});
         if (this.user?.id) {
           const uPath = `/api/v1/posts?author_id=${this.user.id}&limit=24`;
           if (!this._isFresh(uPath, 20_000)) {
@@ -622,7 +622,7 @@ class CredoApp {
       const href = el.getAttribute('href') || '';
       const m = href.match(/^#\/user\/(\d+)/);
       if (m) {
-        import('./views/parishes.js?v=35').catch(() => {});
+        import('./views/parishes.js?v=43').catch(() => {});
         const p1 = `/api/v1/users/${m[1]}`;
         if (!this._isFresh(p1, 25_000)) this.api(p1, { ttlMs: 25_000 }).catch(() => {});
       }
@@ -850,15 +850,35 @@ class CredoApp {
         <span style="flex:1;min-width:0;display:flex;flex-direction:column">
           <strong style="font-size:0.86rem;display:flex;align-items:center;gap:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
             <span style="overflow:hidden;text-overflow:ellipsis">${this.esc(u ? u.full_name : d.profile.signIn)}</span>
+            ${u ? this.renderCtoInsignia(u) : ''}
             ${planMeta ? this.renderPlanInsignia(u) : ''}
           </strong>
-          <small class="t-caption" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${this.esc(u ? (u.is_ceo ? 'CEO · Credo' : (planMeta ? planMeta.name : (d.ranks[u.ecclesiastical_rank] || 'Fiel'))) : 'Entrar a Credo')}</small>
+          <small class="t-caption" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${this.esc(u ? (u.is_ceo ? 'CEO · Credo' : (this.isCtoUser(u) ? 'CTO · Arquitectura Credo' : (planMeta ? planMeta.name : (d.ranks[u.ecclesiastical_rank] || 'Fiel')))) : 'Entrar a Credo')}</small>
         </span>
       `;
       accBtn.onclick = () => {
         location.hash = '#/profile';
       };
     }
+  }
+
+  isCtoUser(user) {
+    if (!user) return false;
+    return Boolean(
+      user.is_cto ||
+      user.author_is_cto ||
+      String(user.username || '').trim().toLowerCase() === 'paulinosstudios'
+    );
+  }
+
+  renderCtoInsignia(user, { variant = 'compact' } = {}) {
+    if (!this.isCtoUser(user)) return '';
+    const iconSvg =
+      '<svg viewBox="0 0 20 20" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7 6.5-3.5 3.5L7 13.5"/><path d="m13 6.5 3.5 3.5-3.5 3.5"/><path d="m11.2 4.8-2.4 10.4"/></svg>';
+    if (variant === 'executive') {
+      return `<span class="cto-badge cto-badge--exec" title="Chief Technology Officer · Credo">${iconSvg}<span>CTO · CHIEF TECHNOLOGY OFFICER</span></span>`;
+    }
+    return `<span class="cto-badge" title="Chief Technology Officer · Credo" aria-label="CTO">${iconSvg}<span>CTO</span></span>`;
   }
 
   getPlanMeta(user) {
@@ -1025,15 +1045,15 @@ class CredoApp {
     // Lazy-import ONLY the required view module
     let mod;
     try {
-      if (route === 'feed') mod = await import('./views/feed.js?v=42');
+      if (route === 'feed') mod = await import('./views/feed.js?v=43');
       else if (route === 'studio') mod = await import('./views/studio.js?v=26');
-      else if (route === 'vids') mod = await import('./views/vids.js?v=42');
-      else if (route === 'explore') mod = await import('./views/explore.js?v=25');
+      else if (route === 'vids') mod = await import('./views/vids.js?v=43');
+      else if (route === 'explore') mod = await import('./views/explore.js?v=43');
       else if (route === 'prayer') mod = await import('./views/prayer.js?v=23');
-      else if (route === 'user') mod = await import('./views/parishes.js?v=35');
+      else if (route === 'user') mod = await import('./views/parishes.js?v=43');
       else if (route === 'settings') mod = await import('./views/settings.js?v=23');
-      else if (route === 'profile') mod = await import('./views/profile.js?v=36');
-      else mod = await import('./views/feed.js?v=42');
+      else if (route === 'profile') mod = await import('./views/profile.js?v=43');
+      else mod = await import('./views/feed.js?v=43');
     } catch (err) {
       root.innerHTML = `<div class="empty-box">Error cargando vista: ${this.esc(err.message)}</div>`;
       return;
@@ -1350,6 +1370,7 @@ class CredoApp {
               <div class="ig-cs-meta">
                 <span class="ig-cs-author">${this.esc(author.title_prefix ? `${author.title_prefix} ` : '')}${this.esc(author.full_name || 'Credo')}</span>
                 ${author.is_ceo ? '<span class="rank-tag">CEO</span>' : ''}
+                ${this.renderCtoInsignia(author)}
                 ${post.created_at ? `<span class="ig-cs-time">${this.relTime(post.created_at)}</span>` : ''}
               </div>
               ${post.title ? `<strong style="font-size:0.84rem;line-height:1.22;margin-top:1px">${this.esc(post.title)}</strong>` : ''}
@@ -1466,6 +1487,7 @@ class CredoApp {
                 <div class="ig-cs-meta">
                   <span class="ig-cs-author">${this.esc(dispName)}</span>
                   ${c.author?.is_ceo ? '<span class="rank-tag">CEO</span>' : ''}
+                  ${this.renderCtoInsignia(c.author)}
                   <span class="ig-cs-time">${this.relTime(c.created_at)}</span>
                 </div>
                 <p class="ig-cs-text">${this.esc(c.content)}</p>
@@ -1536,6 +1558,7 @@ class CredoApp {
           avatar_url: this.user.avatar_url,
           avatar_color: this.user.avatar_color,
           is_ceo: this.user.is_ceo,
+          is_cto: this.user.is_cto,
         },
       };
       comments.push(optimistic);

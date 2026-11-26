@@ -11,7 +11,17 @@ function proxyProfileMedia(url) {
 function renderPublicTile(p, app, idx = 0) {
   const lazyAttr = idx < 6 ? '' : ' loading="lazy"';
   if (p.image_url) {
-    return `<img src="${app.esc(proxyProfileMedia(p.image_url))}" alt="${app.esc(p.title || '')}"${lazyAttr} />`;
+    return `
+      <img src="${app.esc(proxyProfileMedia(p.image_url))}" alt="${app.esc(p.title || '')}"${lazyAttr} />
+      ${p.video_url ? `<span style="position:absolute;top:6px;right:6px;background:rgba(0,0,0,0.62);color:#fff;width:22px;height:22px;border-radius:6px;display:grid;place-items:center"><svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></span>` : ''}
+    `;
+  }
+  if (p.video_url) {
+    return `
+      <video src="${app.esc(p.video_url)}" muted playsinline preload="metadata" width="320" height="320" style="width:100%;height:100%;object-fit:cover"></video>
+      <span style="position:absolute;top:6px;right:6px;background:rgba(0,0,0,0.62);color:#fff;width:22px;height:22px;border-radius:6px;display:grid;place-items:center">
+        <svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+      </span>`;
   }
   if (p.youtube_id) {
     return `
@@ -40,8 +50,9 @@ async function mountUserProfile({ root, app, signal, userId }) {
       app.api(`/api/v1/posts?author_id=${userId}&limit=36`, { signal }),
     ]);
     const u = profRes.user;
+    const isCto = app.isCtoUser(u);
     const posts = postsRes.posts || [];
-    const vids = posts.filter((p) => p.media_kind === 'video' || Boolean(p.youtube_id));
+    const vids = posts.filter((p) => p.media_kind === 'video' || Boolean(p.youtube_id) || Boolean(p.video_url));
     const links = Array.isArray(u.website_links) ? u.website_links : [];
     const hasAireRadio = u.is_ceo || u.username === 'p_domingo_vasquez';
     const avUrl = proxyProfileMedia(u.avatar_url);
@@ -53,8 +64,8 @@ async function mountUserProfile({ root, app, signal, userId }) {
         p.title || fullNameDisplay,
         `
         <div style="display:flex;flex-direction:column;gap:12px">
-          ${p.image_url ? `<img src="${app.esc(proxyProfileMedia(p.image_url))}" alt="" style="width:100%;aspect-ratio:1/1;object-fit:cover" />` : ''}
-          ${p.youtube_id ? `<div style="aspect-ratio:16/9;overflow:hidden;background:#000"><iframe src="https://www.youtube.com/embed/${app.esc(p.youtube_id)}?playsinline=1&rel=0" style="width:100%;height:100%;border:0" allowfullscreen></iframe></div>` : ''}
+          ${p.video_url ? `<video src="${app.esc(p.video_url)}" controls playsinline preload="metadata" width="640" height="640" ${p.image_url ? `poster="${app.esc(proxyProfileMedia(p.image_url))}"` : ''} style="width:100%;max-height:70vh;background:#000;border-radius:10px"></video>` : (p.image_url ? `<img src="${app.esc(proxyProfileMedia(p.image_url))}" alt="" style="width:100%;aspect-ratio:1/1;object-fit:cover" />` : '')}
+          ${!p.video_url && p.youtube_id ? `<div style="aspect-ratio:16/9;overflow:hidden;background:#000"><iframe src="https://www.youtube.com/embed/${app.esc(p.youtube_id)}?playsinline=1&rel=0" style="width:100%;height:100%;border:0" allowfullscreen></iframe></div>` : ''}
           ${p.scripture_ref ? `<span class="post-scripture-pill">📖 ${app.esc(p.scripture_ref)}</span>` : ''}
           <p style="margin:0;font-size:0.94rem;line-height:1.56;white-space:pre-line">${app.esc(p.content || '')}</p>
           <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -87,14 +98,165 @@ async function mountUserProfile({ root, app, signal, userId }) {
       });
     };
 
+    const linksHtml = links.length > 0
+      ? `
+        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px">
+          ${links.map((lk) => `
+            <a href="${app.esc(lk.url)}" target="_blank" rel="noopener noreferrer" class="source-pill-box">
+              <span>🔗 ${app.esc(lk.label)}</span>
+              <span class="source-pill-arrow" aria-hidden="true">↗</span>
+            </a>`).join('')}
+        </div>`
+      : '';
+
+    const publicHeroHtml = isCto
+      ? `
+        <section class="cto-hero-card" aria-label="Perfil Ejecutivo CTO">
+          <div class="cto-hero-inner">
+            <div class="cto-telemetry-bar">
+              <span class="cto-telemetry-status">
+                <span class="cto-status-dot" aria-hidden="true"></span>
+                <span>ARQUITECTURA CREDO · CORE LEAD</span>
+              </span>
+              <span class="cto-telemetry-serial">VERIFIED CTO</span>
+            </div>
+
+            <div class="cto-identity-grid">
+              <div class="cto-avatar-wrap">
+                <div class="cto-avatar-ring">
+                  <div
+                    class="ig-prof-avatar"
+                    data-zoomable
+                    data-zoom-name="${app.esc(fullNameDisplay)}"
+                    data-zoom-src="${app.esc(avUrl)}"
+                    data-zoom-bg="${app.esc(u.avatar_color || '#081226')}"
+                    title="Mantén presionado para ampliar"
+                  >
+                    ${avUrl ? `<img src="${app.esc(avUrl)}" alt="${app.esc(u.full_name)}" />` : '&lt;P/&gt;'}
+                  </div>
+                </div>
+                <span class="cto-avatar-crest" aria-hidden="true">&lt;/&gt; CTO</span>
+              </div>
+
+              <div class="cto-stats-glass">
+                <div>
+                  <span class="ig-stat-val">${u.posts_count ?? posts.length}</span>
+                  <span class="ig-stat-lbl">Publicaciones</span>
+                </div>
+                <div>
+                  <span class="ig-stat-val" id="pubFollowersVal">${u.followers_count ?? 0}</span>
+                  <span class="ig-stat-lbl">Seguidores</span>
+                </div>
+                <div>
+                  <span class="ig-stat-val">${u.following_count ?? 0}</span>
+                  <span class="ig-stat-lbl">Siguiendo</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="cto-bio-block">
+              <div class="cto-name-row">
+                <span class="cto-name-title">${app.esc(fullNameDisplay)}</span>
+                ${app.renderCtoInsignia(u, { variant: 'executive' })}
+                ${app.renderPlanInsignia(u)}
+              </div>
+              <span class="cto-role-line">${app.esc(u.current_office_title || 'Chief Technology Officer · Arquitectura & Edge Cloud')}</span>
+              <p class="cto-bio-copy">${app.esc(u.bio || 'Ingeniería principal de Credo · F# Core Kernel (.NET 8), Liquid Glass UI y red global Credo Turbo Edge 4 TB.')}</p>
+              ${u.motto ? `<p class="cto-motto-line">«${app.esc(u.motto)}»</p>` : ''}
+              ${linksHtml}
+            </div>
+
+            <div class="cto-pillars-grid" aria-label="Infraestructura dirigida">
+              <div class="cto-pillar-card">
+                <strong>⚡ Turbo Edge CDN</strong>
+                <span>4.0 TB ZFS · HTTP/3</span>
+              </div>
+              <div class="cto-pillar-card">
+                <strong>◈ F# Core Kernel</strong>
+                <span>.NET 8 · PostgreSQL</span>
+              </div>
+              <div class="cto-pillar-card">
+                <strong>✦ Liquid Glass UI</strong>
+                <span>PWA · Android OTA</span>
+              </div>
+            </div>
+
+            <div class="cto-cta-row">
+              <button type="button" class="${u.is_following ? 'cto-btn-secondary' : 'cto-btn-primary'}" id="uFollowBtn">${u.is_following ? d.parishes.following : d.parishes.follow}</button>
+              <button type="button" class="cto-btn-secondary" id="pubShareBtn">Compartir perfil</button>
+            </div>
+          </div>
+        </section>
+      `
+      : `
+        <section class="ig-prof-head">
+          <div
+            class="ig-prof-avatar"
+            data-zoomable
+            data-zoom-name="${app.esc(fullNameDisplay)}"
+            data-zoom-src="${app.esc(avUrl)}"
+            data-zoom-bg="${app.esc(u.avatar_color || '#0F1E36')}"
+            style="${u.avatar_color ? `background:${app.esc(u.avatar_color)}` : ''}"
+            title="Mantén presionado para ampliar"
+          >
+            ${avUrl ? `<img src="${app.esc(avUrl)}" alt="${app.esc(u.full_name)}" />` : app.initials(u.full_name)}
+          </div>
+          <div class="ig-prof-stats">
+            <div>
+              <span class="ig-stat-val">${u.posts_count ?? posts.length}</span>
+              <span class="ig-stat-lbl">Publicaciones</span>
+            </div>
+            <div>
+              <span class="ig-stat-val" id="pubFollowersVal">${u.followers_count ?? 0}</span>
+              <span class="ig-stat-lbl">Seguidores</span>
+            </div>
+            <div>
+              <span class="ig-stat-val">${u.following_count ?? 0}</span>
+              <span class="ig-stat-lbl">Siguiendo</span>
+            </div>
+          </div>
+        </section>
+
+        <div class="ig-prof-bio">
+          <strong style="font-size:0.98rem;display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap">
+            <span>${app.esc(fullNameDisplay)}</span>
+            ${app.renderPlanInsignia(u, { showLabel: Boolean(!u.is_ceo) })}
+          </strong>
+          <span class="t-footnote">${app.esc(u.current_office_title || d.ranks[u.ecclesiastical_rank] || u.ecclesiastical_rank)}</span>
+          ${u.bio ? `<p style="margin:4px 0 0;font-size:0.88rem;line-height:1.45">${app.esc(u.bio)}</p>` : ''}
+          ${u.motto ? `<p style="margin:2px 0 0;font-size:0.84rem;font-style:italic;color:var(--gold-text)">«${app.esc(u.motto)}»</p>` : ''}
+          ${linksHtml}
+        </div>
+
+        ${hasAireRadio ? `
+          <div class="offering-banner" style="padding:11px 14px;margin-bottom:14px;background:linear-gradient(135deg,rgba(10,25,52,0.95),rgba(10,132,255,0.28));color:#fff;border-color:rgba(10,132,255,0.45)">
+            <div style="display:flex;align-items:center;gap:10px;min-width:0">
+              <img src="${app.esc(proxyProfileMedia('https://aire96fm.com.do/wp-content/themes/aire96-liquid/assets/img/aire96-logo-256.png'))}" alt="Aire 96 FM" width="40" height="40" style="border-radius:50%;object-fit:cover;flex-shrink:0" />
+              <div style="min-width:0">
+                <div style="display:flex;align-items:center;gap:5px;font-size:0.68rem;font-weight:800;color:#FF6961">
+                  <span class="live-dot" style="width:6px;height:6px"></span> RADIO EN VIVO · 96.5 FM
+                </div>
+                <strong style="display:block;font-size:0.88rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Aire 96 FM · Señal Oficial</strong>
+              </div>
+            </div>
+            <button type="button" class="btn btn-gold btn-sm" id="ceoPlayAireBtn">▶ Escuchar</button>
+          </div>` : ''}
+
+        <div class="ig-prof-cta">
+          <button type="button" class="btn ${u.is_following ? 'btn-soft' : 'btn-gold'} btn-sm" id="uFollowBtn">${u.is_following ? d.parishes.following : d.parishes.follow}</button>
+          <button type="button" class="btn btn-soft btn-sm" id="pubShareBtn">Compartir perfil</button>
+        </div>
+      `;
+
     root.innerHTML = `
-      <header class="ig-prof-top">
+      <header class="ig-prof-top${isCto ? ' ig-prof-top--cto' : ''}">
         <div class="ig-prof-username">
           <a href="#/explore" class="ig-icon-btn" style="width:34px;height:34px;flex-shrink:0" aria-label="Volver">
             <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
           </a>
           <span>@${app.esc(u.username || 'credo')}</span>
           ${u.is_ceo ? '<span class="rank-tag" style="background:#0A84FF;color:#FFFFFF;font-size:0.66rem;flex-shrink:0">CEO</span>' : ''}
+          ${app.renderCtoInsignia(u)}
           ${app.renderPlanInsignia(u)}
         </div>
         <div class="ig-prof-actions">
@@ -104,70 +266,7 @@ async function mountUserProfile({ root, app, signal, userId }) {
         </div>
       </header>
 
-      <section class="ig-prof-head">
-        <div
-          class="ig-prof-avatar"
-          data-zoomable
-          data-zoom-name="${app.esc(fullNameDisplay)}"
-          data-zoom-src="${app.esc(avUrl)}"
-          data-zoom-bg="${app.esc(u.avatar_color || '#0F1E36')}"
-          style="${u.avatar_color ? `background:${app.esc(u.avatar_color)}` : ''}"
-          title="Mantén presionado para ampliar"
-        >
-          ${avUrl ? `<img src="${app.esc(avUrl)}" alt="${app.esc(u.full_name)}" />` : app.initials(u.full_name)}
-        </div>
-        <div class="ig-prof-stats">
-          <div>
-            <span class="ig-stat-val">${u.posts_count ?? posts.length}</span>
-            <span class="ig-stat-lbl">Publicaciones</span>
-          </div>
-          <div>
-            <span class="ig-stat-val" id="pubFollowersVal">${u.followers_count ?? 0}</span>
-            <span class="ig-stat-lbl">Seguidores</span>
-          </div>
-          <div>
-            <span class="ig-stat-val">${u.following_count ?? 0}</span>
-            <span class="ig-stat-lbl">Siguiendo</span>
-          </div>
-        </div>
-      </section>
-
-      <div class="ig-prof-bio">
-        <strong style="font-size:0.98rem;display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap">
-          <span>${app.esc(fullNameDisplay)}</span>
-          ${app.renderPlanInsignia(u, { showLabel: Boolean(!u.is_ceo) })}
-        </strong>
-        <span class="t-footnote">${app.esc(u.current_office_title || d.ranks[u.ecclesiastical_rank] || u.ecclesiastical_rank)}</span>
-        ${u.bio ? `<p style="margin:4px 0 0;font-size:0.88rem;line-height:1.45">${app.esc(u.bio)}</p>` : ''}
-        ${u.motto ? `<p style="margin:2px 0 0;font-size:0.84rem;font-style:italic;color:var(--gold-text)">«${app.esc(u.motto)}»</p>` : ''}
-        ${links.length > 0 ? `
-          <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">
-            ${links.map((lk) => `
-              <a href="${app.esc(lk.url)}" target="_blank" rel="noopener noreferrer" class="source-pill-box">
-                <span>🔗 ${app.esc(lk.label)}</span>
-                <span class="source-pill-arrow" aria-hidden="true">↗</span>
-              </a>`).join('')}
-          </div>` : ''}
-      </div>
-
-      ${hasAireRadio ? `
-        <div class="offering-banner" style="padding:11px 14px;margin-bottom:14px;background:linear-gradient(135deg,rgba(10,25,52,0.95),rgba(10,132,255,0.28));color:#fff;border-color:rgba(10,132,255,0.45)">
-          <div style="display:flex;align-items:center;gap:10px;min-width:0">
-            <img src="${app.esc(proxyProfileMedia('https://aire96fm.com.do/wp-content/themes/aire96-liquid/assets/img/aire96-logo-256.png'))}" alt="Aire 96 FM" width="40" height="40" style="border-radius:50%;object-fit:cover;flex-shrink:0" />
-            <div style="min-width:0">
-              <div style="display:flex;align-items:center;gap:5px;font-size:0.68rem;font-weight:800;color:#FF6961">
-                <span class="live-dot" style="width:6px;height:6px"></span> RADIO EN VIVO · 96.5 FM
-              </div>
-              <strong style="display:block;font-size:0.88rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Aire 96 FM · Señal Oficial</strong>
-            </div>
-          </div>
-          <button type="button" class="btn btn-gold btn-sm" id="ceoPlayAireBtn">▶ Escuchar</button>
-        </div>` : ''}
-
-      <div class="ig-prof-cta">
-        <button type="button" class="btn ${u.is_following ? 'btn-soft' : 'btn-gold'} btn-sm" id="uFollowBtn">${u.is_following ? d.parishes.following : d.parishes.follow}</button>
-        <button type="button" class="btn btn-soft btn-sm" id="pubShareBtn">Compartir perfil</button>
-      </div>
+      ${publicHeroHtml}
 
       <div class="ig-prof-tabs" role="tablist">
         <button type="button" class="ig-prof-tab is-active" data-pubtab="posts" aria-label="Publicaciones">
@@ -214,16 +313,24 @@ async function mountUserProfile({ root, app, signal, userId }) {
       const nextFollow = !followingState;
       followingState = nextFollow;
       btn.textContent = nextFollow ? d.parishes.following : d.parishes.follow;
-      btn.classList.toggle('btn-gold', !nextFollow);
-      btn.classList.toggle('btn-soft', nextFollow);
+      if (isCto) {
+        btn.className = nextFollow ? 'cto-btn-secondary' : 'cto-btn-primary';
+      } else {
+        btn.classList.toggle('btn-gold', !nextFollow);
+        btn.classList.toggle('btn-soft', nextFollow);
+      }
       if (fValEl) fValEl.textContent = String(Math.max(0, prevCount + (nextFollow ? 1 : -1)));
       try {
         await app.api(`/api/v1/users/${u.id}/follow`, { method: nextFollow ? 'POST' : 'DELETE' });
       } catch (err) {
         followingState = !nextFollow;
         btn.textContent = followingState ? d.parishes.following : d.parishes.follow;
-        btn.classList.toggle('btn-gold', !followingState);
-        btn.classList.toggle('btn-soft', followingState);
+        if (isCto) {
+          btn.className = followingState ? 'cto-btn-secondary' : 'cto-btn-primary';
+        } else {
+          btn.classList.toggle('btn-gold', !followingState);
+          btn.classList.toggle('btn-soft', followingState);
+        }
         if (fValEl) fValEl.textContent = String(prevCount);
         app.toast(err.message);
       }

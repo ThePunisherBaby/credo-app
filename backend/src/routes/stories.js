@@ -24,11 +24,12 @@ router.get('/', async (_req, res) => {
                 u.avatar_url AS author_avatar_url,
                 u.verification_status AS author_verification_status,
                 u.country_code AS author_country_code,
-                COALESCE(u.is_ceo, FALSE) AS author_is_ceo
+                COALESCE(u.is_ceo, FALSE) AS author_is_ceo,
+                COALESCE(u.is_cto, FALSE) AS author_is_cto
            FROM stories s
            JOIN users u ON u.id = s.author_id
           WHERE s.expires_at > NOW()
-          ORDER BY COALESCE(u.is_ceo, FALSE) DESC, s.created_at DESC
+          ORDER BY COALESCE(u.is_ceo, FALSE) DESC, COALESCE(u.is_cto, FALSE) DESC, s.created_at DESC
           LIMIT 25`
       );
 
@@ -59,6 +60,7 @@ router.get('/', async (_req, res) => {
             verification_status: r.author_verification_status,
             country_code: r.author_country_code,
             is_ceo: Boolean(r.author_is_ceo),
+            is_cto: Boolean(r.author_is_cto),
           },
           []
         ),

@@ -309,6 +309,7 @@ export async function mount({ root, app, signal }) {
             <div class="post-author-row">
               <a href="#/user/${author.id}" class="post-author-name">${app.esc(authorDisplay)}</a>
               ${author.is_ceo ? '<span class="rank-tag">CEO</span>' : ''}
+              ${app.renderCtoInsignia(author)}
               ${app.renderPlanInsignia(author)}
               ${isEntSponsor ? '<span class="co-badge-gold" style="padding:1px 7px;font-size:0.64rem">✦ Enterprise</span>' : ''}
             </div>
@@ -740,6 +741,7 @@ function openPostDetailModal(post, app, d, onCountChange) {
           <div class="post-author-row">
             <strong>${app.esc(author.title_prefix ? `${author.title_prefix} ` : '')}${app.esc(author.full_name)}</strong>
             ${author.is_ceo ? '<span class="rank-tag">CEO</span>' : ''}
+            ${app.renderCtoInsignia(author)}
           </div>
           <span class="t-footnote">${app.esc(post.channel_name || post.scope_unit?.name || '')} · ${app.relTime(post.created_at)}</span>
         </div>

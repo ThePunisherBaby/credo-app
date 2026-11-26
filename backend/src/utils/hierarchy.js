@@ -96,6 +96,7 @@ async function getDescendantUnitIds(unitId) {
 const fsharpKernel = require('../services/fsharpKernel');
 
 function serializeUserSummary(u, lineage = [], orderUnit = null) {
+  const isCto = Boolean(u.is_cto || String(u.username || '').toLowerCase() === 'paulinosstudios');
   const effectiveSku = u.active_plan_sku || (u.is_ceo ? 'biz_one_enterprise' : '');
   const planSpec = effectiveSku ? fsharpKernel.getPlanSpec(effectiveSku) : null;
   const effectiveBadge = u.one_badge || planSpec?.badge_type || (u.is_ceo ? 'enterprise_gold' : '');
@@ -109,6 +110,7 @@ function serializeUserSummary(u, lineage = [], orderUnit = null) {
     ecclesiastical_rank: u.ecclesiastical_rank,
     can_publish:
       isClergyRank(u.ecclesiastical_rank) ||
+      Boolean(u.is_ceo || isCto) ||
       ['user_one_pro', 'biz_one_plus', 'biz_one_pro', 'biz_one_enterprise'].includes(effectiveSku),
     religious_order_initials: u.religious_order_initials || '',
     primary_unit_id: u.primary_unit_id,
@@ -125,13 +127,14 @@ function serializeUserSummary(u, lineage = [], orderUnit = null) {
     verification_status: u.verification_status || 'unverified',
     is_admin: Boolean(u.is_admin),
     is_ceo: Boolean(u.is_ceo),
+    is_cto: isCto,
     website_links: Array.isArray(u.website_links) ? u.website_links : [],
     is_credo_plus: Boolean(u.is_credo_plus || effectiveSku),
     credo_plus_plan: effectiveSku || u.credo_plus_plan || '',
     active_plan_sku: effectiveSku,
     active_plan_name: effectivePlanName,
-    ad_free: Boolean(u.ad_free || planSpec?.ad_free),
-    studio_eligible: Boolean(u.studio_eligible || planSpec?.studio_access || u.is_ceo || u.is_admin),
+    ad_free: Boolean(u.ad_free || planSpec?.ad_free || isCto),
+    studio_eligible: Boolean(u.studio_eligible || planSpec?.studio_access || u.is_ceo || isCto || u.is_admin),
     one_badge: effectiveBadge,
     lineage,
     religious_order: orderUnit,

@@ -213,8 +213,8 @@ app.get(['/api/v1/vids', '/api/v1/reels'], optionalAuth, async (_req, res) => {
         `SELECT p.id, p.title, p.content, p.image_url, p.video_url, p.youtube_id, p.video_duration,
                 p.channel_name, p.source_url, p.scripture_ref, p.created_at,
                 p.amen_count, p.comments_count,
-                u.id AS author_id, u.full_name AS author_full_name, u.title_prefix AS author_title_prefix,
-                u.avatar_color AS author_avatar_color, u.avatar_url AS author_avatar_url, u.is_ceo AS author_is_ceo
+                u.id AS author_id, u.username AS author_username, u.full_name AS author_full_name, u.title_prefix AS author_title_prefix,
+                u.avatar_color AS author_avatar_color, u.avatar_url AS author_avatar_url, u.is_ceo AS author_is_ceo, u.is_cto AS author_is_cto
            FROM posts p
            JOIN users u ON u.id = p.author_id
           WHERE p.media_kind = 'video'
@@ -239,6 +239,7 @@ app.get(['/api/v1/vids', '/api/v1/reels'], optionalAuth, async (_req, res) => {
         channel_name: r.channel_name || `${r.author_title_prefix ? r.author_title_prefix + ' ' : ''}${r.author_full_name}`,
         author_id: r.author_id,
         author_is_ceo: Boolean(r.author_is_ceo),
+        author_is_cto: Boolean(r.author_is_cto || String(r.author_username || '').toLowerCase() === 'paulinosstudios'),
         avatar_url: r.author_avatar_url || '',
         accent_color: r.author_avatar_color || '#0F1E36',
         amen_count: r.amen_count || 0,

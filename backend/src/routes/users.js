@@ -13,7 +13,7 @@ const USER_PUBLIC_COLS = `
   religious_order_initials, primary_unit_id, religious_order_id,
   current_office_title, bio, motto, ordination_date, country_code,
   languages, preferred_locale, avatar_color, avatar_url,
-  verification_status, is_admin, is_ceo, website_links,
+  verification_status, is_admin, is_ceo, is_cto, website_links,
   is_credo_plus, credo_plus_plan,
   active_plan_sku, ad_free, studio_eligible, one_badge,
   followers_count, following_count, posts_count, created_at
@@ -63,6 +63,7 @@ router.get('/', async (req, res) => {
           ${whereSql}
           ORDER BY
             COALESCE(u.is_ceo, FALSE) DESC,
+            COALESCE(u.is_cto, FALSE) DESC,
             CASE u.ecclesiastical_rank
               WHEN 'pope' THEN 1
               WHEN 'cardinal' THEN 2
@@ -233,6 +234,7 @@ router.put('/me', requireAuth, async (req, res) => {
       languages,
       avatar_color,
       avatar_url,
+      website_links,
       request_verification,
     } = req.body || {};
 
@@ -243,6 +245,18 @@ router.put('/me', requireAuth, async (req, res) => {
       nextVerification === 'unverified'
     ) {
       nextVerification = 'pending';
+    }
+
+    let safeLinksJson = null;
+    if (Array.isArray(website_links)) {
+      const cleaned = website_links
+        .map((lk) => ({
+          label: String(lk?.label || '').trim().slice(0, 48),
+          url: String(lk?.url || '').trim().slice(0, 300),
+        }))
+        .filter((lk) => lk.label && /^https?:\/\//i.test(lk.url))
+        .slice(0, 5);
+      safeLinksJson = JSON.stringify(cleaned);
     }
 
     const { rows } = await pool.query(
@@ -262,8 +276,9 @@ router.put('/me', requireAuth, async (req, res) => {
               avatar_color = COALESCE($13, avatar_color),
               avatar_url = COALESCE($14, avatar_url),
               verification_status = $15,
+              website_links = COALESCE($16::jsonb, website_links),
               updated_at = NOW()
-        WHERE id = $16
+        WHERE id = $17
         RETURNING *`,
       [
         full_name !== undefined ? String(full_name).trim() : null,
@@ -283,6 +298,7 @@ router.put('/me', requireAuth, async (req, res) => {
         avatar_color !== undefined ? String(avatar_color).trim().slice(0, 16) : null,
         avatar_url !== undefined ? String(avatar_url).trim().slice(0, 500) : null,
         nextVerification,
+        safeLinksJson,
         req.user.id,
       ]
     );

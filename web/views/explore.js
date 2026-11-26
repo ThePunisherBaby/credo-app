@@ -158,8 +158,9 @@ export async function mount({ root, app, signal, params }) {
                 <div class="entity-title">
                   <span>${app.esc(u.title_prefix ? `${u.title_prefix} ` : '')}${app.esc(u.full_name)}</span>
                   ${u.is_ceo ? '<span class="rank-tag" style="background:#0A84FF;color:#FFFFFF">CEO</span>' : ''}
+                  ${app.renderCtoInsignia(u)}
                 </div>
-                <div class="entity-sub">${app.esc(rank)}</div>
+                <div class="entity-sub">${app.esc(u.current_office_title || rank)}</div>
               </div>
               <span class="t-caption">›</span>
             </a>

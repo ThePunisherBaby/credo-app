@@ -72,6 +72,7 @@ async function hydratePosts(rows, viewerId) {
         verification_status: r.author_verification_status,
         country_code: r.author_country_code,
         is_ceo: r.author_is_ceo,
+        is_cto: r.author_is_cto,
         active_plan_sku: r.author_active_plan_sku || '',
         one_badge: r.author_one_badge || '',
       },
@@ -103,6 +104,7 @@ const POST_SELECT = `
          u.verification_status AS author_verification_status,
          u.country_code AS author_country_code,
          u.is_ceo AS author_is_ceo,
+         u.is_cto AS author_is_cto,
          u.active_plan_sku AS author_active_plan_sku,
          u.one_badge AS author_one_badge
     FROM posts p
@@ -490,7 +492,7 @@ router.get('/:id/comments', async (req, res) => {
                 u.id AS author_id, u.username, u.full_name, u.title_prefix,
                 u.ecclesiastical_rank, u.religious_order_initials,
                 u.current_office_title, u.avatar_color, u.avatar_url,
-                u.verification_status, u.country_code, u.is_ceo
+                u.verification_status, u.country_code, u.is_ceo, u.is_cto
            FROM post_comments c
            JOIN users u ON u.id = c.author_id
           WHERE c.post_id = $1
@@ -519,6 +521,7 @@ router.get('/:id/comments', async (req, res) => {
             verification_status: r.verification_status,
             country_code: r.country_code,
             is_ceo: Boolean(r.is_ceo),
+            is_cto: Boolean(r.is_cto),
           },
           []
         ),

@@ -221,7 +221,7 @@ async function ensureOrgForSubscription(user, plan) {
  */
 async function reconcileUserEntitlements(userId) {
   const { rows: userRows } = await pool.query(
-    `SELECT id, is_ceo, is_admin, email FROM users WHERE id = $1`,
+    `SELECT id, is_ceo, is_cto, is_admin, email FROM users WHERE id = $1`,
     [userId]
   );
   if (!userRows[0]) return null;
@@ -260,9 +260,9 @@ async function reconcileUserEntitlements(userId) {
   );
 
   const highest = subs[0] || null;
-  const adFree = subs.some((s) => Boolean(s.ad_free));
+  const adFree = Boolean(user.is_cto || subs.some((s) => Boolean(s.ad_free)));
   const studioEligible = Boolean(
-    user.is_ceo || user.is_admin || subs.some((s) => Boolean(s.studio_access)) || orgAccess.length > 0
+    user.is_ceo || user.is_cto || user.is_admin || subs.some((s) => Boolean(s.studio_access)) || orgAccess.length > 0
   );
   const activePlanSku = highest ? highest.plan_sku : (user.is_ceo ? 'biz_one_enterprise' : '');
   const oneBadge = highest ? highest.badge_type : (user.is_ceo ? 'enterprise_gold' : '');
