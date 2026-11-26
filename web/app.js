@@ -448,6 +448,27 @@ class CredoApp {
   }
 
   async bootstrap() {
+    // Extract VIP Profile Claim / Onboarding link (/bienvenida/<token>, ?bienvenida=<token>, ?claim=<token>)
+    let initialClaimToken = '';
+    const pathClaimMatch = location.pathname.match(/^\/(?:bienvenida|claim)\/([A-Za-z0-9_-]{8,120})\/?$/);
+    if (pathClaimMatch) {
+      initialClaimToken = pathClaimMatch[1];
+      history.replaceState(null, '', '/#/feed');
+    } else {
+      const sp = new URLSearchParams(location.search);
+      const qTok = sp.get('bienvenida') || sp.get('claim') || '';
+      if (qTok) {
+        initialClaimToken = qTok.trim();
+        history.replaceState(null, '', '/#/feed');
+      } else {
+        const hashClaim = location.hash.match(/^#\/(?:bienvenida|claim)\/([A-Za-z0-9_-]{8,120})\/?$/);
+        if (hashClaim) {
+          initialClaimToken = hashClaim[1];
+          history.replaceState(null, '', '/#/feed');
+        }
+      }
+    }
+
     // Support clean /studio URL paths seamlessly in hash router
     if (location.pathname.startsWith('/studio') && !location.hash.startsWith('#/studio')) {
       const sub = location.pathname.replace(/^\/studio\/?/, '') || 'overview';
@@ -541,6 +562,10 @@ class CredoApp {
     }
 
     this.prefetchCore();
+
+    if (initialClaimToken) {
+      this.openClaimProfileModal(initialClaimToken);
+    }
   }
 
   attachAvatarLongPress() {
@@ -1725,6 +1750,207 @@ class CredoApp {
     };
 
     renderAuth();
+  }
+
+  async openClaimProfileModal(claimToken) {
+    const cleanTok = String(claimToken || '').trim();
+    if (!cleanTok) return;
+
+    const loadingDlg = this.openModal(
+      'Bienvenida a Credo',
+      `<div style="padding:18px 0;text-align:center;color:var(--label-2)">Verificando tu perfil oficial…</div>`
+    );
+
+    let data;
+    try {
+      data = await this.api(`/api/v1/auth/claim/${encodeURIComponent(cleanTok)}`, { noCache: true });
+    } catch (err) {
+      const msg = err?.message || 'Este enlace de bienvenida no es válido o ya fue utilizado.';
+      if (loadingDlg) {
+        this.openModal(
+          'Enlace de Bienvenida',
+          `
+          <div style="display:flex;flex-direction:column;gap:14px">
+            <p style="margin:0;color:var(--label-2);line-height:1.5">${this.esc(msg)}</p>
+            <button type="button" class="btn btn-gold btn-block" id="claimGoLoginBtn">Iniciar sesión con mi cuenta</button>
+          </div>
+          `
+        );
+        document.getElementById('claimGoLoginBtn')?.addEventListener('click', () => {
+          this.closeModal();
+          setTimeout(() => this.openAuthModal(), 180);
+        });
+      }
+      return;
+    }
+
+    const p = data?.profile || {};
+    const displayTitle = `${p.title_prefix ? p.title_prefix + ' ' : ''}${p.full_name || 'Perfil Oficial'}`;
+
+    const dlg = this.openModal(
+      'Activar tu Perfil Oficial',
+      `
+      <div class="claim-hero-card">
+        <span class="avatar" style="--av-sz:56px;--av-bg:${this.esc(p.avatar_color || '#0F1E36')}">
+          ${p.avatar_url ? `<img src="${this.esc(p.avatar_url)}" alt="" />` : this.esc(this.initials(p.full_name || 'C'))}
+        </span>
+        <div class="claim-hero-meta">
+          <div class="claim-hero-name">
+            <strong>${this.esc(displayTitle)}</strong>
+            ${p.is_ceo ? '<span class="ceo-pill">CEO</span>' : ''}
+          </div>
+          <small>@${this.esc(p.username || '')}${p.posts_count ? ` · ${p.posts_count} publicaciones listas en tu perfil` : ''}</small>
+        </div>
+      </div>
+
+      <p style="margin:0;font-size:0.86rem;color:var(--label-2);line-height:1.45">
+        Tu perfil oficial ya está creado. Ingresa tu correo electrónico, elige tu contraseña personal y confirma tus datos para entrar directamente.
+      </p>
+
+      <form id="claimProfileForm" class="claim-form">
+        <div class="field">
+          <label for="claimEmail">Tu correo electrónico (para iniciar sesión)</label>
+          <input
+            id="claimEmail"
+            name="email"
+            type="email"
+            value="${this.esc(p.email || '')}"
+            placeholder="ejemplo@correo.com"
+            autocomplete="username"
+            spellcheck="false"
+            enterkeyhint="next"
+            required
+          />
+        </div>
+
+        <div class="field">
+          <label for="claimNewPassword">Crea tu contraseña (mín. 6 caracteres)</label>
+          <div class="claim-pass-wrap">
+            <input
+              id="claimNewPassword"
+              name="new-password"
+              type="password"
+              minlength="6"
+              placeholder="Escribe tu contraseña segura"
+              autocomplete="new-password"
+              enterkeyhint="done"
+              required
+            />
+            <button type="button" class="claim-pass-toggle" id="claimTogglePass" aria-label="Mostrar contraseña">Mostrar</button>
+          </div>
+        </div>
+
+        <div id="claimFormError" class="claim-form-err" hidden></div>
+
+        <button type="submit" class="btn btn-gold btn-block" id="claimSubmitBtn">
+          Guardar mis datos y entrar a mi perfil
+        </button>
+
+        <div class="claim-extra-box">
+          <span class="claim-extra-title">Datos visibles en tu perfil (puedes ajustarlos ahora o después)</span>
+          <div class="field">
+            <label for="claimFullName">Nombre completo</label>
+            <input
+              id="claimFullName"
+              name="full_name"
+              type="text"
+              value="${this.esc(p.full_name || '')}"
+              autocomplete="name"
+              enterkeyhint="next"
+              required
+            />
+          </div>
+          <div class="claim-row-2">
+            <div class="field">
+              <label for="claimPrefix">Título</label>
+              <input
+                id="claimPrefix"
+                name="title_prefix"
+                type="text"
+                value="${this.esc(p.title_prefix || 'P.')}"
+                placeholder="P."
+                enterkeyhint="next"
+              />
+            </div>
+            <div class="field">
+              <label for="claimUsername">Usuario (@)</label>
+              <input
+                id="claimUsername"
+                name="username"
+                type="text"
+                value="${this.esc(p.username || '')}"
+                spellcheck="false"
+                autocapitalize="none"
+                autocorrect="off"
+                enterkeyhint="next"
+              />
+            </div>
+          </div>
+          <div class="field">
+            <label for="claimBio">Presentación / Biografía (opcional)</label>
+            <textarea
+              id="claimBio"
+              name="bio"
+              rows="2"
+              placeholder="Ej. Sacerdote · Aire 96 FM y Reflexionando la Palabra"
+            >${this.esc(p.bio || '')}</textarea>
+          </div>
+        </div>
+      </form>
+      `
+    );
+
+    const passInput = dlg.querySelector('#claimNewPassword');
+    const passToggle = dlg.querySelector('#claimTogglePass');
+    passToggle?.addEventListener('click', () => {
+      if (!passInput) return;
+      const showing = passInput.type === 'text';
+      passInput.type = showing ? 'password' : 'text';
+      passToggle.textContent = showing ? 'Mostrar' : 'Ocultar';
+      passToggle.setAttribute('aria-label', showing ? 'Mostrar contraseña' : 'Ocultar contraseña');
+    });
+
+    const errEl = dlg.querySelector('#claimFormError');
+    const submitBtn = dlg.querySelector('#claimSubmitBtn');
+    dlg.querySelector('#claimProfileForm')?.addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      if (errEl) {
+        errEl.hidden = true;
+        errEl.textContent = '';
+      }
+      const fd = new FormData(ev.target);
+      if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Activando tu perfil…';
+      }
+      try {
+        const res = await this.api(`/api/v1/auth/claim/${encodeURIComponent(cleanTok)}`, {
+          method: 'POST',
+          body: {
+            email: fd.get('email'),
+            password: fd.get('new-password'),
+            full_name: fd.get('full_name'),
+            title_prefix: fd.get('title_prefix'),
+            username: fd.get('username'),
+            bio: fd.get('bio'),
+          },
+        });
+        this.closeModal();
+        this._applySession(res);
+        location.hash = '#/profile';
+      } catch (err) {
+        if (errEl) {
+          errEl.textContent = err?.message || 'No se pudo activar tu perfil.';
+          errEl.hidden = false;
+        } else {
+          this.toast(err?.message || 'Error al guardar');
+        }
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.textContent = 'Guardar mis datos y entrar a mi perfil';
+        }
+      }
+    });
   }
 
   _applySession({ token, user }) {

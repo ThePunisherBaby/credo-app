@@ -3848,6 +3848,88 @@ html, body {
   max-height: 100dvh;
 }
 
-
-
+/* 10. VIP Official Profile Claim / Onboarding Modal */
+.claim-hero-card {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: light-dark(rgba(10, 132, 255, 0.06), rgba(10, 132, 255, 0.12));
+  border: 1px solid light-dark(rgba(10, 132, 255, 0.2), rgba(56, 189, 248, 0.28));
+}
+.claim-hero-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.claim-hero-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.claim-hero-name strong {
+  font-size: 1rem;
+  font-weight: 800;
+  color: var(--label);
+}
+.claim-hero-meta small {
+  font-size: 0.78rem;
+  color: var(--label-2);
+}
+.claim-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.claim-pass-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.claim-pass-wrap input {
+  width: 100%;
+  padding-right: 78px !important;
+}
+.claim-pass-toggle {
+  position: absolute;
+  right: 8px;
+  padding: 5px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--sep-strong);
+  background: var(--surface-2, rgba(255, 255, 255, 0.08));
+  color: var(--label);
+  font-size: 0.76rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+.claim-extra-box {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 4px;
+  padding-top: 12px;
+  border-top: var(--hairline) solid var(--sep);
+}
+.claim-extra-title {
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: var(--label-2);
+}
+.claim-row-2 {
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  gap: 10px;
+}
+.claim-form-err {
+  padding: 9px 12px;
+  border-radius: 10px;
+  background: rgba(239, 68, 68, 0.14);
+  border: 1px solid rgba(239, 68, 68, 0.38);
+  color: #FCA5A5;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
 

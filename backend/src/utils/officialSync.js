@@ -77,7 +77,7 @@ async function fetchJson(url) {
  */
 async function syncOfficialSources() {
   const ceoRes = await pool.query(
-    "SELECT id, primary_unit_id FROM users WHERE username = 'p_domingo_vasquez' LIMIT 1"
+    "SELECT id, primary_unit_id FROM users WHERE is_ceo = TRUE OR username = 'p_domingo_vasquez' ORDER BY is_ceo DESC, id ASC LIMIT 1"
   );
   const ceo = ceoRes.rows[0];
   if (!ceo) return { synced: 0 };

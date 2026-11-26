@@ -1942,52 +1942,59 @@ async function purgeMockDataAndSyncReal() {
   await pool.query('DELETE FROM user_assignments');
   await pool.query('DELETE FROM ecclesiastical_units');
 
-  // 5. Ensure real CEO account: P. Domingo Vásquez (ultra-clean Instagram profile with zero verbose text)
-  const ceoPassHash = await bcrypt.hash('Credo2026!', 10);
-
-  await pool.query(`UPDATE users SET is_ceo = FALSE WHERE username <> 'p_domingo_vasquez'`);
-
-  await pool.query(
-    `INSERT INTO users (
-       email, password_hash, username, full_name, title_prefix,
-       ecclesiastical_rank, primary_unit_id, current_office_title,
-       bio, motto, ordination_date, country_code, languages, preferred_locale,
-       avatar_color, avatar_url, verification_status, verification_note,
-       is_admin, is_ceo, is_credo_plus, credo_plus_plan, website_links
-     ) VALUES (
-       'padre.domingo@credo.org', $1, 'p_domingo_vasquez', 'Domingo Vásquez', 'P.',
-       'priest', NULL, '',
-       '',
-       '',
-       NULL, 'DO', ARRAY['es'], 'es',
-       '#0F1E36', '/icons/p_domingo_vasquez.png',
-       'verified', '',
-       TRUE, TRUE, TRUE, 'annual', '[]'::jsonb
-     )
-     ON CONFLICT (username) DO UPDATE SET
-       full_name = EXCLUDED.full_name,
-       title_prefix = EXCLUDED.title_prefix,
-       primary_unit_id = NULL,
-       current_office_title = '',
-       bio = '',
-       motto = '',
-       ordination_date = NULL,
-       avatar_url = EXCLUDED.avatar_url,
-       verification_status = 'verified',
-       is_admin = TRUE,
-       is_ceo = TRUE,
-       is_credo_plus = TRUE,
-       credo_plus_plan = 'annual',
-       website_links = '[]'::jsonb`,
-    [ceoPassHash]
+  // 5. Ensure real CEO account: P. Domingo Vásquez — NEVER overwrite credentials/profile once created or claimed!
+  const existingCeo = await pool.query(
+    `SELECT id, username FROM users
+      WHERE is_ceo = TRUE OR username = 'p_domingo_vasquez'
+      ORDER BY is_ceo DESC, id ASC
+      LIMIT 1`
   );
+
+  let ceoUserId = existingCeo.rows[0]?.id || null;
+
+  if (!ceoUserId) {
+    const ceoPassHash = await bcrypt.hash('Credo2026!', 10);
+    const ins = await pool.query(
+      `INSERT INTO users (
+         email, password_hash, username, full_name, title_prefix,
+         ecclesiastical_rank, primary_unit_id, current_office_title,
+         bio, motto, ordination_date, country_code, languages, preferred_locale,
+         avatar_color, avatar_url, verification_status, verification_note,
+         is_admin, is_ceo, is_credo_plus, credo_plus_plan, website_links
+       ) VALUES (
+         'padre.domingo@credo.org', $1, 'p_domingo_vasquez', 'Domingo Vásquez', 'P.',
+         'priest', NULL, '',
+         '', '', NULL, 'DO', ARRAY['es'], 'es',
+         '#0F1E36', '/icons/p_domingo_vasquez.png',
+         'verified', '',
+         TRUE, TRUE, TRUE, 'annual', '[]'::jsonb
+       )
+       RETURNING id`,
+      [ceoPassHash]
+    );
+    ceoUserId = ins.rows[0].id;
+  } else {
+    await pool.query(
+      `UPDATE users
+          SET verification_status = 'verified',
+              is_admin = TRUE,
+              is_ceo = TRUE,
+              is_credo_plus = TRUE,
+              credo_plus_plan = COALESCE(NULLIF(credo_plus_plan, ''), 'annual'),
+              avatar_url = CASE WHEN COALESCE(avatar_url, '') = '' THEN '/icons/p_domingo_vasquez.png' ELSE avatar_url END
+        WHERE id = $1`,
+      [ceoUserId]
+    );
+    await pool.query(`UPDATE users SET is_ceo = FALSE WHERE id <> $1 AND is_ceo = TRUE`, [ceoUserId]);
+  }
 
   await pool.query(
     `UPDATE stories
         SET image_url = '/icons/p_domingo_vasquez.png'
-      WHERE author_id = (SELECT id FROM users WHERE username = 'p_domingo_vasquez' LIMIT 1)
+      WHERE author_id = $1
         AND COALESCE(video_url, '') = ''
-        AND COALESCE(youtube_id, '') = ''`
+        AND COALESCE(youtube_id, '') = ''`,
+    [ceoUserId]
   );
 
   // 6. Upsert ONLY real live radio channels
