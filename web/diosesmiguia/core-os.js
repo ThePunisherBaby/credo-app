@@ -1619,10 +1619,15 @@ async function renderUsersView(vp) {
                       <div class="mono" style="font-size:11px;color:var(--c-muted)">${esc(r.email)} · ${esc(r.phone || 'Sin tel')}</div>
                     </th>
                     <td data-label="Cédula">
-                      <div class="mono"><strong>${esc(r.cedula || '—')}</strong></div>
+                      <div class="mono"><strong>${esc(r.cedula || '—')}</strong> ${r.cedula_verified_source ? `<span class="led-badge">${esc(r.cedula_verified_source)}</span>` : ''}</div>
                       <div style="font-size:11px;color:${r.cedula_name_matched ? 'var(--c-green)' : 'var(--c-amber)'}">
                         ${r.cedula_official_name ? `Padrón: ${esc(r.cedula_official_name)}` : 'Sin coincidencia automática — Revisión manual'}
                       </div>
+                      ${
+                        r.cedula_photo_id
+                          ? `<button type="button" class="action-pill action-pill--gold" style="margin-top:4px" data-view-ced-photo="${r.cedula_photo_id}" data-view-ced-name="${esc(r.full_name)}" data-view-ced-ocr="${esc(r.cedula_ocr_text || '')}">Ver Foto Cédula</button>`
+                          : ''
+                      }
                     </td>
                     <td data-label="Rango">
                       <div>${esc(r.ecclesiastical_rank || r.request_kind)}</div>
@@ -1651,6 +1656,23 @@ async function renderUsersView(vp) {
       }
     </div>
   `;
+
+  vp.querySelectorAll('[data-view-ced-photo]').forEach((b) =>
+    b.addEventListener('click', () => {
+      const pid = b.dataset.viewCedPhoto;
+      const nm = b.dataset.viewCedName || 'Solicitante';
+      const ocr = b.dataset.viewCedOcr || '';
+      openModal(
+        `Foto Privada de Cédula · ${nm}`,
+        `
+        <div style="display:flex;flex-direction:column;gap:12px">
+          <img src="/api/admin/cedula-photo/${encodeURIComponent(pid)}?token=${encodeURIComponent(state.token)}" alt="Cédula de ${esc(nm)}" style="width:100%;max-height:420px;object-fit:contain;border-radius:8px;border:1px solid var(--c-border);background:#000" />
+          ${ocr ? `<div><div style="font-size:11px;font-weight:700;color:var(--c-muted);margin-bottom:4px">TEXTO DETECTADO POR OCR</div><pre class="core-pre">${esc(ocr)}</pre></div>` : ''}
+        </div>
+      `
+      );
+    })
+  );
 
   vp.querySelectorAll('[data-u-tab]').forEach((b) =>
     b.addEventListener('click', () => {
@@ -1728,9 +1750,10 @@ async function renderUserDossierView(vp, userId) {
           ${planBadge(u.active_plan_sku)}
           ${statusBadge(modSt)}
         </div>
-        <p class="mono">Cédula: ${esc(u.cedula || 'Sin cédula')} ${u.cedula_official_name ? `(${esc(u.cedula_official_name)})` : ''} · Última IP: ${esc(u.last_ip || '—')} · Registro: ${esc(fmtDate(u.created_at))}</p>
+        <p class="mono">Cédula: ${esc(u.cedula || 'Sin cédula')} ${u.cedula_official_name ? `(${esc(u.cedula_official_name)})` : ''} ${u.cedula_verified_source ? `· Fuente: ${esc(u.cedula_verified_source)}` : ''} · Última IP: ${esc(u.last_ip || '—')} · Registro: ${esc(fmtDate(u.created_at))}</p>
       </div>
       <div class="core-actions-row">
+        ${u.cedula_photo_id ? `<button type="button" class="btn-ghost" id="dosCedPhotoBtn">Ver Foto Cédula</button>` : ''}
         <button type="button" class="btn-gold" id="dosPlanBtn">Otorgar Credo One / Insignias</button>
         <button type="button" class="btn-primary" id="dosImpBtn">Impersonar Cuenta ↗</button>
         <button type="button" class="btn-ghost" id="dosLogoutBtn">Forzar Logout</button>
@@ -1872,6 +1895,17 @@ async function renderUserDossierView(vp, userId) {
     </div>
   `;
 
+  $('dosCedPhotoBtn')?.addEventListener('click', () => {
+    openModal(
+      `Foto Privada de Cédula · ${u.full_name}`,
+      `
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <img src="/api/admin/cedula-photo/${encodeURIComponent(u.cedula_photo_id)}?token=${encodeURIComponent(state.token)}" alt="Cédula de ${esc(u.full_name)}" style="width:100%;max-height:420px;object-fit:contain;border-radius:8px;border:1px solid var(--c-border);background:#000" />
+        ${u.cedula_ocr_text ? `<div><div style="font-size:11px;font-weight:700;color:var(--c-muted);margin-bottom:4px">TEXTO OCR (${esc(u.cedula_verified_source || 'photo_ocr')})</div><pre class="core-pre">${esc(u.cedula_ocr_text)}</pre></div>` : ''}
+      </div>
+    `
+    );
+  });
   $('dosPlanBtn')?.addEventListener('click', () => openQuickPlanModal(u, () => renderUserDossierView(vp, userId)));
   $('dosModBtn')?.addEventListener('click', () => openModerateModal(u, () => renderUserDossierView(vp, userId)));
   $('dosImpBtn')?.addEventListener('click', () => impersonateUser(u.id));
@@ -2796,12 +2830,13 @@ async function renderSettingsView(vp) {
   ];
 
   const minVer = s.min_mobile_version || { android: '1.0.0', ios: '1.0.0', force_update: false };
+  const cp = s.cedula_providers || { enable_dgii: true, enable_photo_ocr: true };
 
   vp.innerHTML = `
     <div class="core-page-head">
       <div>
-        <h2>Interruptores de Emergencia (Kill Switches)</h2>
-        <p>Controles críticos en tiempo real con efecto inmediato en todo el backend y registro en Audit Logs.</p>
+        <h2>Interruptores de Emergencia &amp; Motor de Cédula</h2>
+        <p>Controles críticos en tiempo real y configuración de las 3 capas de verificación de identidad (JCE/Verifik, DGII y Foto OCR).</p>
       </div>
     </div>
 
@@ -2836,6 +2871,44 @@ async function renderSettingsView(vp) {
           </label>
         </div>
         <div><button type="submit" class="btn-primary">Guardar Configuración de Emergencia</button></div>
+      </form>
+    </div>
+
+    <div class="core-panel">
+      <div class="core-panel-head">
+        <div>
+          <h3 class="core-panel-title">Verificación de Cédula · Cascada de 3 Capas</h3>
+          <p class="core-panel-sub">Capa 1: API Oficial JCE/Verifik (100% padrón incl. 402-...) → Capa 2: DGII gratis → Capa 3: Foto de Cédula + OCR Tesseract en servidor → Cola Manual.</p>
+        </div>
+        <span class="led-badge ${cp.has_verifik_token ? 'led-badge--green' : 'led-badge--amber'}">
+          <i class="led ${cp.has_verifik_token ? 'led--green' : 'led--amber'}"></i>
+          ${cp.has_verifik_token ? 'JCE / Verifik ACTIVO' : 'DGII + Foto OCR ACTIVOS'}
+        </span>
+      </div>
+      <form id="cedulaProvForm" class="core-form">
+        <div class="core-form-grid">
+          <div class="core-field">
+            <label>Verifik API Token (Padrón JCE 100%) ${cp.has_verifik_token ? '· [CONFIGURADO]' : ''}</label>
+            <input name="verifik_token" type="password" placeholder="${cp.has_verifik_token ? 'Token guardado · Deja vacío para mantener' : 'Pega aquí tu Bearer Token de Verifik…'}" class="mono" />
+          </div>
+          <div class="core-field">
+            <label>API JCE / OGTIC Personalizada (URL con {cedula})</label>
+            <input name="custom_api_url" value="${esc(cp.custom_api_url || '')}" placeholder="https://tu-proveedor.do/api/cedula/{cedula}" class="mono" />
+          </div>
+          <div class="core-field">
+            <label>API Key Personalizada ${cp.has_custom_api_key ? '· [CONFIGURADA]' : ''}</label>
+            <input name="custom_api_key" type="password" placeholder="${cp.has_custom_api_key ? 'Key guardada · Deja vacío para mantener' : 'Opcional'}" class="mono" />
+          </div>
+        </div>
+        <div class="core-form-grid">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+            <input type="checkbox" name="enable_dgii" ${cp.enable_dgii !== false ? 'checked' : ''} /> Activar Capa 2: Padrón Público DGII
+          </label>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+            <input type="checkbox" name="enable_photo_ocr" ${cp.enable_photo_ocr !== false ? 'checked' : ''} /> Activar Capa 3: Verificación Instantánea con Foto + OCR
+          </label>
+        </div>
+        <div><button type="submit" class="btn-gold">Guardar Motor de Cédula</button></div>
       </form>
     </div>
   `;
@@ -2877,6 +2950,31 @@ async function renderSettingsView(vp) {
         },
       });
       toast('Parámetros del sistema guardados', 'ok');
+      renderSettingsView(vp);
+    } catch (err) {
+      toast(err.message, 'err');
+    }
+  });
+
+  $('cedulaProvForm')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.currentTarget);
+    try {
+      await api('/settings', {
+        method: 'PUT',
+        body: {
+          settings: {
+            cedula_providers: {
+              verifik_token: String(fd.get('verifik_token') || '').trim(),
+              custom_api_url: String(fd.get('custom_api_url') || '').trim(),
+              custom_api_key: String(fd.get('custom_api_key') || '').trim(),
+              enable_dgii: fd.get('enable_dgii') === 'on',
+              enable_photo_ocr: fd.get('enable_photo_ocr') === 'on',
+            },
+          },
+        },
+      });
+      toast('Motor de verificación de cédula actualizado', 'ok');
       renderSettingsView(vp);
     } catch (err) {
       toast(err.message, 'err');

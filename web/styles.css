@@ -4438,6 +4438,55 @@ html, body {
   color: light-dark(#B45309, #FCD34D);
 }
 
+.cedula-ocr-box {
+  margin-top: 8px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid light-dark(#CBD5E1, #27272F);
+  background: light-dark(#F8FAFC, #111116);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.cedula-ocr-title {
+  font-size: 0.8rem;
+  font-weight: 800;
+  color: light-dark(#0F172A, #F8FAFC);
+}
+.cedula-ocr-sub {
+  font-size: 0.74rem;
+  color: light-dark(#475569, #A1A1AA);
+  line-height: 1.35;
+}
+.cedula-ocr-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid #0A84FF;
+  background: rgba(10, 132, 255, 0.14);
+  color: light-dark(#0369A1, #7DD3FC);
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+.cedula-ocr-btn:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+.cedula-ocr-preview {
+  width: 100%;
+  max-height: 150px;
+  object-fit: contain;
+  border-radius: 8px;
+  border: 1px solid light-dark(#CBD5E1, #27272F);
+  background: #000000;
+}
+
 .reg-role-cards {
   display: grid;
   grid-template-columns: 1fr 1fr;

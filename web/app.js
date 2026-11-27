@@ -2127,6 +2127,13 @@ class CredoApp {
                 <span id="${uidPrefix}CedulaErrTxt">Ingresa una cédula válida de 11 dígitos.</span>
               </div>
               <div id="${uidPrefix}CedulaStatus" hidden></div>
+              <div id="${uidPrefix}CedulaOcrBox" class="cedula-ocr-box" hidden>
+                <div class="cedula-ocr-title">Verificación instantánea con foto de tu cédula</div>
+                <div class="cedula-ocr-sub">Sube una foto nítida del frente de tu cédula. Nuestro sistema verifica automáticamente tu nombre y número al instante (foto privada, solo visible para administración).</div>
+                <input id="${uidPrefix}CedulaPhotoFile" type="file" accept="image/*" capture="environment" hidden />
+                <button type="button" class="cedula-ocr-btn" id="${uidPrefix}CedulaPhotoBtn">Subir o tomar foto de mi cédula (frente)</button>
+                <img id="${uidPrefix}CedulaPhotoPrev" class="cedula-ocr-preview" alt="Vista previa de cédula" hidden />
+              </div>
             </div>
 
             <div id="${uidPrefix}RegGlobalErr" class="claim-form-err" hidden role="alert"></div>
@@ -2200,10 +2207,45 @@ class CredoApp {
       const cedulaInput = container.querySelector(`#${uidPrefix}RegCedula`);
       const cedulaErrTxt = container.querySelector(`#${uidPrefix}CedulaErrTxt`);
       const cedulaStatus = container.querySelector(`#${uidPrefix}CedulaStatus`);
+      const ocrBox = container.querySelector(`#${uidPrefix}CedulaOcrBox`);
+      const ocrFileInp = container.querySelector(`#${uidPrefix}CedulaPhotoFile`);
+      const ocrPhotoBtn = container.querySelector(`#${uidPrefix}CedulaPhotoBtn`);
+      const ocrPrevImg = container.querySelector(`#${uidPrefix}CedulaPhotoPrev`);
       const globalErr = container.querySelector(`#${uidPrefix}RegGlobalErr`);
       const announcer = container.querySelector(`#${uidPrefix}LiveAnnouncer`);
       const submitBtn = container.querySelector(`#${uidPrefix}RegSubmit`);
       let announceTimer = 0;
+      let ocrProofToken = '';
+      let cedulaPhotoId = null;
+
+      const clearOcrProof = () => {
+        ocrProofToken = '';
+        cedulaPhotoId = null;
+      };
+
+      const compressCedulaPhoto = (file) =>
+        new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onerror = () => reject(new Error('No se pudo leer la foto seleccionada.'));
+          reader.onload = () => {
+            const img = new Image();
+            img.onerror = () => reject(new Error('Formato de imagen no válido.'));
+            img.onload = () => {
+              const maxW = 1800;
+              const scale = img.width > maxW ? maxW / img.width : 1;
+              const w = Math.max(1, Math.round(img.width * scale));
+              const h = Math.max(1, Math.round(img.height * scale));
+              const canvas = document.createElement('canvas');
+              canvas.width = w;
+              canvas.height = h;
+              const ctx = canvas.getContext('2d');
+              ctx.drawImage(img, 0, 0, w, h);
+              resolve(canvas.toDataURL('image/jpeg', 0.88));
+            };
+            img.src = String(reader.result || '');
+          };
+          reader.readAsDataURL(file);
+        });
 
       const announcePolite = (text) => {
         if (!announcer) return;
@@ -2236,6 +2278,7 @@ class CredoApp {
 
         if (!st) {
           cedulaStatus.hidden = true;
+          if (ocrBox) ocrBox.hidden = true;
           announcePolite('');
           return;
         }
@@ -2246,6 +2289,7 @@ class CredoApp {
           if (cedulaErrTxt) cedulaErrTxt.textContent = msg;
           linkAriaError(cedulaInput, `${uidPrefix}CedulaErr`, true);
           cedulaStatus.hidden = true;
+          if (ocrBox && !st.keepOcrBox) ocrBox.hidden = true;
           if (announce) announcePolite(`Error en cédula: ${msg}`);
           return;
         }
@@ -2262,27 +2306,103 @@ class CredoApp {
           cedulaStatus.className = 'cedula-status-pill cedula-status-pill--err';
           cedulaStatus.textContent = '⚠ El nombre escrito arriba no coincide con esta cédula.';
           cedulaStatus.hidden = false;
+          if (ocrBox && !st.keepOcrBox) ocrBox.hidden = true;
           if (announce) announcePolite(`Error en nombre: ${msg}`);
           return;
         }
 
-        if (st.validCedula && st.lookupStatus === 'manual_review' && !st.nameMatches) {
+        if (st.validCedula && st.lookupStatus === 'manual_review' && !st.nameMatches && !ocrProofToken) {
           cedulaStatus.className = 'cedula-status-pill cedula-status-pill--warn';
-          cedulaStatus.textContent = `⏳ ${st.message || 'Cédula válida. No apareció en línea; se enviará a revisión manual.'}`;
+          cedulaStatus.textContent = `⏳ ${st.message || 'Cédula válida. Sube foto de tu cédula o envíala a revisión manual.'}`;
           cedulaStatus.hidden = false;
-          if (announce) announcePolite(st.message || 'Se enviará a revisión manual.');
+          if (ocrBox) ocrBox.hidden = st.supportsPhotoOcr === false;
+          if (announce) announcePolite(st.message || 'Sube foto de tu cédula o envía a revisión manual.');
           return;
         }
 
-        if (st.validCedula && (st.nameMatches || isClergy)) {
+        if (st.validCedula && (st.nameMatches || ocrProofToken || isClergy)) {
           nameGroup.classList.add('field--verified');
           cedulaGroup.classList.add('field--verified');
           cedulaStatus.className = 'cedula-status-pill cedula-status-pill--ok';
           cedulaStatus.textContent = `✓ ${st.message || 'Identidad verificada con tu cédula.'}`;
           cedulaStatus.hidden = false;
+          if (ocrBox && !ocrProofToken && !isClergy) ocrBox.hidden = true;
           announcePolite('');
         }
       };
+
+      ocrPhotoBtn?.addEventListener('click', () => ocrFileInp?.click());
+      ocrFileInp?.addEventListener('change', async () => {
+        const file = ocrFileInp.files?.[0];
+        if (!file) return;
+        const digits = String(cedulaInput.value || '').replace(/\D/g, '');
+        const curName = String(nameInput.value || '').trim();
+        if (digits.length !== 11 || curName.split(/\s+/).filter((w) => w.length >= 2).length < 2) {
+          globalErr.textContent = 'Completa primero tu nombre completo y cédula de 11 dígitos antes de escanear la foto.';
+          globalErr.hidden = false;
+          return;
+        }
+
+        ocrPhotoBtn.disabled = true;
+        ocrPhotoBtn.textContent = 'Escaneando cédula con OCR seguro…';
+        cedulaStatus.className = 'cedula-status-pill cedula-status-pill--checking';
+        cedulaStatus.textContent = 'Leyendo número y nombre en tu cédula…';
+        cedulaStatus.hidden = false;
+
+        try {
+          const dataUrl = await compressCedulaPhoto(file);
+          if (ocrPrevImg) {
+            ocrPrevImg.src = dataUrl;
+            ocrPrevImg.hidden = false;
+          }
+          const res = await this.api('/api/v1/auth/verify-cedula-photo', {
+            method: 'POST',
+            body: { cedula: digits, full_name: curName, image_data_url: dataUrl },
+          });
+          cedulaPhotoId = res.photo_id || null;
+
+          if (res.verified && res.ocr_proof_token) {
+            ocrProofToken = res.ocr_proof_token;
+            verifyState = {
+              ...verifyState,
+              checkedCedula: digits,
+              checkedName: curName,
+              validCedula: true,
+              nameMatches: true,
+              errorField: '',
+              message: res.message || 'Foto de cédula verificada por OCR · Ya puedes entrar al instante.',
+            };
+            applyVerifyVisuals(verifyState, { announce: true });
+            ocrPhotoBtn.textContent = '✓ Cédula verificada · Cambiar foto';
+          } else {
+            ocrProofToken = '';
+            if (res.error_field === 'full_name' || res.error_field === 'cedula') {
+              applyVerifyVisuals(
+                {
+                  ...verifyState,
+                  errorField: res.error_field,
+                  keepOcrBox: true,
+                  message: res.message,
+                },
+                { announce: true }
+              );
+            } else {
+              cedulaStatus.className = 'cedula-status-pill cedula-status-pill--warn';
+              cedulaStatus.textContent = `⏳ ${res.message || 'Foto adjuntada · Puedes intentar una más clara o enviar a revisión manual.'}`;
+              cedulaStatus.hidden = false;
+            }
+            ocrPhotoBtn.textContent = 'Tomar otra foto más nítida';
+          }
+        } catch (err) {
+          ocrProofToken = '';
+          cedulaStatus.className = 'cedula-status-pill cedula-status-pill--err';
+          cedulaStatus.textContent = err.message || 'No se pudo leer la foto de la cédula.';
+          cedulaStatus.hidden = false;
+          ocrPhotoBtn.textContent = 'Intentar de nuevo con otra foto';
+        } finally {
+          ocrPhotoBtn.disabled = false;
+        }
+      });
 
       const runLiveCedulaCheck = async ({ announce = true } = {}) => {
         const digits = String(cedulaInput.value || '').replace(/\D/g, '');
@@ -2293,6 +2413,7 @@ class CredoApp {
 
         if (digits.length < 11) {
           verifyState = { checkedCedula: '', checkedName: '', validCedula: false };
+          clearOcrProof();
           applyVerifyVisuals(null);
           return null;
         }
@@ -2316,6 +2437,7 @@ class CredoApp {
             nameMatches: Boolean(res.name_matches),
             lookupStatus: res.lookup_status || '',
             requiresApproval: Boolean(res.requires_approval),
+            supportsPhotoOcr: res.supports_photo_ocr !== false,
             errorField: res.error_field || '',
             message: res.message || '',
           };
@@ -2334,6 +2456,7 @@ class CredoApp {
         const formatted = fmtCedula(cedulaInput.value);
         if (cedulaInput.value !== formatted) cedulaInput.value = formatted;
         globalErr.hidden = true;
+        clearOcrProof();
         clearTimeout(probeTimer);
         const digits = formatted.replace(/\D/g, '');
         if (digits.length === 11) {
@@ -2353,13 +2476,14 @@ class CredoApp {
             },
             { announce: true }
           );
-        } else if (digits.length === 11) {
+        } else if (digits.length === 11 && !ocrProofToken) {
           runLiveCedulaCheck({ announce: true });
         }
       });
 
       nameInput.addEventListener('input', () => {
         globalErr.hidden = true;
+        clearOcrProof();
         if (nameGroup.classList.contains('field--mismatch')) {
           nameGroup.classList.remove('field--mismatch');
           linkAriaError(nameInput, `${uidPrefix}NameErr`, false);
@@ -2422,7 +2546,7 @@ class CredoApp {
         submitBtn.textContent = 'Verificando identidad…';
 
         try {
-          if (verifyState.checkedCedula !== digits || verifyState.checkedName !== cleanName) {
+          if (!ocrProofToken && (verifyState.checkedCedula !== digits || verifyState.checkedName !== cleanName)) {
             await runLiveCedulaCheck();
           }
 
@@ -2433,7 +2557,7 @@ class CredoApp {
             return;
           }
 
-          if (!isClergy && verifyState.errorField === 'full_name') {
+          if (!isClergy && !ocrProofToken && verifyState.errorField === 'full_name') {
             nameInput.focus();
             submitBtn.disabled = false;
             submitBtn.textContent = origLabel;
@@ -2451,6 +2575,8 @@ class CredoApp {
               ecclesiastical_rank: fd.get('ecclesiastical_rank') || 'lay',
               current_office_title: fd.get('current_office_title') || '',
               preferred_locale: this.locale,
+              ocr_proof_token: ocrProofToken || undefined,
+              cedula_photo_id: cedulaPhotoId || undefined,
             },
           });
 

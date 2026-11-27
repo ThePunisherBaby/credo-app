@@ -15,7 +15,7 @@ RUN ARCH=$(uname -m) && \
 # Stage 2: Production Credo Node.js + Compiled F# Kernel Runtime
 FROM node:22-alpine
 
-RUN apk add --no-cache curl ffmpeg python3 py3-pip libstdc++ libgcc && \
+RUN apk add --no-cache curl ffmpeg python3 py3-pip libstdc++ libgcc tesseract-ocr tesseract-ocr-data-spa && \
     pip3 install --no-cache-dir --break-system-packages yt-dlp edge-tts
 
 WORKDIR /app

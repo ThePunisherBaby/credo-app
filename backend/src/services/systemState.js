@@ -11,6 +11,13 @@ const DEFAULT_SETTINGS = {
   pause_paypal_checkout: { enabled: false },
   min_mobile_version: { version: '1.0.0', force_update: false },
   banned_words: { words: [] },
+  cedula_providers: {
+    verifik_token: '',
+    custom_api_url: '',
+    custom_api_key: '',
+    enable_dgii: true,
+    enable_photo_ocr: true,
+  },
 };
 
 let settingsCache = { ...DEFAULT_SETTINGS };

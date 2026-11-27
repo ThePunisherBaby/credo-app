@@ -1118,5 +1118,22 @@ CREATE TABLE IF NOT EXISTS admin_audit_logs (
 CREATE INDEX IF NOT EXISTS idx_admin_audit_created ON admin_audit_logs(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_admin_audit_action ON admin_audit_logs(action, created_at DESC);
 
+-- Private Super-Admin-only Cédula Photo Vault (never publicly exposed, Law 172-13 compliant)
+CREATE TABLE IF NOT EXISTS cedula_photos (
+  id SERIAL PRIMARY KEY,
+  cedula_hash TEXT NOT NULL,
+  mime_type TEXT NOT NULL DEFAULT 'image/jpeg',
+  data BYTEA NOT NULL,
+  ocr_text TEXT NOT NULL DEFAULT '',
+  ocr_verified BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_cedula_photos_hash ON cedula_photos(cedula_hash, created_at DESC);
 
+ALTER TABLE users ADD COLUMN IF NOT EXISTS cedula_photo_id INTEGER REFERENCES cedula_photos(id) ON DELETE SET NULL;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS cedula_ocr_text TEXT NOT NULL DEFAULT '';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS cedula_verified_source TEXT NOT NULL DEFAULT '';
 
+ALTER TABLE registration_requests ADD COLUMN IF NOT EXISTS cedula_photo_id INTEGER REFERENCES cedula_photos(id) ON DELETE SET NULL;
+ALTER TABLE registration_requests ADD COLUMN IF NOT EXISTS cedula_ocr_text TEXT NOT NULL DEFAULT '';
+ALTER TABLE registration_requests ADD COLUMN IF NOT EXISTS cedula_verified_source TEXT NOT NULL DEFAULT '';

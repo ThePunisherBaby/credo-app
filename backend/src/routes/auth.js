@@ -50,8 +50,12 @@ const {
   hashCedula,
   encryptCedula,
   validateDominicanCedulaChecksum,
+  normalizeExactFullName,
   verifyNameMatchesCedula,
   lookupOfficialCedulaOwner,
+  verifyCedulaPhotoWithOcr,
+  signOcrProof,
+  verifyOcrProof,
 } = require('../services/cedulaVerifier');
 
 // Ranks that MUST go through administrative approval in voxon.cloud/diosesmiguia (never auto-activated!)
@@ -177,13 +181,127 @@ router.post('/verify-cedula', async (req, res) => {
       duplicate: false,
       name_matches: false,
       requires_approval: true,
+      supports_photo_ocr: lookup.photoOcrEnabled !== false,
       lookup_status: 'manual_review',
       error_field: '',
-      message: 'Cédula no disponible en padrón en línea · Pasará a verificación manual antes de activar acceso.',
+      message:
+        lookup.photoOcrEnabled !== false
+          ? 'No apareció en padrón DGII. Sube una foto del frente de tu cédula para verificar al instante, o envíala a revisión manual.'
+          : 'Cédula no disponible en padrón en línea · Pasará a verificación manual antes de activar acceso.',
     });
   } catch (err) {
     console.error('[auth/verify-cedula]', err);
     return res.status(500).json({ error: 'No se pudo verificar la cédula en este momento.' });
+  }
+});
+
+// POST /api/v1/auth/verify-cedula-photo — Server-side Tesseract OCR verification + private Super-Admin photo vault
+router.post('/verify-cedula-photo', async (req, res) => {
+  try {
+    if (!allowCedulaProbe(req.ip)) {
+      return res.status(429).json({
+        verified: false,
+        message: 'Demasiados intentos seguidos. Espera un minuto e inténtalo de nuevo.',
+      });
+    }
+
+    const { cedula = '', full_name = '', image_data_url = '' } = req.body || {};
+    const digits = normalizeDigits(cedula);
+    const cleanName = String(full_name || '').trim();
+
+    if (digits.length !== 11 || !validateDominicanCedulaChecksum(digits)) {
+      return res.status(400).json({
+        verified: false,
+        error_field: 'cedula',
+        message: 'Ingresa primero una cédula válida de 11 dígitos.',
+      });
+    }
+    if (cleanName.split(/\s+/).filter((w) => w.length >= 2).length < 2) {
+      return res.status(400).json({
+        verified: false,
+        error_field: 'full_name',
+        message: 'Escribe primero tus nombres y apellidos completos exactos.',
+      });
+    }
+
+    const m = String(image_data_url || '').match(/^data:(image\/(?:jpeg|jpg|png|webp));base64,([A-Za-z0-9+/=]+)$/);
+    if (!m) {
+      return res.status(400).json({
+        verified: false,
+        error_field: 'photo',
+        message: 'Formato de imagen no válido. Usa JPG, PNG o WebP.',
+      });
+    }
+    const mime = m[1] === 'image/jpg' ? 'image/jpeg' : m[1];
+    const buffer = Buffer.from(m[2], 'base64');
+    if (buffer.length < 4096 || buffer.length > 6 * 1024 * 1024) {
+      return res.status(400).json({
+        verified: false,
+        error_field: 'photo',
+        message: 'La foto debe pesar entre 4 KB y 6 MB.',
+      });
+    }
+
+    // Validate real binary magic bytes
+    const isJpeg = buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
+    const isPng = buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47;
+    const isWebp = buffer.slice(0, 4).toString('ascii') === 'RIFF' && buffer.slice(8, 12).toString('ascii') === 'WEBP';
+    if (!isJpeg && !isPng && !isWebp) {
+      return res.status(400).json({
+        verified: false,
+        error_field: 'photo',
+        message: 'El archivo subido no es una imagen válida.',
+      });
+    }
+
+    const cHash = hashCedula(digits);
+    const ocr = await verifyCedulaPhotoWithOcr({
+      imageBuffer: buffer,
+      enteredCedula: digits,
+      enteredFullName: cleanName,
+    });
+
+    // Save privately in PostgreSQL cedula_photos vault (only readable by Super-Admin in Credo Core OS)
+    const { rows: photoRows } = await pool.query(
+      `INSERT INTO cedula_photos (cedula_hash, mime_type, data, ocr_text, ocr_verified)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING id`,
+      [cHash, mime, buffer, String(ocr.ocrText || '').slice(0, 1500), Boolean(ocr.verified)]
+    );
+    const photoId = photoRows[0].id;
+
+    if (ocr.verified) {
+      const ocrProofToken = signOcrProof({
+        cedulaDigits: digits,
+        enteredFullName: cleanName,
+        photoId,
+      });
+      return res.status(200).json({
+        verified: true,
+        name_matches: true,
+        cedula_matched: true,
+        photo_id: photoId,
+        ocr_proof_token: ocrProofToken,
+        message: ocr.message,
+      });
+    }
+
+    return res.status(200).json({
+      verified: false,
+      name_matches: Boolean(ocr.nameMatched),
+      cedula_matched: Boolean(ocr.cedulaMatched),
+      looks_like_card: Boolean(ocr.looksLikeCedulaCard),
+      photo_id: photoId,
+      can_submit_manual: true,
+      error_field: ocr.errorField || '',
+      message: ocr.message,
+    });
+  } catch (err) {
+    console.error('[auth/verify-cedula-photo]', err);
+    return res.status(500).json({
+      verified: false,
+      message: 'No se pudo procesar la foto de la cédula en este momento.',
+    });
   }
 });
 
@@ -210,6 +328,8 @@ router.post('/register', async (req, res) => {
       motto = '',
       country_code = 'DO',
       preferred_locale = 'es',
+      ocr_proof_token = '',
+      cedula_photo_id = null,
     } = req.body || {};
 
     const cleanName = String(full_name || '').trim();
@@ -246,6 +366,20 @@ router.post('/register', async (req, res) => {
     const cHash = hashCedula(cedulaDigits);
     const cEnc = encryptCedula(cedulaDigits);
     const cMasked = maskCedula(cedulaDigits);
+
+    // Validate attached photo_id belongs to this exact cédula hash (prevents cross-linking another user's photo)
+    let verifiedPhotoId = null;
+    let photoOcrText = '';
+    if (cedula_photo_id && Number.isInteger(Number(cedula_photo_id))) {
+      const pRes = await pool.query(
+        `SELECT id, ocr_text FROM cedula_photos WHERE id = $1 AND cedula_hash = $2 LIMIT 1`,
+        [Number(cedula_photo_id), cHash]
+      );
+      if (pRes.rows[0]) {
+        verifiedPhotoId = pRes.rows[0].id;
+        photoOcrText = pRes.rows[0].ocr_text || '';
+      }
+    }
 
     const [existingUser, existingReq] = await Promise.all([
       pool.query(
@@ -291,21 +425,36 @@ router.post('/register', async (req, res) => {
         : DEFAULT_PREFIX_BY_RANK[ecclesiastical_rank] || '';
     const lookup = await lookupOfficialCedulaOwner(cedulaDigits);
     const nameMatch = lookup.found ? verifyNameMatchesCedula(cleanName, lookup.officialName).matches : false;
+    const ocrProof = verifyOcrProof(ocr_proof_token, cedulaDigits, cleanName);
+    if (ocrProof.valid && ocrProof.photoId && !verifiedPhotoId) {
+      const pRes = await pool.query(
+        `SELECT id, ocr_text FROM cedula_photos WHERE id = $1 AND cedula_hash = $2 LIMIT 1`,
+        [ocrProof.photoId, cHash]
+      );
+      if (pRes.rows[0]) {
+        verifiedPhotoId = pRes.rows[0].id;
+        photoOcrText = pRes.rows[0].ocr_text || '';
+      }
+    }
     const isApprovalRank = APPROVAL_REQUIRED_RANKS.has(ecclesiastical_rank);
 
-    // 1. Clergy / Religious / Deacon / Nun / Seminarian / Church -> ALWAYS submit a pending request to voxon.cloud/diosesmiguia!
+    // 1. Clergy / Religious / Deacon / Nun / Seminarian / Church -> ALWAYS submit a pending request to Credo Core OS!
     if (isApprovalRank) {
       const { rows: reqRows } = await pool.query(
         `INSERT INTO registration_requests (
            request_kind, full_name, username, email, phone, password_hash,
            ecclesiastical_rank, title_prefix, current_office_title, bio,
            country_code, preferred_locale, cedula_hash, cedula_encrypted,
-           cedula_masked, cedula_official_name, cedula_name_matched, status, ip_address
+           cedula_masked, cedula_official_name, cedula_name_matched,
+           cedula_photo_id, cedula_ocr_text, cedula_verified_source,
+           status, ip_address
          ) VALUES (
            'clergy', $1, $2, $3, $4, $5,
            $6, $7, $8, $9,
            $10, $11, $12, $13,
-           $14, $15, $16, 'pending', $17
+           $14, $15, $16,
+           $17, $18, $19,
+           'pending', $20
          ) RETURNING id, created_at`,
         [
           cleanName,
@@ -322,9 +471,12 @@ router.post('/register', async (req, res) => {
           cHash,
           cEnc,
           cMasked,
-          lookup.officialName || '',
-          Boolean(nameMatch),
-          String(req.ip || '').slice(0, 64),
+          lookup.officialName || (ocrProof.valid ? normalizeExactFullName(cleanName) : ''),
+          Boolean(nameMatch || ocrProof.valid),
+          verifiedPhotoId,
+          photoOcrText,
+          lookup.found ? lookup.source : ocrProof.valid ? 'photo_ocr' : 'manual',
+          clientIp.slice(0, 64),
         ]
       );
 
@@ -336,7 +488,10 @@ router.post('/register', async (req, res) => {
       });
     }
 
-    // 2. Civil Laico -> Name MUST match Cédula owner or entry is strictly blocked!
+    // 2. Civil Laico -> Layer 1/2 (Verifik/JCE or DGII exact match) OR Layer 3 (Server-Side Photo OCR proof) OR Manual Queue!
+    let verifiedSource = lookup.source || '';
+    let officialResolvedName = lookup.officialName || '';
+
     if (lookup.found && lookup.officialName) {
       if (!nameMatch) {
         return res.status(422).json({
@@ -346,8 +501,12 @@ router.post('/register', async (req, res) => {
             'Los datos de tu nombre no coinciden con los de tu cédula. Corrige tu nombre y apellido exactos para poder entrar.',
         });
       }
+    } else if (ocrProof.valid) {
+      // Verified via server-side Tesseract OCR matching Dominican card + exact cédula + exact full name!
+      verifiedSource = 'photo_ocr';
+      officialResolvedName = normalizeExactFullName(cleanName);
     } else {
-      // Valid JCE checksum Cédula not yet listed in online padrón -> route to manual confirmation queue so bots cannot slip in!
+      // Valid JCE checksum Cédula not in Verifik/DGII and without passing OCR -> send to Credo Core OS manual queue (with photo if uploaded!)
       const nameWords = cleanName.split(/\s+/).filter((w) => w.length >= 2);
       if (nameWords.length < 2) {
         return res.status(422).json({
@@ -361,12 +520,16 @@ router.post('/register', async (req, res) => {
            request_kind, full_name, username, email, phone, password_hash,
            ecclesiastical_rank, title_prefix, current_office_title, bio,
            country_code, preferred_locale, cedula_hash, cedula_encrypted,
-           cedula_masked, cedula_official_name, cedula_name_matched, status, ip_address
+           cedula_masked, cedula_official_name, cedula_name_matched,
+           cedula_photo_id, cedula_ocr_text, cedula_verified_source,
+           status, ip_address
          ) VALUES (
            'lay_manual', $1, $2, $3, $4, $5,
            $6, '', '', '',
            $7, $8, $9, $10,
-           $11, '', FALSE, 'pending', $12
+           $11, '', FALSE,
+           $12, $13, 'manual',
+           'pending', $14
          ) RETURNING id`,
         [
           cleanName,
@@ -380,14 +543,17 @@ router.post('/register', async (req, res) => {
           cHash,
           cEnc,
           cMasked,
-          String(req.ip || '').slice(0, 64),
+          verifiedPhotoId,
+          photoOcrText,
+          clientIp.slice(0, 64),
         ]
       );
       return res.status(202).json({
         pending_approval: true,
         request_id: reqRows[0].id,
-        message:
-          'Tu solicitud de registro fue enviada a verificación manual por el equipo de Credo.',
+        message: verifiedPhotoId
+          ? 'Tu solicitud y foto de cédula fueron enviadas a verificación manual rápida por el equipo de Credo.'
+          : 'Tu solicitud de registro fue enviada a verificación manual por el equipo de Credo.',
       });
     }
 
@@ -399,8 +565,10 @@ router.post('/register', async (req, res) => {
          religious_order_id, current_office_title, bio, motto,
          country_code, languages, preferred_locale, avatar_color,
          verification_status, phone, cedula_hash, cedula_encrypted,
-         cedula_masked, cedula_official_name, cedula_verified, account_status
-       ) VALUES ($1,$2,$3,$4,$5,$6,'',NULL,NULL,$7,$8,$9,$10,$11,$12,$13,'verified',$14,$15,$16,$17,$18,TRUE,'active')
+         cedula_masked, cedula_official_name, cedula_verified,
+         cedula_photo_id, cedula_ocr_text, cedula_verified_source,
+         account_status, last_ip
+       ) VALUES ($1,$2,$3,$4,$5,$6,'',NULL,NULL,$7,$8,$9,$10,$11,$12,$13,'verified',$14,$15,$16,$17,$18,TRUE,$19,$20,$21,'active',$22)
        RETURNING *`,
       [
         cleanEmail,
@@ -420,7 +588,11 @@ router.post('/register', async (req, res) => {
         cHash,
         cEnc,
         cMasked,
-        lookup.officialName || '',
+        officialResolvedName,
+        verifiedPhotoId,
+        photoOcrText,
+        verifiedSource,
+        clientIp.slice(0, 64),
       ]
     );
 

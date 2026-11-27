@@ -1050,6 +1050,22 @@ router.delete('/users/:id', async (req, res) => {
   }
 });
 
+// Private Super-Admin-only Cédula Photo Vault viewer (never publicly accessible)
+router.get('/cedula-photo/:id', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).end();
+    const { rows } = await pool.query(`SELECT mime_type, data FROM cedula_photos WHERE id = $1 LIMIT 1`, [id]);
+    if (!rows[0]) return res.status(404).end();
+    res.setHeader('Content-Type', rows[0].mime_type || 'image/jpeg');
+    res.setHeader('Cache-Control', 'private, no-store, max-age=0');
+    res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+    return res.send(rows[0].data);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // Pending Cédula & Clergy Registration Requests inside Credo Core OS
 router.get('/registration-requests', async (_req, res) => {
   try {
@@ -1057,6 +1073,7 @@ router.get('/registration-requests', async (_req, res) => {
       `SELECT id, request_kind, full_name, username, email, phone, ecclesiastical_rank,
               title_prefix, current_office_title, bio, country_code,
               cedula_encrypted, cedula_masked, cedula_official_name, cedula_name_matched,
+              cedula_photo_id, cedula_ocr_text, cedula_verified_source,
               status, review_note, approved_user_id, ip_address, reviewed_at, created_at
          FROM registration_requests
         ORDER BY CASE status WHEN 'pending' THEN 0 WHEN 'rejected' THEN 1 ELSE 2 END, created_at DESC
@@ -1103,12 +1120,15 @@ router.post('/registration-requests/:id/approve', async (req, res) => {
          ecclesiastical_rank, current_office_title, bio, country_code,
          languages, preferred_locale, avatar_color, verification_status,
          verification_note, phone, cedula_hash, cedula_encrypted,
-         cedula_masked, cedula_official_name, cedula_verified, account_status, last_ip
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,ARRAY[$10],$10,'#0F1E36','verified','Confirmado en Credo Core OS',$11,$12,$13,$14,$15,TRUE,'active',$16)
+         cedula_masked, cedula_official_name, cedula_verified,
+         cedula_photo_id, cedula_ocr_text, cedula_verified_source,
+         account_status, last_ip
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,ARRAY[$10],$10,'#0F1E36','verified','Confirmado en Credo Core OS',$11,$12,$13,$14,$15,TRUE,$16,$17,$18,'active',$19)
        ON CONFLICT (email) DO UPDATE SET
          ecclesiastical_rank = EXCLUDED.ecclesiastical_rank,
          verification_status = 'verified',
          cedula_verified = TRUE,
+         cedula_photo_id = COALESCE(EXCLUDED.cedula_photo_id, users.cedula_photo_id),
          account_status = 'active',
          updated_at = NOW()
        RETURNING id`,
@@ -1116,7 +1136,9 @@ router.post('/registration-requests/:id/approve', async (req, res) => {
         r.email.toLowerCase(), r.password_hash, candidateUsername, r.full_name, r.title_prefix || '',
         r.ecclesiastical_rank, r.current_office_title || '', r.bio || '', r.country_code || 'DO',
         r.preferred_locale || 'es', r.phone || '', r.cedula_hash, r.cedula_encrypted,
-        r.cedula_masked, r.cedula_official_name || '', r.ip_address || '',
+        r.cedula_masked, r.cedula_official_name || '',
+        r.cedula_photo_id || null, r.cedula_ocr_text || '', r.cedula_verified_source || 'manual_admin',
+        r.ip_address || '',
       ]
     );
     await client.query(
@@ -1782,14 +1804,28 @@ router.post('/broadcasts', async (req, res) => {
   }
 });
 
+function sanitizeSettingsForClient(raw) {
+  const s = { ...(raw || {}) };
+  const cp = { ...(s.cedula_providers || {}) };
+  s.cedula_providers = {
+    has_verifik_token: Boolean(process.env.VERIFIK_API_TOKEN || cp.verifik_token),
+    verifik_via_env: Boolean(process.env.VERIFIK_API_TOKEN),
+    custom_api_url: cp.custom_api_url || process.env.CEDULA_API_URL || '',
+    has_custom_api_key: Boolean(process.env.CEDULA_API_KEY || cp.custom_api_key),
+    enable_dgii: cp.enable_dgii !== false,
+    enable_photo_ocr: cp.enable_photo_ocr !== false,
+  };
+  return s;
+}
+
 router.get('/settings', (_req, res) => {
-  return res.json({ settings: getAllSettings() });
+  return res.json({ settings: sanitizeSettingsForClient(getAllSettings()) });
 });
 
 router.put('/settings', async (req, res) => {
   try {
     const incoming = req.body?.settings || req.body || {};
-    const before = { ...getAllSettings() };
+    const beforeSafe = sanitizeSettingsForClient(getAllSettings());
     const allowedKeys = [
       'maintenance_mode',
       'block_registrations',
@@ -1805,17 +1841,44 @@ router.put('/settings', async (req, res) => {
         await setSetting(k, incoming[k], req.admin);
       }
     }
+    if (incoming.cedula_providers && typeof incoming.cedula_providers === 'object') {
+      const cur = getAllSettings().cedula_providers || {};
+      const next = {
+        verifik_token:
+          incoming.cedula_providers.clear_verifik_token
+            ? ''
+            : String(incoming.cedula_providers.verifik_token || '').trim() || cur.verifik_token || '',
+        custom_api_url:
+          incoming.cedula_providers.custom_api_url !== undefined
+            ? String(incoming.cedula_providers.custom_api_url || '').trim()
+            : cur.custom_api_url || '',
+        custom_api_key:
+          incoming.cedula_providers.clear_custom_api_key
+            ? ''
+            : String(incoming.cedula_providers.custom_api_key || '').trim() || cur.custom_api_key || '',
+        enable_dgii:
+          incoming.cedula_providers.enable_dgii !== undefined
+            ? Boolean(incoming.cedula_providers.enable_dgii)
+            : cur.enable_dgii !== false,
+        enable_photo_ocr:
+          incoming.cedula_providers.enable_photo_ocr !== undefined
+            ? Boolean(incoming.cedula_providers.enable_photo_ocr)
+            : cur.enable_photo_ocr !== false,
+      };
+      await setSetting('cedula_providers', next, req.admin);
+    }
     apiCache.invalidate('posts:');
+    const afterSafe = sanitizeSettingsForClient(getAllSettings());
     await writeAdminAudit({
       admin: req.admin,
       action: 'system.kill_switches_updated',
       targetType: 'system_settings',
       targetId: 'global',
-      before,
-      after: getAllSettings(),
+      before: beforeSafe,
+      after: afterSafe,
       ip: getClientIp(req),
     });
-    return res.json({ ok: true, settings: getAllSettings() });
+    return res.json({ ok: true, settings: afterSafe });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
