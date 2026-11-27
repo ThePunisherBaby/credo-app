@@ -921,21 +921,55 @@ router.post('/admin/sync-paypal', requireAuth, requireAdmin, async (_req, res) =
 // SECURE PAYPAL WEBHOOK HANDLER (/api/webhooks/paypal)
 // ============================================================================
 async function handlePayPalWebhook(req, res) {
+  let webhookLogId = null;
   try {
     const event = req.body;
     if (!event || !event.event_type) {
       return res.status(400).json({ error: 'Invalid PayPal webhook payload' });
     }
 
-    const verification = await verifyWebhookSignature(req.headers, event);
-    if (!verification.verified) {
-      console.warn('[paypal-webhook] Signature rejected:', verification.reason || verification.status);
-      return res.status(401).json({ error: 'Invalid PayPal webhook signature' });
+    const logIns = await pool
+      .query(
+        `INSERT INTO paypal_webhook_events (paypal_event_id, event_type, status, headers_json, payload_json)
+         VALUES ($1, $2, 'received', $3::jsonb, $4::jsonb)
+         RETURNING id`,
+        [
+          String(event.id || ''),
+          String(event.event_type || ''),
+          JSON.stringify(req.headers || {}),
+          JSON.stringify(event),
+        ]
+      )
+      .catch(() => ({ rows: [] }));
+    webhookLogId = logIns.rows[0]?.id || null;
+
+    if (!req._skipSignatureForAdminReplay) {
+      const verification = await verifyWebhookSignature(req.headers, event);
+      if (!verification.verified) {
+        console.warn('[paypal-webhook] Signature rejected:', verification.reason || verification.status);
+        if (webhookLogId) {
+          await pool
+            .query(
+              `UPDATE paypal_webhook_events SET status = 'invalid_signature', error_message = $2, processed_at = NOW() WHERE id = $1`,
+              [webhookLogId, String(verification.reason || verification.status || 'invalid_signature').slice(0, 240)]
+            )
+            .catch(() => {});
+        }
+        return res.status(401).json({ error: 'Invalid PayPal webhook signature' });
+      }
     }
+
+    const markProcessed = () => {
+      if (!webhookLogId) return;
+      pool
+        .query(`UPDATE paypal_webhook_events SET status = 'processed', processed_at = NOW() WHERE id = $1`, [webhookLogId])
+        .catch(() => {});
+    };
 
     const eventId = String(event.id || '');
     const eventType = String(event.event_type || '');
     const resource = event.resource || {};
+    markProcessed();
 
     // Handle Orders v2 capture/refund events cleanly
     if (eventType === 'PAYMENT.CAPTURE.REFUNDED') {

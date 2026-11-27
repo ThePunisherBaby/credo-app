@@ -310,6 +310,11 @@ async function pushBufferToEdgeStorage(buffer, ext, { uploaderId = null, mediaKi
 // POST /api/v1/media/presign — Mints a short-lived HMAC-SHA256 upload ticket + O(1) PostgreSQL SHA-256 instant deduplication
 router.post('/presign', requireAuth, async (req, res) => {
   try {
+    const { getSetting } = require('../services/systemState');
+    const { isUserSuperAdmin } = require('../middleware/auth');
+    if (getSetting('pause_media_uploads')?.enabled && !isUserSuperAdmin(req.user)) {
+      return res.status(503).json({ error: 'La subida de fotos y videos está pausada temporalmente por la administración.' });
+    }
     const mime = String(req.body?.mime_type || '').trim().toLowerCase();
     const sizeBytes = Number(req.body?.size_bytes || 0);
     const sha256 = String(req.body?.sha256 || '').trim().toLowerCase();

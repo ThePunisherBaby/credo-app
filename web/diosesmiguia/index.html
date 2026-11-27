@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="es" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="robots" content="noindex, nofollow, noarchive" />
+  <meta name="color-scheme" content="dark" />
+  <meta name="theme-color" content="#000000" />
+  <title>Credo Core OS — Master Command Console</title>
+  <link rel="icon" type="image/png" sizes="32x32" href="/icons/credo-32.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/diosesmiguia/core-os.css?v=46" />
+</head>
+<body>
+  <!-- Super-Admin Dedicated Auth Gate -->
+  <main id="coreLoginGate" class="core-login-gate" hidden>
+    <div class="core-login-card">
+      <div class="core-login-head">
+        <div class="core-brand-mark">
+          <img src="/icons/credo-192.png" alt="Credo" width="32" height="32" />
+          <div>
+            <h1>CREDO CORE OS</h1>
+            <span class="mono">SUPER-ADMIN CONSOLE · RESTRICTED</span>
+          </div>
+        </div>
+        <span class="led-badge"><i class="led led--gold"></i> Nivel 0</span>
+      </div>
+
+      <form id="coreLoginForm" class="core-form">
+        <div class="core-field">
+          <label for="coreLoginId">Usuario o correo autorizado</label>
+          <input id="coreLoginId" name="identifier" type="text" required autocomplete="username" placeholder="paulinosstudios o correo super_admin" />
+        </div>
+        <div class="core-field">
+          <label for="coreLoginPass">Contraseña maestra</label>
+          <input id="coreLoginPass" name="password" type="password" required autocomplete="current-password" placeholder="••••••••••••" />
+        </div>
+        <div id="coreLoginErr" class="core-alert core-alert--err" hidden role="alert"></div>
+        <button type="submit" class="btn-primary btn-block" id="coreLoginSubmit">Desbloquear Consola Maestra</button>
+      </form>
+    </div>
+  </main>
+
+  <!-- Main Core OS Application Shell -->
+  <div id="coreApp" class="core-shell" hidden>
+    <div id="coreMobileScrim" class="core-mobile-scrim" hidden></div>
+
+    <aside id="coreSidebar" class="core-sidebar" aria-label="Navegación Credo Core OS">
+      <div class="core-side-top">
+        <a href="/diosesmiguia" data-route="/diosesmiguia" class="core-brand-link">
+          <img src="/icons/credo-192.png" alt="" width="26" height="26" />
+          <div class="core-brand-text">
+            <strong>CREDO CORE OS</strong>
+            <span class="mono">v46 · MASTER</span>
+          </div>
+        </a>
+        <button type="button" class="btn-icon" id="coreCollapseBtn" title="Colapsar barra" aria-label="Colapsar barra">‹</button>
+      </div>
+
+      <nav class="core-nav" id="coreNav">
+        <div class="core-nav-group">
+          <span class="core-nav-heading">Centro de Mando</span>
+          <a href="/diosesmiguia" data-route="/diosesmiguia" class="core-nav-item">
+            <span class="core-nav-ico">◈</span><span class="core-nav-lbl">Resumen Vivo</span>
+          </a>
+          <a href="/diosesmiguia/network" data-route="/diosesmiguia/network" class="core-nav-item">
+            <span class="core-nav-ico">◎</span><span class="core-nav-lbl">Tráfico &amp; IPs</span>
+          </a>
+          <a href="/diosesmiguia/system-health" data-route="/diosesmiguia/system-health" class="core-nav-item">
+            <span class="core-nav-ico">⚡</span><span class="core-nav-lbl">Salud del Servidor</span>
+          </a>
+        </div>
+
+        <div class="core-nav-group">
+          <span class="core-nav-heading">Monetización &amp; Ads</span>
+          <a href="/diosesmiguia/ads" data-route="/diosesmiguia/ads" class="core-nav-item">
+            <span class="core-nav-ico">▣</span><span class="core-nav-lbl">Publicidad Web / App</span>
+          </a>
+          <a href="/diosesmiguia/finance" data-route="/diosesmiguia/finance" class="core-nav-item">
+            <span class="core-nav-ico">$</span><span class="core-nav-lbl">Contabilidad &amp; PayPal</span>
+          </a>
+        </div>
+
+        <div class="core-nav-group">
+          <span class="core-nav-heading">Comunidad &amp; Control</span>
+          <a href="/diosesmiguia/users" data-route="/diosesmiguia/users" class="core-nav-item">
+            <span class="core-nav-ico">⚯</span><span class="core-nav-lbl">Usuarios God Mode</span>
+            <span id="navBadgeReqs" class="core-nav-badge" hidden>0</span>
+          </a>
+          <a href="/diosesmiguia/content" data-route="/diosesmiguia/content" class="core-nav-item">
+            <span class="core-nav-ico">▤</span><span class="core-nav-lbl">Contenido &amp; Media</span>
+          </a>
+          <a href="/diosesmiguia/live" data-route="/diosesmiguia/live" class="core-nav-item">
+            <span class="core-nav-ico">◉</span><span class="core-nav-lbl">Transmisiones En Vivo</span>
+          </a>
+          <a href="/diosesmiguia/moderation" data-route="/diosesmiguia/moderation" class="core-nav-item">
+            <span class="core-nav-ico">⚑</span><span class="core-nav-lbl">Moderación &amp; Reportes</span>
+            <span id="navBadgeReps" class="core-nav-badge core-nav-badge--red" hidden>0</span>
+          </a>
+        </div>
+
+        <div class="core-nav-group">
+          <span class="core-nav-heading">Sistema &amp; Auditoría</span>
+          <a href="/diosesmiguia/broadcast" data-route="/diosesmiguia/broadcast" class="core-nav-item">
+            <span class="core-nav-ico">✦</span><span class="core-nav-lbl">Broadcasts Push</span>
+          </a>
+          <a href="/diosesmiguia/settings" data-route="/diosesmiguia/settings" class="core-nav-item">
+            <span class="core-nav-ico">⏻</span><span class="core-nav-lbl">Kill Switches</span>
+          </a>
+          <a href="/diosesmiguia/audit" data-route="/diosesmiguia/audit" class="core-nav-item">
+            <span class="core-nav-ico">☰</span><span class="core-nav-lbl">Audit Logs</span>
+          </a>
+        </div>
+      </nav>
+
+      <div class="core-side-foot">
+        <div class="core-admin-chip" id="coreAdminChip"></div>
+        <div class="core-side-actions">
+          <a href="/#/feed" target="_blank" rel="noopener noreferrer" class="action-pill">App ↗</a>
+          <button type="button" class="action-pill action-pill--danger" id="coreLogoutBtn">Salir</button>
+        </div>
+      </div>
+    </aside>
+
+    <div class="core-main-wrap">
+      <header class="core-topbar">
+        <div class="core-top-left">
+          <button type="button" class="btn-icon core-mobile-menu-btn" id="coreMobileMenuBtn" aria-label="Abrir menú">☰</button>
+          <div class="core-breadcrumb">
+            <span class="core-bc-root mono">CORE</span>
+            <span class="core-bc-sep">/</span>
+            <strong id="corePageTitle">Resumen Vivo</strong>
+          </div>
+        </div>
+
+        <button type="button" class="core-cmd-trigger" id="coreCmdOpenBtn" aria-label="Abrir buscador rápido">
+          <span>Buscar usuario, IP, campaña, anuncio…</span>
+          <kbd class="mono">⌘K</kbd>
+        </button>
+
+        <div class="core-top-right">
+          <div class="core-live-pill" id="coreLivePill" title="Telemetría SSE en tiempo real (cada 3s)">
+            <i class="led led--green led--pulse" id="coreSseLed"></i>
+            <span class="mono"><strong id="topOnlineCount">0</strong> online</span>
+            <span class="core-pill-sep">·</span>
+            <span class="mono"><strong id="topIpCount">0</strong> IPs</span>
+          </div>
+        </div>
+      </header>
+
+      <section id="coreViewport" class="core-viewport" aria-live="polite"></section>
+    </div>
+  </div>
+
+  <!-- Ctrl+K / Cmd+K Global Command Palette -->
+  <dialog id="cmdPaletteDlg" class="core-dialog core-cmd-dlg" closedby="any" aria-label="Command Palette">
+    <div class="core-cmd-head">
+      <span class="mono" style="color:var(--c-muted)">⌘K</span>
+      <input id="cmdPaletteInput" type="search" placeholder="Escribe nombre, @usuario, email, IP, ID de campaña o anuncio…" autocomplete="off" />
+      <button type="button" class="action-pill" id="cmdCloseBtn">ESC</button>
+    </div>
+    <div id="cmdPaletteResults" class="core-cmd-results">
+      <div class="core-cmd-empty">Escribe al menos 2 caracteres para buscar en toda la base de datos y sesiones activas.</div>
+    </div>
+  </dialog>
+
+  <!-- Reusable Native Modal Dialog -->
+  <dialog id="coreModalDlg" class="core-dialog" closedby="any" aria-labelledby="coreModalTitle"></dialog>
+
+  <!-- Toast feedback -->
+  <div id="coreToast" class="core-toast" role="status" aria-live="polite"></div>
+
+  <script type="module" src="/diosesmiguia/core-os.js?v=46"></script>
+</body>
+</html>

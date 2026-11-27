@@ -448,6 +448,23 @@ class CredoApp {
   }
 
   async bootstrap() {
+    // Support Super-Admin Safe Impersonation (?impersonate=<jwt>)
+    const bootParams = new URLSearchParams(location.search);
+    const impToken = bootParams.get('impersonate');
+    if (impToken) {
+      try {
+        const prevTok = localStorage.getItem('credo-token') || '';
+        if (prevTok && !sessionStorage.getItem('credo-admin-backup')) {
+          sessionStorage.setItem('credo-admin-backup', prevTok);
+        }
+        this.token = impToken.trim();
+        this.user = null;
+        localStorage.setItem('credo-token', this.token);
+        localStorage.removeItem('credo-user-cache');
+      } catch {}
+      history.replaceState(null, '', `/${location.hash || '#/feed'}`);
+    }
+
     // Extract VIP Profile Claim / Onboarding link (/bienvenida/<token>, ?bienvenida=<token>, ?claim=<token>)
     let initialClaimToken = '';
     const pathClaimMatch = location.pathname.match(/^\/(?:bienvenida|claim)\/([A-Za-z0-9_-]{8,120})\/?$/);
@@ -523,6 +540,7 @@ class CredoApp {
     }
 
     this.renderChrome(true);
+    this.renderImpersonationBar();
     this.setupPersistentPlayer();
 
     window.addEventListener('resize', () => {
@@ -551,7 +569,10 @@ class CredoApp {
             else localStorage.removeItem('credo-user-cache');
           } catch {}
           this.renderChrome();
+          this.renderImpersonationBar();
           this._credoOne?.handlePayPalReturnIfPresent?.();
+          this.loadPlatformAds();
+          this.checkAdminNotifications();
         })
         .catch((err) => {
           if (err?.status === 401) {
@@ -562,10 +583,13 @@ class CredoApp {
               localStorage.removeItem('credo-user-cache');
             } catch {}
             this.renderChrome();
+            this.renderImpersonationBar();
           }
+          this.loadPlatformAds();
         });
     } else {
       this._credoOne?.handlePayPalReturnIfPresent?.();
+      this.loadPlatformAds();
     }
 
     this.prefetchCore();
@@ -575,6 +599,164 @@ class CredoApp {
     }
   }
 
+  trackPlatformAd(adId, eventType = 'impression') {
+    const id = Number(adId);
+    if (!id) return;
+    fetch(`/api/v1/platform-ads/${id}/event`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}),
+        'X-Credo-Device': this.getDeviceKey(),
+      },
+      body: JSON.stringify({ event_type: eventType }),
+      keepalive: true,
+    }).catch(() => {});
+  }
+
+  renderImpersonationBar() {
+    document.getElementById('credoImpersonateBar')?.remove();
+    document.body.style.paddingTop = '';
+    if (!this.user?.is_impersonating) return;
+
+    const bar = document.createElement('div');
+    bar.id = 'credoImpersonateBar';
+    bar.className = 'credo-impersonate-bar';
+    bar.setAttribute('role', 'status');
+    bar.innerHTML = `
+      <span>👁 Viendo como <strong>@${this.esc(this.user.username || this.user.full_name)}</strong> (${this.esc(this.user.full_name || '')}) — Sesión de soporte</span>
+      <button type="button" class="credo-impersonate-exit" id="credoImpExitBtn">Salir y volver a Core OS</button>
+    `;
+    document.body.prepend(bar);
+    document.body.style.paddingTop = '42px';
+
+    bar.querySelector('#credoImpExitBtn')?.addEventListener('click', () => {
+      try {
+        const backup = sessionStorage.getItem('credo-admin-backup');
+        sessionStorage.removeItem('credo-admin-backup');
+        localStorage.removeItem('credo-user-cache');
+        if (backup) localStorage.setItem('credo-token', backup);
+        else localStorage.removeItem('credo-token');
+      } catch {}
+      location.href = '/diosesmiguia/users';
+    });
+  }
+
+  async loadPlatformAds() {
+    try {
+      const data = await this.api('/api/v1/platform-ads/active', { noCache: true });
+      const ads = Array.isArray(data?.ads) ? data.ads : [];
+      this.platformAds = ads;
+      window.dispatchEvent(new CustomEvent('credo:platform-ads-ready', { detail: ads }));
+
+      // 1. Sticky bottom banner (dismissible per session)
+      document.getElementById('credoStickyBottomAd')?.remove();
+      const bottomAd = ads.find((a) => a.format === 'sticky_bottom');
+      if (bottomAd && !sessionStorage.getItem(`credo-ad-dismiss-${bottomAd.id}`)) {
+        const el = document.createElement('aside');
+        el.id = 'credoStickyBottomAd';
+        el.className = 'credo-plat-banner credo-plat-banner--bottom';
+        el.setAttribute('aria-label', 'Anuncio oficial');
+        el.innerHTML = `
+          <div class="credo-plat-banner-left">
+            ${bottomAd.media_url ? `<img class="credo-plat-banner-img" src="${this.esc(bottomAd.media_url)}" alt="" />` : ''}
+            <div style="min-width:0">
+              <strong style="display:block;font-size:0.84rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${this.esc(bottomAd.title)}</strong>
+              ${bottomAd.body ? `<span style="display:block;font-size:0.74rem;opacity:0.76;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${this.esc(bottomAd.body)}</span>` : ''}
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
+            ${bottomAd.cta_url ? `<a href="${this.esc(bottomAd.cta_url)}" target="_blank" rel="noopener noreferrer" class="credo-plat-banner-cta" data-plat-click="${bottomAd.id}">${this.esc(bottomAd.cta_text || 'Ver más')} ↗</a>` : ''}
+            <button type="button" class="credo-plat-banner-close" aria-label="Cerrar anuncio">✕</button>
+          </div>
+        `;
+        document.body.appendChild(el);
+        this.trackPlatformAd(bottomAd.id, 'impression');
+        el.querySelector('[data-plat-click]')?.addEventListener('click', () => this.trackPlatformAd(bottomAd.id, 'click'));
+        el.querySelector('.credo-plat-banner-close')?.addEventListener('click', () => {
+          try { sessionStorage.setItem(`credo-ad-dismiss-${bottomAd.id}`, '1'); } catch {}
+          el.remove();
+        });
+      }
+
+      // 2. Interstitial splash modal (respects frequency_every_n hours cooldown)
+      const interAd = ads.find((a) => a.format === 'interstitial');
+      if (interAd) {
+        const coolKey = `credo-interstitial-seen-${interAd.id}`;
+        const lastSeen = Number(localStorage.getItem(coolKey) || 0);
+        const coolHours = Math.max(1, Number(interAd.frequency_every_n || 6));
+        if (Date.now() - lastSeen > coolHours * 3600 * 1000) {
+          localStorage.setItem(coolKey, String(Date.now()));
+          let dlg = document.getElementById('credoInterstitialDlg');
+          if (!dlg) {
+            dlg = document.createElement('dialog');
+            dlg.id = 'credoInterstitialDlg';
+            dlg.className = 'credo-interstitial-dlg';
+            dlg.setAttribute('closedby', 'any');
+            document.body.appendChild(dlg);
+            wireDialogAccessibility(dlg);
+          }
+          dlg.innerHTML = `
+            ${interAd.media_url ? `<img src="${this.esc(interAd.media_url)}" alt="" style="width:100%;max-height:240px;object-fit:cover;display:block" />` : ''}
+            <div style="padding:18px;display:flex;flex-direction:column;gap:10px">
+              <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+                <span style="font-size:0.68rem;font-weight:800;letter-spacing:0.08em;text-transform:uppercase;color:#D4AF37">Mensaje Oficial · Credo</span>
+                <button type="button" id="credoInterClose" style="background:transparent;border:1px solid #343440;color:#fff;width:30px;height:30px;border-radius:50%;cursor:pointer" aria-label="Cerrar">✕</button>
+              </div>
+              <h2 style="margin:0;font-size:1.18rem;line-height:1.25">${this.esc(interAd.title)}</h2>
+              ${interAd.body ? `<p style="margin:0;font-size:0.86rem;color:#A1A1AA;line-height:1.48">${this.esc(interAd.body)}</p>` : ''}
+              <div style="display:flex;gap:8px;margin-top:6px">
+                ${interAd.cta_url ? `<a href="${this.esc(interAd.cta_url)}" target="_blank" rel="noopener noreferrer" id="credoInterCta" style="flex:1;text-align:center;padding:11px 14px;border-radius:10px;background:#0A84FF;color:#fff;font-weight:700;text-decoration:none;font-size:0.88rem">${this.esc(interAd.cta_text || 'Abrir')} ↗</a>` : ''}
+                <button type="button" id="credoInterSkip" style="padding:11px 14px;border-radius:10px;background:#1A1A22;border:1px solid #2E2E38;color:#E5E7EB;font-weight:700;cursor:pointer;font-size:0.84rem">Cerrar</button>
+              </div>
+            </div>
+          `;
+          if (!dlg.open) dlg.showModal();
+          this.trackPlatformAd(interAd.id, 'impression');
+          dlg.querySelector('#credoInterClose')?.addEventListener('click', () => dlg.close());
+          dlg.querySelector('#credoInterSkip')?.addEventListener('click', () => dlg.close());
+          dlg.querySelector('#credoInterCta')?.addEventListener('click', () => {
+            this.trackPlatformAd(interAd.id, 'click');
+            dlg.close();
+          });
+        }
+      }
+    } catch {}
+  }
+
+  async checkAdminNotifications() {
+    if (!this.token || !this.user) return;
+    try {
+      const res = await this.api('/api/v1/platform-ads/notifications', { noCache: true });
+      const unread = (res?.notifications || []).filter((n) => !n.is_read);
+      if (unread.length === 0) return;
+      const latest = unread[0];
+      const shownKey = `credo-notif-seen-${latest.id}`;
+      if (sessionStorage.getItem(shownKey)) return;
+      sessionStorage.setItem(shownKey, '1');
+
+      const dlg = this.openModal(
+        latest.kind === 'warning' ? '⚠ Aviso Oficial de Moderación' : '📢 Comunicado de Credo',
+        `
+        <div style="display:flex;flex-direction:column;gap:12px">
+          <strong style="font-size:1.02rem">${this.esc(latest.title)}</strong>
+          <p style="margin:0;font-size:0.88rem;line-height:1.5;color:var(--label-2);white-space:pre-line">${this.esc(latest.body)}</p>
+          <div style="display:flex;gap:8px;margin-top:4px">
+            ${latest.deep_link && latest.deep_link.startsWith('#/') ? `<a href="${this.esc(latest.deep_link)}" class="btn btn-gold btn-block" id="notifOpenLinkBtn">Ver ahora</a>` : ''}
+            <button type="button" class="btn btn-soft btn-block" id="notifAckBtn">Entendido</button>
+          </div>
+        </div>
+        `
+      );
+      const markRead = () => {
+        this.api(`/api/v1/platform-ads/notifications/${latest.id}/read`, { method: 'POST' }).catch(() => {});
+        this.closeModal();
+      };
+      dlg.querySelector('#notifAckBtn')?.addEventListener('click', markRead);
+      dlg.querySelector('#notifOpenLinkBtn')?.addEventListener('click', markRead);
+    } catch {}
+  }
+
   attachInstantNavPrefetch() {
     if (this._navPrefetchBound) return;
     this._navPrefetchBound = true;
@@ -582,7 +764,7 @@ class CredoApp {
     const warmRoute = (navId) => {
       if (!navId) return;
       if (navId === 'feed') {
-        import('./views/feed.js?v=43').catch(() => {});
+        import('./views/feed.js?v=46').catch(() => {});
         if (!this._isFresh('/api/v1/posts?scope=global&limit=6&offset=0', 15_000)) {
           this.api('/api/v1/posts?scope=global&limit=6&offset=0', { ttlMs: 20_000 }).catch(() => {});
         }
@@ -1048,15 +1230,15 @@ class CredoApp {
     // Lazy-import ONLY the required view module
     let mod;
     try {
-      if (route === 'feed') mod = await import('./views/feed.js?v=43');
-      else if (route === 'studio') mod = await import('./views/studio.js?v=26');
+      if (route === 'feed') mod = await import('./views/feed.js?v=46');
+      else if (route === 'studio') mod = await import('./views/studio.js?v=46');
       else if (route === 'vids') mod = await import('./views/vids.js?v=43');
       else if (route === 'explore') mod = await import('./views/explore.js?v=44');
       else if (route === 'prayer') mod = await import('./views/prayer.js?v=23');
       else if (route === 'user') mod = await import('./views/parishes.js?v=43');
       else if (route === 'settings') mod = await import('./views/settings.js?v=45');
       else if (route === 'profile') mod = await import('./views/profile.js?v=45');
-      else mod = await import('./views/feed.js?v=43');
+      else mod = await import('./views/feed.js?v=46');
     } catch (err) {
       root.innerHTML = `<div class="empty-box">Error cargando vista: ${this.esc(err.message)}</div>`;
       return;
@@ -2084,6 +2266,14 @@ class CredoApp {
           return;
         }
 
+        if (st.validCedula && st.lookupStatus === 'manual_review' && !st.nameMatches) {
+          cedulaStatus.className = 'cedula-status-pill cedula-status-pill--warn';
+          cedulaStatus.textContent = `⏳ ${st.message || 'Cédula válida. No apareció en línea; se enviará a revisión manual.'}`;
+          cedulaStatus.hidden = false;
+          if (announce) announcePolite(st.message || 'Se enviará a revisión manual.');
+          return;
+        }
+
         if (st.validCedula && (st.nameMatches || isClergy)) {
           nameGroup.classList.add('field--verified');
           cedulaGroup.classList.add('field--verified');
@@ -2124,6 +2314,7 @@ class CredoApp {
             validCedula: Boolean(res.valid_cedula),
             duplicate: Boolean(res.duplicate),
             nameMatches: Boolean(res.name_matches),
+            lookupStatus: res.lookup_status || '',
             requiresApproval: Boolean(res.requires_approval),
             errorField: res.error_field || '',
             message: res.message || '',

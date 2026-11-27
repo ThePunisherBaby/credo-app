@@ -345,13 +345,13 @@ router.get('/campaigns', requireAuth, requireOrgRole(['owner', 'admin', 'editor'
   }
 });
 
+const REACH_PER_USD = 500;
+const MIN_CAMPAIGN_USD = 1;
+const MAX_CAMPAIGN_USD = 1000;
+
 router.post('/campaigns', requireAuth, requireOrgRole(['owner', 'admin', 'editor'], 'campaign:draft'), async (req, res) => {
   try {
-    const plan = req.orgPlan;
-    if (!plan) {
-      return res.status(402).json({ error: 'PLAN_REQUIRED', message: 'Necesitas un plan Credo One activo.' });
-    }
-
+    const { isUserSuperAdmin } = require('../middleware/auth');
     const {
       post_id = null,
       title,
@@ -365,9 +365,10 @@ router.post('/campaigns', requireAuth, requireOrgRole(['owner', 'admin', 'editor
       target_country = 'ALL',
       target_city = '',
       target_category = 'general',
-      impressions_allocated = 5000,
+      daily_budget_usd = 5,
+      duration_days = 1,
+      comp_activate = false,
       starts_at = null,
-      ends_at = null,
     } = req.body || {};
 
     const cleanTitle = String(title || '').trim();
@@ -377,46 +378,42 @@ router.post('/campaigns', requireAuth, requireOrgRole(['owner', 'admin', 'editor
     if (!VALID_CTAS.includes(cta_type)) {
       return res.status(400).json({ error: 'Tipo de botón CTA no válido.' });
     }
-    const activeCntRes = await pool.query(
-      `SELECT COUNT(*)::int AS cnt FROM campaigns
-        WHERE organization_id = $1 AND status IN ('active', 'scheduled', 'pending_approval')`,
-      [req.org.id]
-    );
-    const remainingPool = Math.max(
-      0,
-      Number(plan.impressions_quota || plan.monthly_impressions || 0) - Number(plan.impressions_used || 0)
-    );
 
-    const guard = fsharpKernel.validateCampaignCreation({
-      sku: plan.plan_sku,
-      actorRole: req.orgRole,
-      ctaType: cta_type,
-      activeCampaignsCount: activeCntRes.rows[0]?.cnt || 0,
-      requestedImpressions: Number(impressions_allocated) || 5000,
-      remainingPool,
-      orgApprovalRequired: Boolean(req.org.approval_required),
-    });
+    const dailyUsd = Math.round(Number(daily_budget_usd));
+    const days = Math.round(Number(duration_days));
+    if (!Number.isFinite(dailyUsd) || dailyUsd < MIN_CAMPAIGN_USD || dailyUsd > MAX_CAMPAIGN_USD) {
+      return res.status(400).json({
+        error: `El presupuesto diario debe estar entre $${MIN_CAMPAIGN_USD} y $${MAX_CAMPAIGN_USD} USD ($1 USD = ${REACH_PER_USD} personas/día).`,
+      });
+    }
+    if (!Number.isFinite(days) || days < 1 || days > 30) {
+      return res.status(400).json({ error: 'La duración de la campaña debe ser entre 1 y 30 días.' });
+    }
 
-    if (!guard.allowed) {
-      return res.status(guard.http_status || 403).json({
-        error: guard.code,
-        message: guard.message,
+    const totalUsd = dailyUsd * days;
+    if (totalUsd > MAX_CAMPAIGN_USD) {
+      return res.status(400).json({
+        error: `El presupuesto total ($${totalUsd} USD) supera el máximo permitido de $${MAX_CAMPAIGN_USD} USD por campaña.`,
       });
     }
 
-    const alloc = guard.safe_allocated_impressions;
-    const needsApproval = Boolean(guard.requires_approval);
-
+    const dailyCents = dailyUsd * 100;
+    const totalCents = totalUsd * 100;
+    const allocatedReach = totalUsd * REACH_PER_USD;
     const startDate = starts_at ? new Date(starts_at) : new Date();
-    const isFuture = startDate.getTime() > Date.now() + 60_000;
-    const initialStatus = needsApproval ? 'pending_approval' : isFuture ? 'scheduled' : 'active';
+    const endDate = new Date(startDate.getTime() + days * 86400 * 1000);
+
+    const canComp = Boolean(comp_activate && (isUserSuperAdmin(req.user) || req.user.is_ceo));
+    const initialStatus = canComp ? 'active' : 'pending_payment';
+    const paymentStatus = canComp ? 'comped' : 'unpaid';
 
     const { rows } = await pool.query(
       `INSERT INTO campaigns (
          organization_id, creator_user_id, post_id, title, body, media_url, media_kind,
          objective, cta_type, cta_label, cta_url, target_country, target_city, target_category,
-         impressions_allocated, status, starts_at, ends_at
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+         impressions_allocated, daily_budget_cents, duration_days, total_budget_cents,
+         payment_status, status, starts_at, ends_at
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
        RETURNING *`,
       [
         req.org.id,
@@ -433,39 +430,149 @@ router.post('/campaigns', requireAuth, requireOrgRole(['owner', 'admin', 'editor
         String(target_country || 'ALL').trim().toUpperCase().slice(0, 8),
         String(target_city || '').trim().slice(0, 80),
         String(target_category || 'general').trim().slice(0, 50),
-        alloc,
+        allocatedReach,
+        dailyCents,
+        days,
+        totalCents,
+        paymentStatus,
         initialStatus,
         startDate.toISOString(),
-        ends_at ? new Date(ends_at).toISOString() : null,
+        endDate.toISOString(),
       ]
     );
 
     const campaign = rows[0];
-
-    if (needsApproval) {
-      await pool.query(
-        `INSERT INTO approval_requests (organization_id, campaign_id, submitted_by, status)
-         VALUES ($1,$2,$3,'pending')`,
-        [req.org.id, campaign.id, req.user.id]
-      );
-    }
-
     await writeAuditLog({
       organizationId: req.org.id,
       user: req.user,
       role: req.orgRole,
-      action: needsApproval ? 'campaign.submitted_for_approval' : 'campaign.created',
+      action: canComp ? 'campaign.created_comped' : 'campaign.created_pending_payment',
       resourceType: 'campaign',
       resourceId: String(campaign.id),
-      details: { title: campaign.title, cta_type, impressions_allocated: alloc, status: initialStatus },
+      details: { title: campaign.title, daily_usd: dailyUsd, duration_days: days, total_usd: totalUsd, reach: allocatedReach },
       req,
     });
 
     apiCache.invalidate('posts:');
-    return res.status(201).json({ campaign, requires_approval: needsApproval });
+    return res.status(201).json({
+      campaign,
+      requires_payment: !canComp,
+      pricing: { daily_usd: dailyUsd, duration_days: days, total_usd: totalUsd, reach: allocatedReach },
+    });
   } catch (err) {
     console.error('[studio/campaigns/create]', err);
     return res.status(500).json({ error: 'No se pudo crear la campaña' });
+  }
+});
+
+// POST /api/v1/studio/campaigns/:id/paypal-order — Create real PayPal Order v2 for a paid campaign ($1–$1,000 USD)
+router.post('/campaigns/:id/paypal-order', requireAuth, requireOrgRole(['owner', 'admin', 'editor'], 'campaign:draft'), async (req, res) => {
+  try {
+    const { getSetting } = require('../services/systemState');
+    if (getSetting('pause_paypal_checkout')?.enabled) {
+      return res.status(503).json({ error: 'Los pagos con PayPal están pausados temporalmente por administración.' });
+    }
+    const { createOrderV2, isPayPalConfigured } = require('../services/paypal');
+    if (!isPayPalConfigured()) {
+      return res.status(503).json({ error: 'PayPal no está configurado en el servidor.' });
+    }
+
+    const campaignId = Number(req.params.id);
+    const { rows } = await pool.query('SELECT * FROM campaigns WHERE id = $1 AND organization_id = $2', [campaignId, req.org.id]);
+    const camp = rows[0];
+    if (!camp) return res.status(404).json({ error: 'Campaña no encontrada.' });
+    if (camp.payment_status === 'paid' || camp.payment_status === 'comped') {
+      return res.status(409).json({ error: 'Esta campaña ya fue pagada y activada.' });
+    }
+
+    const totalUsd = Number((Number(camp.total_budget_cents || 100) / 100).toFixed(2));
+    if (totalUsd < MIN_CAMPAIGN_USD || totalUsd > MAX_CAMPAIGN_USD) {
+      return res.status(400).json({ error: 'Monto de campaña fuera de los límites ($1 – $1,000 USD).' });
+    }
+
+    const host = String(req.headers['x-forwarded-host'] || req.headers.host || 'credoapp.tech').split(',')[0].trim();
+    const origin = host.includes('localhost') ? `http://${host}` : `https://${host}`;
+    const order = await createOrderV2({
+      amountCents: Number(camp.total_budget_cents),
+      currency: 'USD',
+      description: `Campaña Credo #${camp.id}: ${camp.title.slice(0, 60)} (${camp.impressions_allocated.toLocaleString('en-US')} alcance)`,
+      customId: `camp:${camp.id}:org:${req.org.id}:u:${req.user.id}`,
+      returnUrl: `${origin}/#/studio/campaigns?paid_campaign=${camp.id}`,
+      cancelUrl: `${origin}/#/studio/campaigns?cancelled_campaign=${camp.id}`,
+    });
+
+    await pool.query('UPDATE campaigns SET paypal_order_id = $2, updated_at = NOW() WHERE id = $1', [camp.id, order.id]);
+    const approveLink = (order.links || []).find((l) => l.rel === 'approve' || l.rel === 'payer-action')?.href || '';
+    return res.json({ order_id: order.id, approve_url: approveLink, total_usd: totalUsd, reach: camp.impressions_allocated });
+  } catch (err) {
+    console.error('[studio/campaigns/paypal-order]', err);
+    return res.status(500).json({ error: err.message || 'No se pudo iniciar el pago de la campaña.' });
+  }
+});
+
+// POST /api/v1/studio/campaigns/:id/paypal-capture — Capture PayPal Order v2 & activate paid reach immediately!
+router.post('/campaigns/:id/paypal-capture', requireAuth, requireOrgRole(['owner', 'admin', 'editor'], 'campaign:draft'), async (req, res) => {
+  try {
+    const { captureOrderV2, getOrderV2 } = require('../services/paypal');
+    const campaignId = Number(req.params.id);
+    const { rows } = await pool.query('SELECT * FROM campaigns WHERE id = $1 AND organization_id = $2', [campaignId, req.org.id]);
+    const camp = rows[0];
+    if (!camp) return res.status(404).json({ error: 'Campaña no encontrada.' });
+
+    const orderId = String(req.body?.order_id || camp.paypal_order_id || '').trim();
+    if (!orderId) return res.status(400).json({ error: 'order_id requerido.' });
+
+    let captured;
+    try {
+      captured = await captureOrderV2(orderId);
+    } catch {
+      captured = await getOrderV2(orderId);
+    }
+
+    const pu = captured?.purchase_units?.[0];
+    const cap = pu?.payments?.captures?.[0];
+    const paidVal = Number(cap?.amount?.value || pu?.amount?.value || 0);
+    const paidCents = Math.round(paidVal * 100);
+    const statusOk = captured?.status === 'COMPLETED' || cap?.status === 'COMPLETED';
+    if (!statusOk || paidCents < Number(camp.total_budget_cents || 100)) {
+      return res.status(402).json({ error: 'El pago en PayPal no fue completado o el monto es insuficiente.' });
+    }
+
+    const needsApproval = req.orgRole === 'editor' && Boolean(req.org.approval_required);
+    const nextStatus = needsApproval ? 'pending_approval' : 'active';
+    const upd = await pool.query(
+      `UPDATE campaigns
+          SET payment_status = 'paid',
+              paypal_order_id = $2,
+              paypal_capture_id = $3,
+              status = $4,
+              updated_at = NOW()
+        WHERE id = $1
+        RETURNING *`,
+      [camp.id, orderId, String(cap?.id || orderId), nextStatus]
+    );
+
+    await pool.query(
+      `INSERT INTO billing_transactions (
+         user_id, organization_id, paypal_event_id, paypal_sale_id,
+         plan_sku, amount_cents, currency, status, description
+       ) VALUES ($1,$2,$3,$4,'campaign_reach',$5,'USD','completed',$6)
+       ON CONFLICT (paypal_event_id) DO NOTHING`,
+      [
+        req.user.id,
+        req.org.id,
+        `camp-order-${orderId}`,
+        String(cap?.id || orderId),
+        paidCents,
+        `Campaña Publicitaria #${camp.id} · ${camp.title.slice(0, 60)} (${camp.impressions_allocated.toLocaleString('es-DO')} alcance)`,
+      ]
+    );
+
+    apiCache.invalidate('posts:');
+    return res.json({ ok: true, campaign: upd.rows[0] });
+  } catch (err) {
+    console.error('[studio/campaigns/paypal-capture]', err);
+    return res.status(500).json({ error: err.message || 'No se pudo confirmar el pago de la campaña.' });
   }
 });
 

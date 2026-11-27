@@ -1,5 +1,9 @@
 // views/studio.js — Credo One Studio (/studio/overview, /campaigns, /team, /billing)
-// Dark OLED + Liquid Glass Command Center with RBAC, Live Mobile Preview Mockup & Interactive SVG Analytics
+// Clean Adaptive Light/Dark UI (Zero muddy shadows) · Pay-Per-Campaign Reach ($1 USD/day = 500 reach, max $1,000 USD)
+
+const REACH_PER_USD = 500;
+const MIN_CAMPAIGN_USD = 1;
+const MAX_CAMPAIGN_USD = 1000;
 
 const ROLE_DESCRIPTIONS = {
   owner: 'Control absoluto, facturación PayPal, eliminación de cuenta y gestión de Admins.',
@@ -19,12 +23,20 @@ const CTA_PRESETS = [
 
 const STATUS_LABELS = {
   active: 'Activa',
+  pending_payment: 'Pend. Pago',
   pending_approval: 'En Revisión',
   scheduled: 'Programada',
   paused: 'Pausada',
   completed: 'Finalizada',
   rejected: 'Devuelta',
   draft: 'Borrador',
+};
+
+const PAY_STATUS_LABELS = {
+  paid: 'Pagada',
+  comped: 'Cortesía',
+  unpaid: 'Sin pagar',
+  refunded: 'Reembolsada',
 };
 
 function fmtNum(n) {
@@ -38,11 +50,11 @@ function fmtUsd(cents) {
 function buildSmoothAreaChart(series) {
   const pts = Array.isArray(series) && series.length > 0 ? series : [];
   if (pts.length === 0) {
-    return `<div style="padding:36px;text-align:center;color:#9CA3AF;font-size:0.84rem">Aún no hay impresiones registradas en este rango. Lanza tu primera campaña para ver la curva en tiempo real.</div>`;
+    return `<div style="padding:32px;text-align:center;color:var(--st-muted);font-size:0.84rem">Aún no hay impresiones registradas en este rango. Crea tu primera campaña pagada para ver la curva en tiempo real.</div>`;
   }
   const W = 720;
   const H = 220;
-  const padL = 36;
+  const padL = 38;
   const padR = 14;
   const padT = 18;
   const padB = 28;
@@ -81,27 +93,27 @@ function buildSmoothAreaChart(series) {
     const y = (padT + plotH * (1 - t)).toFixed(1);
     const val = Math.round(maxVal * t);
     return `
-      <line x1="${padL}" y1="${y}" x2="${W - padR}" y2="${y}" stroke="rgba(255,255,255,0.06)" stroke-width="1" />
-      <text x="${padL - 6}" y="${Number(y) + 3}" text-anchor="end" fill="#6B7280" font-size="10">${val >= 1000 ? `${(val / 1000).toFixed(1)}k` : val}</text>
+      <line x1="${padL}" y1="${y}" x2="${W - padR}" y2="${y}" stroke="currentColor" stroke-opacity="0.12" stroke-width="1" />
+      <text x="${padL - 6}" y="${Number(y) + 3}" text-anchor="end" fill="currentColor" fill-opacity="0.58" font-size="10">${val >= 1000 ? `${(val / 1000).toFixed(1)}k` : val}</text>
     `;
   }).join('');
 
   const step = Math.max(1, Math.floor(pts.length / 6));
   const xLabels = pts
     .map((p, i) => (i % step === 0 || i === pts.length - 1
-      ? `<text x="${toX(i).toFixed(1)}" y="${H - 8}" text-anchor="middle" fill="#6B7280" font-size="10">${String(p.date || '').slice(5)}</text>`
+      ? `<text x="${toX(i).toFixed(1)}" y="${H - 8}" text-anchor="middle" fill="currentColor" fill-opacity="0.58" font-size="10">${String(p.date || '').slice(5)}</text>`
       : ''))
     .join('');
 
   return `
-    <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Curva comparativa de impresiones orgánicas e impulsadas">
+    <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Curva comparativa de impresiones orgánicas e impulsadas" style="color:var(--st-ink)">
       <defs>
         <linearGradient id="studioBoostGrad" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stop-color="#38BDF8" stop-opacity="0.38" />
+          <stop offset="0%" stop-color="#0A84FF" stop-opacity="0.28" />
           <stop offset="100%" stop-color="#0A84FF" stop-opacity="0.01" />
         </linearGradient>
         <linearGradient id="studioOrgGrad" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stop-color="#D4AF37" stop-opacity="0.28" />
+          <stop offset="0%" stop-color="#D4AF37" stop-opacity="0.24" />
           <stop offset="100%" stop-color="#D4AF37" stop-opacity="0.01" />
         </linearGradient>
       </defs>
@@ -109,7 +121,7 @@ function buildSmoothAreaChart(series) {
       ${organic.area ? `<path d="${organic.area}" fill="url(#studioOrgGrad)" />` : ''}
       ${boosted.area ? `<path d="${boosted.area}" fill="url(#studioBoostGrad)" />` : ''}
       <path d="${organic.line}" fill="none" stroke="#D4AF37" stroke-width="2" stroke-linecap="round" />
-      <path d="${boosted.line}" fill="none" stroke="#38BDF8" stroke-width="2.4" stroke-linecap="round" />
+      <path d="${boosted.line}" fill="none" stroke="#0A84FF" stroke-width="2.4" stroke-linecap="round" />
       ${xLabels}
     </svg>
   `;
@@ -120,13 +132,15 @@ export async function mount({ root, app, signal, params }) {
 
   if (!app.user) {
     root.innerHTML = `
-      <div class="studio-glass-panel" style="padding:36px 24px;text-align:center;max-width:560px;margin:28px auto">
-        <span class="co-badge-gold">Credo One Studio</span>
-        <h1 class="co-sheet-title" style="margin-top:12px">Inicia sesión para entrar a Studio</h1>
-        <p class="co-sheet-subtitle" style="margin-bottom:20px">Administra tus campañas, métricas en tiempo real, equipo multinivel y facturación de Familia Credo One.</p>
-        <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap">
-          <button type="button" class="co-cta-btn co-cta-sapphire" style="width:auto;padding-inline:22px" id="studioLoginBtn">Iniciar sesión</button>
-          <button type="button" class="co-cta-btn co-cta-glass" style="width:auto;padding-inline:20px" id="studioPlansBtn">Ver planes Credo One</button>
+      <div class="studio-shell">
+        <div class="studio-glass-panel" style="padding:36px 24px;text-align:center;max-width:560px;margin:28px auto;grid-column:1 / -1">
+          <span class="co-badge-gold">Credo One Studio</span>
+          <h1 style="margin:12px 0 6px;font-size:1.38rem;font-weight:800;color:var(--st-ink)">Inicia sesión para entrar a Studio</h1>
+          <p style="margin:0 0 20px;font-size:0.88rem;color:var(--st-muted)">Administra tus campañas pagadas por alcance (\$1 USD/día = 500 personas), métricas en tiempo real, equipo y facturación.</p>
+          <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap">
+            <button type="button" class="co-cta-btn co-cta-sapphire" style="width:auto;padding-inline:22px" id="studioLoginBtn">Iniciar sesión</button>
+            <button type="button" class="co-cta-btn co-cta-glass" style="width:auto;padding-inline:20px" id="studioPlansBtn">Ver planes Credo One</button>
+          </div>
         </div>
       </div>
     `;
@@ -139,17 +153,27 @@ export async function mount({ root, app, signal, params }) {
     };
   }
 
-  root.innerHTML = `<div class="studio-glass-panel" style="padding:32px"><div class="skeleton" style="height:260px;border-radius:16px"></div></div>`;
+  root.innerHTML = `<div class="studio-shell"><div class="studio-glass-panel" style="padding:28px;grid-column:1 / -1"><div class="skeleton" style="height:240px;border-radius:12px"></div></div></div>`;
+
+  const isExecutive = Boolean(
+    app.isCtoUser?.(app.user) ||
+    app.user?.is_ceo ||
+    app.user?.is_admin ||
+    app.user?.role === 'super_admin'
+  );
+
+  const hashQuery = location.hash.includes('?') ? new URLSearchParams(location.hash.split('?')[1]) : null;
+  const initialSectionRaw = (params?.section || 'overview').split('?')[0];
 
   const state = {
-    section: ['overview', 'campaigns', 'team', 'billing'].includes(params?.section) ? params.section : 'overview',
+    section: ['overview', 'campaigns', 'team', 'billing'].includes(initialSectionRaw) ? initialSectionRaw : 'overview',
     orgs: [],
     activeOrgId: null,
     range: 30,
     campStatusFilter: 'all',
     campSearch: '',
     creatorOpen: false,
-    teamSubtab: 'members', // 'members' | 'approvals' | 'audit'
+    teamSubtab: 'members',
     overviewData: null,
     campaignsData: null,
     teamData: null,
@@ -167,11 +191,23 @@ export async function mount({ root, app, signal, params }) {
       target_country: 'DO',
       target_city: 'Santo Domingo',
       target_category: 'general',
-      impressions_allocated: 5000,
+      daily_budget_usd: 5,
+      duration_days: 3,
+      comp_activate: false,
     },
   };
 
   const getActiveOrg = () => state.orgs.find((o) => o.id === state.activeOrgId) || state.orgs[0] || null;
+
+  const getDraftTotals = () => {
+    const days = Math.max(1, Math.min(30, Math.round(Number(state.draft.duration_days) || 1)));
+    const maxDailyForDays = Math.max(1, Math.floor(MAX_CAMPAIGN_USD / days));
+    const daily = Math.max(MIN_CAMPAIGN_USD, Math.min(maxDailyForDays, Math.round(Number(state.draft.daily_budget_usd) || 1)));
+    const totalUsd = daily * days;
+    const dailyReach = daily * REACH_PER_USD;
+    const totalReach = totalUsd * REACH_PER_USD;
+    return { daily, days, maxDailyForDays, totalUsd, dailyReach, totalReach };
+  };
 
   async function loadContext() {
     const ctx = await app.api('/api/v1/studio/context', { signal });
@@ -206,17 +242,118 @@ export async function mount({ root, app, signal, params }) {
     }
   }
 
+  function openCampaignPayModal(campaign, org) {
+    const totalCents = Number(campaign.total_budget_cents || 0) || Math.max(100, Math.round((Number(campaign.impressions_allocated || 500) / REACH_PER_USD) * 100));
+    const totalUsd = (totalCents / 100).toFixed(2);
+    const dailyUsd = ((Number(campaign.daily_budget_cents || totalCents) / 100)).toFixed(0);
+    const days = Number(campaign.duration_days || 1);
+    const reach = Number(campaign.impressions_allocated || 0);
+    let currentOrderId = campaign.paypal_order_id || '';
+
+    const dlg = app.openModal(
+      'Pagar y Activar Campaña',
+      `
+      <div style="display:flex;flex-direction:column;gap:14px">
+        <div style="padding:14px;border-radius:12px;background:var(--surface-2);border:1px solid var(--sep)">
+          <div style="font-size:0.74rem;text-transform:uppercase;letter-spacing:0.06em;color:var(--label-2);font-weight:700">Resumen de Alcance Pagado</div>
+          <strong style="display:block;font-size:1.02rem;margin-top:4px">${app.esc(campaign.title)}</strong>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px;padding-top:10px;border-top:1px solid var(--sep)">
+            <div>
+              <div style="font-size:0.72rem;color:var(--label-2)">Inversión total</div>
+              <strong style="font-size:1.2rem;font-variant-numeric:tabular-nums">\$${totalUsd} USD</strong>
+              <div style="font-size:0.72rem;color:var(--label-2)">\$${dailyUsd}/día × ${days} día${days === 1 ? '' : 's'}</div>
+            </div>
+            <div>
+              <div style="font-size:0.72rem;color:var(--label-2)">Alcance garantizado</div>
+              <strong style="font-size:1.2rem;color:#0A84FF;font-variant-numeric:tabular-nums">${fmtNum(reach)} pers.</strong>
+              <div style="font-size:0.72rem;color:var(--label-2)">500 personas por \$1 USD</div>
+            </div>
+          </div>
+        </div>
+
+        <p style="margin:0;font-size:0.82rem;color:var(--label-2);line-height:1.45">
+          El pago se procesa de forma segura en PayPal. Una vez apruebes el pago, regresa aquí y pulsa confirmar para activar la difusión en el feed al instante.
+        </p>
+
+        <div id="campPayErr" class="claim-form-err" hidden role="alert"></div>
+
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <button type="button" class="btn btn-gold btn-block" id="campStartPaypalBtn">
+            Pagar \$${totalUsd} USD con PayPal ↗
+          </button>
+          <button type="button" class="btn btn-soft btn-block" id="campConfirmPaypalBtn" ${currentOrderId ? '' : 'hidden'}>
+            ✓ Confirmar Pago y Activar Campaña
+          </button>
+        </div>
+      </div>
+      `
+    );
+
+    const errBox = dlg.querySelector('#campPayErr');
+    const startBtn = dlg.querySelector('#campStartPaypalBtn');
+    const confirmBtn = dlg.querySelector('#campConfirmPaypalBtn');
+
+    startBtn?.addEventListener('click', async () => {
+      errBox.hidden = true;
+      startBtn.disabled = true;
+      startBtn.textContent = 'Generando orden PayPal…';
+      try {
+        const res = await app.api(`/api/v1/studio/campaigns/${campaign.id}/paypal-order`, {
+          method: 'POST',
+          body: { org_id: org.id },
+        });
+        currentOrderId = res.order_id;
+        if (res.approve_url) {
+          window.open(res.approve_url, '_blank', 'noopener,noreferrer');
+        }
+        startBtn.disabled = false;
+        startBtn.textContent = `Reabrir Ventana de PayPal (\$${totalUsd} USD) ↗`;
+        confirmBtn.hidden = false;
+        app.toast('Completa el pago en PayPal y luego pulsa "Confirmar Pago"');
+      } catch (err) {
+        errBox.textContent = err.message || 'No se pudo iniciar PayPal.';
+        errBox.hidden = false;
+        startBtn.disabled = false;
+        startBtn.textContent = `Pagar \$${totalUsd} USD con PayPal ↗`;
+      }
+    });
+
+    confirmBtn?.addEventListener('click', async () => {
+      errBox.hidden = true;
+      confirmBtn.disabled = true;
+      confirmBtn.textContent = 'Verificando captura en PayPal…';
+      try {
+        await app.api(`/api/v1/studio/campaigns/${campaign.id}/paypal-capture`, {
+          method: 'POST',
+          body: { org_id: org.id, order_id: currentOrderId },
+        });
+        app.closeModal();
+        await loadContext();
+        await loadSectionData();
+        renderStudio();
+        app.toast('¡Pago confirmado! Tu campaña ya está activa en el feed');
+      } catch (err) {
+        errBox.textContent = err.message || 'El pago aún no aparece completado en PayPal.';
+        errBox.hidden = false;
+        confirmBtn.disabled = false;
+        confirmBtn.textContent = '✓ Confirmar Pago y Activar Campaña';
+      }
+    });
+  }
+
   function renderUpgradeGate() {
     root.innerHTML = `
-      <div class="studio-glass-panel" style="padding:36px 24px;text-align:center;max-width:620px;margin:24px auto">
-        <span class="co-badge-gold">Credo One Studio</span>
-        <h1 class="co-sheet-title" style="margin-top:12px">Desbloquea Credo One Studio</h1>
-        <p class="co-sheet-subtitle" style="margin-bottom:22px">
-          El Centro de Comando Profesional con analíticas, campañas patrocinadas, gestión de equipo multinivel y facturación está disponible desde <strong>User One Pro</strong> y planes <strong>Empresas</strong>.
-        </p>
-        <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap">
-          <button type="button" class="co-cta-btn co-cta-sapphire" style="width:auto;padding-inline:24px" id="gateOpenBiz">Ver Planes Empresas</button>
-          <button type="button" class="co-cta-btn co-cta-glass" style="width:auto;padding-inline:22px" id="gateOpenUser">Ver User One Pro</button>
+      <div class="studio-shell">
+        <div class="studio-glass-panel" style="padding:36px 24px;text-align:center;max-width:620px;margin:24px auto;grid-column:1 / -1">
+          <span class="co-badge-gold">Credo One Studio</span>
+          <h1 style="margin:12px 0 6px;font-size:1.38rem;font-weight:800;color:var(--st-ink)">Desbloquea Credo One Studio</h1>
+          <p style="margin:0 0 22px;font-size:0.88rem;color:var(--st-muted);line-height:1.5">
+            El Centro de Comando Profesional con analíticas, campañas pagadas por alcance (\$1 USD/día = 500 personas), equipo multinivel y facturación está disponible desde <strong>User One Pro</strong> y planes <strong>Empresas</strong>.
+          </p>
+          <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap">
+            <button type="button" class="co-cta-btn co-cta-sapphire" style="width:auto;padding-inline:24px" id="gateOpenBiz">Ver Planes Empresas</button>
+            <button type="button" class="co-cta-btn co-cta-glass" style="width:auto;padding-inline:22px" id="gateOpenUser">Ver User One Pro</button>
+          </div>
         </div>
       </div>
     `;
@@ -226,14 +363,14 @@ export async function mount({ root, app, signal, params }) {
 
   function renderOverviewModule(org) {
     const d = state.overviewData;
-    if (!d) return `<div class="studio-glass-panel" style="padding:28px"><div class="skeleton" style="height:200px"></div></div>`;
+    if (!d) return `<div class="studio-glass-panel" style="padding:24px"><div class="skeleton" style="height:200px;border-radius:10px"></div></div>`;
     const k = d.kpis;
     const fmtDelta = (v) => `${v >= 0 ? '+' : ''}${v}% vs 30d ant.`;
 
     return `
       <div class="studio-kpi-grid">
         <div class="studio-glass-panel studio-kpi-card">
-          <span class="studio-kpi-label">Impresiones Totales Entregadas</span>
+          <span class="studio-kpi-label">Impresiones Totales</span>
           <strong class="studio-kpi-val">${fmtNum(k.impressions.value)}</strong>
           <span class="studio-kpi-delta${k.impressions.delta_pct < 0 ? ' is-neg' : ''}">${fmtDelta(k.impressions.delta_pct)}</span>
         </div>
@@ -243,23 +380,23 @@ export async function mount({ root, app, signal, params }) {
           <span class="studio-kpi-delta${k.clicks.delta_pct < 0 ? ' is-neg' : ''}">${fmtDelta(k.clicks.delta_pct)}</span>
         </div>
         <div class="studio-glass-panel studio-kpi-card">
-          <span class="studio-kpi-label">Tasa de Conversión Media (CTR)</span>
+          <span class="studio-kpi-label">Conversión (CTR)</span>
           <strong class="studio-kpi-val">${k.ctr.value}%</strong>
           <span class="studio-kpi-delta${k.ctr.delta_pct < 0 ? ' is-neg' : ''}">${k.ctr.delta_pct >= 0 ? '+' : ''}${k.ctr.delta_pct} pts</span>
         </div>
         <div class="studio-glass-panel studio-kpi-card">
-          <span class="studio-kpi-label">Alcance Único · Pico En Vivo</span>
+          <span class="studio-kpi-label">Alcance · Pico Vivo</span>
           <strong class="studio-kpi-val">${fmtNum(k.reach.value)}</strong>
-          <span class="studio-kpi-delta">🔴 ${fmtNum(k.reach.live_peak)} oyentes pico</span>
+          <span class="studio-kpi-delta">🔴 ${fmtNum(k.reach.live_peak)} oyentes</span>
         </div>
       </div>
 
       <section class="studio-glass-panel studio-chart-card">
         <div class="studio-chart-head">
           <div>
-            <h2 style="margin:0;font-size:1.02rem;font-weight:800">Impresiones Orgánicas vs. Impulsadas Credo One</h2>
+            <h2 style="margin:0;font-size:1rem;font-weight:800;color:var(--st-ink)">Impresiones Orgánicas vs. Impulsadas</h2>
             <div class="studio-chart-legend" style="margin-top:6px">
-              <span><i class="studio-dot" style="background:#38BDF8"></i>Impulsadas Credo One</span>
+              <span><i class="studio-dot" style="background:#0A84FF"></i>Impulsadas (Pagadas)</span>
               <span><i class="studio-dot" style="background:#D4AF37"></i>Orgánicas</span>
             </div>
           </div>
@@ -272,7 +409,7 @@ export async function mount({ root, app, signal, params }) {
         <div class="studio-svg-wrap">${buildSmoothAreaChart(d.series)}</div>
       </section>
 
-      <section class="studio-glass-panel" style="padding:18px">
+      <section class="studio-glass-panel" style="padding:16px">
         <div class="co-table-wrap" tabindex="0" role="region" aria-labelledby="topCampCaption">
           <table class="co-table">
             <caption id="topCampCaption">Top 5 Campañas por Conversión</caption>
@@ -281,20 +418,20 @@ export async function mount({ root, app, signal, params }) {
                 <th>Campaña</th>
                 <th>CTA</th>
                 <th>Estado</th>
-                <th>Impresiones</th>
+                <th>Alcance</th>
                 <th>Clics</th>
                 <th>CTR</th>
               </tr>
             </thead>
             <tbody>
               ${(d.top_campaigns || []).length === 0 ? `
-                <tr><td colspan="6" style="text-align:center;color:#9CA3AF;padding:22px">Aún no has creado campañas en ${app.esc(org.name)}.</td></tr>
+                <tr><td colspan="6" style="text-align:center;color:var(--st-muted);padding:22px">Aún no has creado campañas en ${app.esc(org.name)}.</td></tr>
               ` : d.top_campaigns.map((c) => `
                 <tr>
                   <th scope="row">${app.esc(c.title)}</th>
                   <td data-label="CTA">${app.esc(c.cta_label || c.cta_type)}</td>
                   <td data-label="Estado"><span class="co-status-pill co-status-${app.esc(c.status)}">${app.esc(STATUS_LABELS[c.status] || c.status)}</span></td>
-                  <td data-label="Impresiones">${fmtNum(c.impressions_served)} / ${fmtNum(c.impressions_allocated)}</td>
+                  <td data-label="Alcance">${fmtNum(c.impressions_served)} / ${fmtNum(c.impressions_allocated)}</td>
                   <td data-label="Clics">${fmtNum(c.clicks_count)}</td>
                   <td data-label="CTR"><strong>${c.ctr}%</strong></td>
                 </tr>`).join('')}
@@ -307,6 +444,7 @@ export async function mount({ root, app, signal, params }) {
 
   function renderPhonePreviewHtml(org) {
     const d = state.draft;
+    const totals = getDraftTotals();
     const isEnt = Boolean(org.plan?.is_enterprise);
     return `
       <div class="studio-phone-frame" aria-label="Vista previa móvil en tiempo real">
@@ -339,8 +477,9 @@ export async function mount({ root, app, signal, params }) {
             <p style="margin:0;font-size:0.76rem;color:#9CA3AF;line-height:1.4">${app.esc((d.body || '').slice(0, 140))}${(d.body || '').length > 140 ? '…' : ''}</p>
           </div>
         </div>
-        <div style="text-align:center;margin-top:10px;font-size:0.7rem;color:#9CA3AF">
-          Cuota asignada: <strong style="color:#fff">${fmtNum(d.impressions_allocated)} impresiones</strong>
+        <div style="text-align:center;margin-top:10px;font-size:0.74rem;color:#D1D5DB;line-height:1.45">
+          Presupuesto: <strong style="color:#fff">\$${totals.totalUsd} USD</strong> (${totals.days}d × \$${totals.daily}/d)<br />
+          Alcance garantizado: <strong style="color:#38BDF8">${fmtNum(totals.totalReach)} personas</strong>
         </div>
       </div>
     `;
@@ -349,18 +488,20 @@ export async function mount({ root, app, signal, params }) {
   function renderCampaignsModule(org) {
     const data = state.campaignsData || { campaigns: [], available_posts: [] };
     const plan = org.plan || {};
-    const maxSlider = Math.max(500, org.impressions_available || plan.monthly_impressions || 5000);
-    if (state.draft.impressions_allocated > maxSlider) state.draft.impressions_allocated = maxSlider;
 
     if (state.creatorOpen) {
+      const totals = getDraftTotals();
+      state.draft.daily_budget_usd = totals.daily;
+      state.draft.duration_days = totals.days;
+
       return `
-        <div class="studio-glass-panel" style="padding:20px">
+        <div class="studio-glass-panel" style="padding:18px">
           <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:16px;flex-wrap:wrap">
             <div>
-              <h2 style="margin:0;font-size:1.15rem;font-weight:800">Creador de Campaña con Previsualización</h2>
-              <p style="margin:4px 0 0;font-size:0.8rem;color:#9CA3AF">Configura tu anuncio a la izquierda y observa el resultado real dentro del feed en vivo.</p>
+              <h2 style="margin:0;font-size:1.12rem;font-weight:800;color:var(--st-ink)">Nueva Campaña Pagada por Alcance</h2>
+              <p style="margin:4px 0 0;font-size:0.8rem;color:var(--st-muted)">\$1 USD diario alcanza a 500 personas reales en Credo · Inversión máxima \$1,000 USD por campaña.</p>
             </div>
-            <button type="button" class="co-back-btn" style="margin:0" id="closeCreatorBtn">← Volver a campañas</button>
+            <button type="button" class="co-back-btn" style="margin:0" id="closeCreatorBtn">← Volver</button>
           </div>
 
           <div class="studio-creator-split">
@@ -428,22 +569,54 @@ export async function mount({ root, app, signal, params }) {
                   <label for="campCity">Ciudad / Provincia</label>
                   <input id="campCity" name="target_city" value="${app.esc(state.draft.target_city)}" placeholder="Ej. Santo Domingo, Santiago" />
                 </div>
-
-                <div class="co-field">
-                  <label for="campEnd">Fecha de finalización (opcional)</label>
-                  <input id="campEnd" name="ends_at" type="date" />
-                </div>
               </div>
 
-              <div class="co-field">
-                <label for="campSlider">Cuota de Impresiones a Asignar: <strong id="campSliderVal" style="color:#38BDF8">${fmtNum(state.draft.impressions_allocated)}</strong> / ${fmtNum(maxSlider)} disponibles</label>
-                <input id="campSlider" name="impressions_allocated" type="range" min="500" max="${maxSlider}" step="500" value="${state.draft.impressions_allocated}" style="padding:0;accent-color:#0A84FF" />
+              <!-- Pay-Per-Campaign Reach Pricing Card ($1 USD/day = 500 reach, max $1,000 USD) -->
+              <div class="studio-budget-card">
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+                  <strong style="font-size:0.86rem;color:var(--st-ink)">Presupuesto y Alcance Garantizado</strong>
+                  <span style="font-size:0.72rem;font-weight:700;color:var(--st-accent)">\$1 USD/día = 500 pers. · Máx \$1,000 USD</span>
+                </div>
+
+                <div class="co-form-grid">
+                  <div class="co-field">
+                    <label for="campDailyUsd">Presupuesto Diario (USD): <strong id="campDailyLabel">\$${totals.daily} USD/día</strong></label>
+                    <input id="campDailyUsd" name="daily_budget_usd" type="number" min="1" max="${totals.maxDailyForDays}" step="1" value="${totals.daily}" />
+                    <input id="campDailyRange" type="range" min="1" max="${Math.min(200, totals.maxDailyForDays)}" step="1" value="${Math.min(200, totals.daily)}" style="padding:0;accent-color:#0A84FF;margin-top:4px" />
+                  </div>
+
+                  <div class="co-field">
+                    <label for="campDurationDays">Duración de la campaña (días)</label>
+                    <select id="campDurationDays" name="duration_days">
+                      ${[1, 2, 3, 5, 7, 10, 14, 21, 30].map((dd) => `<option value="${dd}"${totals.days === dd ? ' selected' : ''}>${dd} día${dd === 1 ? '' : 's'}</option>`).join('')}
+                    </select>
+                    <small style="font-size:0.72rem;color:var(--st-muted);margin-top:4px">Tope diario con ${totals.days}d: hasta \$${totals.maxDailyForDays} USD/día</small>
+                  </div>
+                </div>
+
+                <div class="studio-budget-summary">
+                  <div class="studio-budget-metric">
+                    <span>Total a pagar (PayPal)</span>
+                    <strong id="campTotalUsdVal">\$${totals.totalUsd} USD</strong>
+                  </div>
+                  <div class="studio-budget-metric">
+                    <span>Alcance total estimado</span>
+                    <strong id="campTotalReachVal" style="color:var(--st-accent)">${fmtNum(totals.totalReach)} personas</strong>
+                  </div>
+                </div>
+
+                ${isExecutive ? `
+                  <label style="display:flex;align-items:center;gap:8px;font-size:0.8rem;font-weight:700;color:var(--st-gold);cursor:pointer;padding-top:6px;border-top:1px solid var(--st-border)">
+                    <input type="checkbox" id="campCompActivate" name="comp_activate" ${state.draft.comp_activate ? 'checked' : ''} style="width:16px;height:16px;accent-color:#D4AF37" />
+                    <span>Activar sin cobro PayPal (Cortesía institucional Super-Admin)</span>
+                  </label>
+                ` : ''}
               </div>
 
               <div id="studioCampErr" class="co-inline-error" hidden></div>
 
               <button type="submit" class="co-cta-btn ${plan.is_enterprise ? 'co-cta-gold' : 'co-cta-sapphire'}" id="submitCampaignBtn">
-                <span>${org.my_role === 'editor' && (plan.is_enterprise || org.approval_required) ? 'Enviar a Cola de Aprobación' : 'Lanzar Campaña Ahora'}</span>
+                <span id="submitCampaignTxt">${state.draft.comp_activate && isExecutive ? 'Activar Campaña (Cortesía)' : `Continuar al Pago (\$${totals.totalUsd} USD · ${fmtNum(totals.totalReach)} pers.)`}</span>
               </button>
             </form>
 
@@ -458,13 +631,13 @@ export async function mount({ root, app, signal, params }) {
     const filterTabs = [
       ['all', 'Todas'],
       ['active', 'Activas'],
-      ['pending_approval', 'Pendientes de Aprobación'],
-      ['scheduled', 'Programadas'],
+      ['pending_payment', 'Pend. Pago'],
+      ['paused', 'Pausadas'],
       ['completed', 'Finalizadas'],
     ];
 
     return `
-      <div class="studio-glass-panel" style="padding:18px;display:flex;flex-direction:column;gap:14px">
+      <div class="studio-glass-panel" style="padding:16px;display:flex;flex-direction:column;gap:14px">
         <div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px">
           <div style="display:flex;gap:6px;flex-wrap:wrap">
             ${filterTabs.map(([id, lbl]) => `
@@ -472,7 +645,7 @@ export async function mount({ root, app, signal, params }) {
             `).join('')}
           </div>
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-            <input type="search" id="studioCampSearch" value="${app.esc(state.campSearch)}" placeholder="Buscar campaña…" style="padding:8px 12px;border-radius:10px;background:#09090B;border:1px solid rgba(255,255,255,0.12);color:#fff;font-size:0.82rem" />
+            <input type="search" id="studioCampSearch" value="${app.esc(state.campSearch)}" placeholder="Buscar campaña…" style="padding:8px 12px;border-radius:10px;background:var(--st-card-2);border:1px solid var(--st-border);color:var(--st-ink);font-size:0.82rem" />
             ${['owner', 'admin', 'editor'].includes(org.my_role) ? `
               <button type="button" class="co-cta-btn co-cta-sapphire" style="width:auto;min-height:38px;padding:6px 14px" id="openCreatorBtn2">+ Nueva Campaña</button>
             ` : ''}
@@ -485,8 +658,8 @@ export async function mount({ root, app, signal, params }) {
             <thead>
               <tr>
                 <th>Campaña</th>
-                <th>Objetivo</th>
-                <th>Progreso de Impresiones</th>
+                <th>Presupuesto</th>
+                <th>Alcance / Progreso</th>
                 <th>Clics / CTR</th>
                 <th>Estado</th>
                 <th>Control</th>
@@ -494,20 +667,29 @@ export async function mount({ root, app, signal, params }) {
             </thead>
             <tbody>
               ${data.campaigns.length === 0 ? `
-                <tr><td colspan="6" style="text-align:center;color:#9CA3AF;padding:24px">No hay campañas en esta vista.</td></tr>
+                <tr><td colspan="6" style="text-align:center;color:var(--st-muted);padding:24px">No hay campañas en esta vista. Crea una desde \$1 USD/día (500 personas).</td></tr>
               ` : data.campaigns.map((c) => {
                 const pct = Math.min(100, Math.round((Number(c.impressions_served || 0) / Math.max(1, Number(c.impressions_allocated || 1))) * 100));
                 const canToggle = ['owner', 'admin'].includes(org.my_role) && ['active', 'paused', 'scheduled'].includes(c.status);
+                const needsPay = c.status === 'pending_payment' || c.payment_status === 'unpaid';
+                const totalUsdStr = ((Number(c.total_budget_cents || 0) / 100)).toFixed(0);
+                const dailyUsdStr = ((Number(c.daily_budget_cents || 0) / 100)).toFixed(0);
                 return `
                   <tr>
                     <th scope="row">
                       <div style="display:flex;align-items:center;gap:10px">
                         ${c.media_url ? `<img src="${app.esc(c.media_url)}" alt="" style="width:38px;height:38px;border-radius:8px;object-fit:cover;flex-shrink:0" />` : ''}
-                        <span>${app.esc(c.title)}</span>
+                        <div>
+                          <div>${app.esc(c.title)}</div>
+                          <small style="color:var(--st-muted);font-weight:500">${app.esc(c.cta_label || c.cta_type)}</small>
+                        </div>
                       </div>
                     </th>
-                    <td data-label="Objetivo">${app.esc(c.cta_label || c.cta_type)}</td>
-                    <td data-label="Impresiones">
+                    <td data-label="Presupuesto">
+                      <div><strong>${Number(c.total_budget_cents || 0) > 0 ? `\$${totalUsdStr} USD` : 'Plan'}</strong></div>
+                      <small style="color:var(--st-muted)">${Number(c.daily_budget_cents || 0) > 0 ? `\$${dailyUsdStr}/d × ${c.duration_days || 1}d · ` : ''}${app.esc(PAY_STATUS_LABELS[c.payment_status] || c.payment_status || '')}</small>
+                    </td>
+                    <td data-label="Alcance">
                       <div style="min-width:130px">
                         <div style="font-size:0.75rem;margin-bottom:4px">${fmtNum(c.impressions_served)} / ${fmtNum(c.impressions_allocated)} (${pct}%)</div>
                         <div class="studio-pool-track"><div class="studio-pool-fill" style="width:${pct}%"></div></div>
@@ -516,10 +698,14 @@ export async function mount({ root, app, signal, params }) {
                     <td data-label="Clics / CTR">${fmtNum(c.clicks_count)} · <strong>${c.ctr}%</strong></td>
                     <td data-label="Estado"><span class="co-status-pill co-status-${app.esc(c.status)}">${app.esc(STATUS_LABELS[c.status] || c.status)}</span></td>
                     <td data-label="Control">
-                      ${canToggle ? `
+                      ${needsPay ? `
+                        <button type="button" class="co-cta-btn co-cta-sapphire" style="width:auto;min-height:32px;padding:4px 12px;font-size:0.76rem" data-pay-camp="${c.id}">
+                          Pagar \$${totalUsdStr}
+                        </button>
+                      ` : canToggle ? `
                         <button type="button" class="co-cycle-btn is-active" data-toggle-camp="${c.id}">
                           ${c.status === 'active' ? 'Pausar' : 'Activar'}
-                        </button>` : '<span style="color:#6B7280;font-size:0.76rem">—</span>'}
+                        </button>` : '<span style="color:var(--st-muted);font-size:0.76rem">—</span>'}
                     </td>
                   </tr>`;
               }).join('')}
@@ -538,15 +724,15 @@ export async function mount({ root, app, signal, params }) {
     const seatLabel = t.max_seats < 0 ? `${t.seats_used} administradores activos (Ilimitados — Enterprise)` : `${t.seats_used} de ${t.max_seats} administradores en uso — ${t.plan_name || 'Credo One'}`;
 
     return `
-      <div class="studio-glass-panel" style="padding:18px;display:flex;flex-direction:column;gap:16px">
+      <div class="studio-glass-panel" style="padding:16px;display:flex;flex-direction:column;gap:16px">
         <div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px">
           <div>
-            <h2 style="margin:0;font-size:1.1rem;font-weight:800">Equipo, Permisos RBAC y Auditoría</h2>
-            <p style="margin:4px 0 0;font-size:0.82rem;color:#9CA3AF">${app.esc(seatLabel)}</p>
+            <h2 style="margin:0;font-size:1.08rem;font-weight:800;color:var(--st-ink)">Equipo, Permisos RBAC y Auditoría</h2>
+            <p style="margin:4px 0 0;font-size:0.82rem;color:var(--st-muted)">${app.esc(seatLabel)}</p>
           </div>
           ${['owner', 'admin'].includes(org.my_role) ? (
             atLimit
-              ? `<button type="button" class="co-cta-btn co-cta-gold" style="width:auto;min-height:38px;padding:6px 16px" id="studioSeatUpgradeBtn">🔒 Ampliar Asientos (Upgrade)</button>`
+              ? `<button type="button" class="co-cta-btn co-cta-gold" style="width:auto;min-height:38px;padding:6px 16px" id="studioSeatUpgradeBtn">🔒 Ampliar Asientos</button>`
               : `<button type="button" class="co-cta-btn co-cta-sapphire" style="width:auto;min-height:38px;padding:6px 16px" id="studioInviteBtn">+ Invitar Miembro</button>`
           ) : ''}
         </div>
@@ -574,7 +760,7 @@ export async function mount({ root, app, signal, params }) {
                   <tr>
                     <th scope="row">
                       <div>${app.esc(m.full_name || m.invited_email)}</div>
-                      <small style="color:#9CA3AF;font-weight:500">${app.esc(m.email || m.invited_email)}</small>
+                      <small style="color:var(--st-muted);font-weight:500">${app.esc(m.email || m.invited_email)}</small>
                     </th>
                     <td data-label="Rol">
                       <span class="studio-role-badge${m.role === 'owner' ? ' studio-role-badge--owner' : ''}">${app.esc(m.role)}</span>
@@ -582,8 +768,8 @@ export async function mount({ root, app, signal, params }) {
                     <td data-label="Estado"><span class="co-status-pill co-status-${m.status === 'active' ? 'active' : 'pending_approval'}">${m.status === 'active' ? 'Activo' : 'Invitado'}</span></td>
                     <td data-label="Acciones">
                       ${m.role !== 'owner' && ['owner', 'admin'].includes(org.my_role) ? `
-                        <button type="button" class="co-cycle-btn" style="color:#FCA5A5" data-remove-member="${m.id}">Revocar</button>
-                      ` : '<span style="color:#6B7280;font-size:0.75rem">Protegido</span>'}
+                        <button type="button" class="co-cycle-btn" style="color:#EF4444" data-remove-member="${m.id}">Revocar</button>
+                      ` : '<span style="color:var(--st-muted);font-size:0.75rem">Protegido</span>'}
                     </td>
                   </tr>`).join('')}
               </tbody>
@@ -592,42 +778,42 @@ export async function mount({ root, app, signal, params }) {
 
           <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,210px),1fr));gap:10px">
             ${Object.entries(ROLE_DESCRIPTIONS).map(([r, desc]) => `
-              <div style="padding:12px;border-radius:14px;background:rgba(9,9,11,0.55);border:1px solid rgba(255,255,255,0.06)">
+              <div style="padding:12px;border-radius:12px;background:var(--st-card-2);border:1px solid var(--st-border)">
                 <span class="studio-role-badge${r === 'owner' ? ' studio-role-badge--owner' : ''}" style="margin-bottom:6px;display:inline-block">${r}</span>
-                <p style="margin:4px 0 0;font-size:0.75rem;color:#9CA3AF;line-height:1.4">${desc}</p>
+                <p style="margin:4px 0 0;font-size:0.75rem;color:var(--st-muted);line-height:1.4">${desc}</p>
               </div>`).join('')}
           </div>
         ` : state.teamSubtab === 'approvals' ? `
           ${approvals.length === 0 ? `
-            <div style="padding:28px;text-align:center;color:#9CA3AF;font-size:0.86rem">No hay envíos pendientes en la Cola de Aprobación.</div>
+            <div style="padding:28px;text-align:center;color:var(--st-muted);font-size:0.86rem">No hay envíos pendientes en la Cola de Aprobación.</div>
           ` : approvals.map((a) => `
-            <div style="padding:16px;border-radius:16px;background:rgba(9,9,11,0.65);border:1px solid rgba(255,255,255,0.08);display:flex;flex-wrap:wrap;justify-content:space-between;gap:12px;align-items:center">
+            <div style="padding:16px;border-radius:12px;background:var(--st-card-2);border:1px solid var(--st-border);display:flex;flex-wrap:wrap;justify-content:space-between;gap:12px;align-items:center">
               <div style="flex:1;min-width:220px">
                 <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
                   <span class="co-status-pill co-status-${a.status === 'pending' ? 'pending_approval' : a.status === 'approved' ? 'active' : 'rejected'}">${app.esc(a.status)}</span>
-                  <strong style="font-size:0.94rem">${app.esc(a.campaign_title || 'Campaña')}</strong>
+                  <strong style="font-size:0.94rem;color:var(--st-ink)">${app.esc(a.campaign_title || 'Campaña')}</strong>
                 </div>
-                <p style="margin:0;font-size:0.8rem;color:#9CA3AF">${app.esc((a.campaign_body || '').slice(0, 160))}</p>
-                <small style="color:#6B7280">Enviado por ${app.esc(a.submitted_by_name || 'Editor')} · ${fmtNum(a.impressions_allocated)} impresiones</small>
-                ${a.reviewer_note ? `<div style="margin-top:6px;font-size:0.78rem;color:#FCD34D">Nota: ${app.esc(a.reviewer_note)}</div>` : ''}
+                <p style="margin:0;font-size:0.8rem;color:var(--st-muted)">${app.esc((a.campaign_body || '').slice(0, 160))}</p>
+                <small style="color:var(--st-muted)">Enviado por ${app.esc(a.submitted_by_name || 'Editor')} · ${fmtNum(a.impressions_allocated)} alcance</small>
+                ${a.reviewer_note ? `<div style="margin-top:6px;font-size:0.78rem;color:var(--st-gold)">Nota: ${app.esc(a.reviewer_note)}</div>` : ''}
               </div>
               ${a.status === 'pending' && ['owner', 'admin'].includes(org.my_role) ? `
                 <div style="display:flex;gap:8px;flex-wrap:wrap">
-                  <button type="button" class="co-cta-btn co-cta-sapphire" style="width:auto;min-height:36px;padding:6px 14px" data-approve-id="${a.id}">Aprobar y Publicar</button>
-                  <button type="button" class="co-cta-btn co-cta-glass" style="width:auto;min-height:36px;padding:6px 14px" data-return-id="${a.id}">Devolver con Nota</button>
+                  <button type="button" class="co-cta-btn co-cta-sapphire" style="width:auto;min-height:36px;padding:6px 14px" data-approve-id="${a.id}">Aprobar</button>
+                  <button type="button" class="co-cta-btn co-cta-glass" style="width:auto;min-height:36px;padding:6px 14px" data-return-id="${a.id}">Devolver</button>
                 </div>` : ''}
             </div>`).join('')}
         ` : !org.plan?.audit_logs_enabled ? `
-          <div style="padding:28px;text-align:center;border-radius:16px;background:rgba(212,175,55,0.08);border:1px solid rgba(212,175,55,0.32)">
+          <div style="padding:28px;text-align:center;border-radius:12px;background:var(--st-gold-bg);border:1px solid var(--st-gold-border)">
             <span class="co-badge-gold">Exclusivo Credo One Enterprise</span>
-            <h3 style="margin:10px 0 6px">Registro de Auditoría Inmutable (Audit Logs)</h3>
-            <p style="margin:0 0 16px;color:#9CA3AF;font-size:0.84rem">Registra usuario, rol, acción exacta, recurso afectado, IP y marca de tiempo de cada cambio corporativo.</p>
+            <h3 style="margin:10px 0 6px;color:var(--st-ink)">Registro de Auditoría Inmutable</h3>
+            <p style="margin:0 0 16px;color:var(--st-muted);font-size:0.84rem">Registra usuario, rol, acción exacta, recurso afectado, IP y marca de tiempo de cada cambio corporativo.</p>
             <button type="button" class="co-cta-btn co-cta-gold" style="width:auto;padding-inline:20px" id="auditUpgradeBtn">Solicitar Credo One Enterprise</button>
           </div>
         ` : `
           <div class="co-table-wrap" tabindex="0" role="region" aria-labelledby="auditCap">
             <table class="co-table">
-              <caption id="auditCap">Registro Cronológico Inmutable (Audit Logs)</caption>
+              <caption id="auditCap">Registro Cronológico Inmutable</caption>
               <thead>
                 <tr>
                   <th>Fecha / Hora</th>
@@ -640,7 +826,7 @@ export async function mount({ root, app, signal, params }) {
               </thead>
               <tbody>
                 ${logs.length === 0 ? `
-                  <tr><td colspan="6" style="text-align:center;color:#9CA3AF;padding:22px">Aún no hay eventos registrados.</td></tr>
+                  <tr><td colspan="6" style="text-align:center;color:var(--st-muted);padding:22px">Aún no hay eventos registrados.</td></tr>
                 ` : logs.map((lg) => `
                   <tr>
                     <th scope="row">${new Date(lg.created_at).toLocaleString('es-DO')}</th>
@@ -664,25 +850,25 @@ export async function mount({ root, app, signal, params }) {
     const nextDate = p.current_period_end ? new Date(p.current_period_end).toLocaleDateString('es-DO', { day: 'numeric', month: 'long', year: 'numeric' }) : 'Renovación corporativa';
 
     return `
-      <div class="studio-glass-panel" style="padding:22px;display:flex;flex-direction:column;gap:18px;border-color:${p.is_enterprise ? 'rgba(212,175,55,0.45)' : 'rgba(56,189,248,0.35)'}">
+      <div class="studio-glass-panel" style="padding:18px;display:flex;flex-direction:column;gap:16px">
         <div style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-start;gap:14px">
           <div>
             <span class="${p.is_enterprise ? 'co-badge-gold' : 'co-badge-popular'}">${p.is_enterprise ? '✦ Enterprise' : 'Suscripción Activa'}</span>
-            <h2 style="margin:8px 0 4px;font-size:1.35rem;font-weight:800">${app.esc(p.display_name || 'Credo One')}</h2>
-            <p style="margin:0;color:#9CA3AF;font-size:0.84rem">SKU: <code>${app.esc(p.plan_sku || '')}</code> · Ciclo: <strong>${p.billing_cycle === 'annual' ? 'Anual' : p.billing_cycle === 'custom' ? 'Corporativo' : 'Mensual'}</strong> · Próximo corte: <strong>${app.esc(nextDate)}</strong></p>
+            <h2 style="margin:8px 0 4px;font-size:1.3rem;font-weight:800;color:var(--st-ink)">${app.esc(p.display_name || 'Credo One')}</h2>
+            <p style="margin:0;color:var(--st-muted);font-size:0.84rem">SKU: <code>${app.esc(p.plan_sku || '')}</code> · Ciclo: <strong>${p.billing_cycle === 'annual' ? 'Anual' : p.billing_cycle === 'custom' ? 'Corporativo' : 'Mensual'}</strong> · Próximo corte: <strong>${app.esc(nextDate)}</strong></p>
           </div>
           <div style="display:flex;gap:8px;flex-wrap:wrap">
             ${['biz_one_pro', 'biz_one_enterprise'].includes(p.plan_sku) ? `
               <button type="button" class="co-cta-btn co-cta-glass" style="width:auto;min-height:38px;padding:6px 14px" id="studioExportCsvBtn">⬇ Exportar CSV</button>` : ''}
             <button type="button" class="co-cta-btn co-cta-sapphire" style="width:auto;min-height:38px;padding:6px 16px" id="studioChangePlanBtn">Cambiar Plan</button>
             ${b.can_manage_billing && p.subscription_id ? `
-              <button type="button" class="co-cta-btn co-cta-glass" style="width:auto;min-height:38px;padding:6px 14px;color:#FCA5A5" id="studioCancelSubBtn">Cancelar renovación</button>` : ''}
+              <button type="button" class="co-cta-btn co-cta-glass" style="width:auto;min-height:38px;padding:6px 14px;color:#EF4444" id="studioCancelSubBtn">Cancelar renovación</button>` : ''}
           </div>
         </div>
 
         <div class="co-table-wrap" tabindex="0" role="region" aria-labelledby="txTableCap">
           <table class="co-table">
-            <caption id="txTableCap">Historial de Pagos Recibidos vía Webhook PayPal</caption>
+            <caption id="txTableCap">Historial de Pagos PayPal (Suscripciones y Campañas)</caption>
             <thead>
               <tr>
                 <th>Fecha</th>
@@ -694,7 +880,7 @@ export async function mount({ root, app, signal, params }) {
             </thead>
             <tbody>
               ${(b.transactions || []).length === 0 ? `
-                <tr><td colspan="5" style="text-align:center;color:#9CA3AF;padding:22px">Sin cargos registrados todavía en este ciclo.</td></tr>
+                <tr><td colspan="5" style="text-align:center;color:var(--st-muted);padding:22px">Sin cargos registrados todavía en este ciclo.</td></tr>
               ` : b.transactions.map((tx) => `
                 <tr>
                   <th scope="row">${new Date(tx.created_at).toLocaleDateString('es-DO')}</th>
@@ -717,8 +903,6 @@ export async function mount({ root, app, signal, params }) {
       return;
     }
 
-    const quota = Math.max(1, Number(org.impressions_quota || 1));
-    const availPct = Math.min(100, Math.round((Number(org.impressions_available || 0) / quota) * 100));
     const isEnt = Boolean(org.plan?.is_enterprise);
 
     const navItems = [
@@ -741,8 +925,8 @@ export async function mount({ root, app, signal, params }) {
       <div class="studio-shell">
         <aside class="studio-glass-panel studio-sidebar">
           <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
-            <strong style="font-size:0.96rem;letter-spacing:-0.02em">✦ Credo One Studio</strong>
-            <a href="#/feed" style="font-size:0.74rem;color:#9CA3AF;text-decoration:none">← App</a>
+            <strong style="font-size:0.96rem;letter-spacing:-0.02em;color:var(--st-ink)">✦ Credo One Studio</strong>
+            <a href="#/feed" style="font-size:0.78rem;color:var(--st-muted);text-decoration:none;font-weight:700">← App</a>
           </div>
 
           <div class="studio-org-switcher">
@@ -767,11 +951,11 @@ export async function mount({ root, app, signal, params }) {
           <header class="studio-glass-panel studio-topbar">
             <div class="studio-pool-wrap">
               <div class="studio-pool-meta">
-                <span>Bolsa de Impresiones del Mes</span>
-                <strong>${fmtNum(org.impressions_available)} / ${fmtNum(org.impressions_quota)} disponibles</strong>
+                <span>Tarifa Publicitaria por Campaña</span>
+                <strong>\$1 USD/día = 500 personas · Máx \$1,000 USD</strong>
               </div>
-              <div class="studio-pool-track">
-                <div class="studio-pool-fill${isEnt ? ' studio-pool-fill--gold' : ''}" style="width:${availPct}%"></div>
+              <div style="font-size:0.74rem;color:var(--st-muted)">
+                ${org.active_campaigns || 0} campaña${(org.active_campaigns || 0) === 1 ? '' : 's'} activa${(org.active_campaigns || 0) === 1 ? '' : 's'} · Pago directo por alcance en PayPal
               </div>
             </div>
 
@@ -788,7 +972,6 @@ export async function mount({ root, app, signal, params }) {
       </div>
     `;
 
-    // Org switcher
     root.querySelector('#studioOrgSelect')?.addEventListener('change', async (e) => {
       state.activeOrgId = Number(e.target.value);
       state.creatorOpen = false;
@@ -796,7 +979,6 @@ export async function mount({ root, app, signal, params }) {
       renderStudio();
     });
 
-    // Sidebar navigation
     root.querySelectorAll('[data-studio-sec]').forEach((btn) => {
       btn.addEventListener('click', async () => {
         state.section = btn.dataset.studioSec;
@@ -824,7 +1006,6 @@ export async function mount({ root, app, signal, params }) {
       renderStudio();
     });
 
-    // Overview range switch
     root.querySelectorAll('[data-studio-range]').forEach((btn) => {
       btn.addEventListener('click', async () => {
         state.range = Number(btn.dataset.studioRange);
@@ -833,7 +1014,6 @@ export async function mount({ root, app, signal, params }) {
       });
     });
 
-    // Campaigns filters & search
     root.querySelectorAll('[data-camp-filter]').forEach((btn) => {
       btn.addEventListener('click', async () => {
         state.campStatusFilter = btn.dataset.campFilter;
@@ -841,6 +1021,7 @@ export async function mount({ root, app, signal, params }) {
         renderStudio();
       });
     });
+
     const searchEl = root.querySelector('#studioCampSearch');
     if (searchEl) {
       let t = 0;
@@ -854,7 +1035,14 @@ export async function mount({ root, app, signal, params }) {
       });
     }
 
-    // Campaign toggle switch
+    root.querySelectorAll('[data-pay-camp]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const cid = Number(btn.dataset.payCamp);
+        const found = (state.campaignsData?.campaigns || []).find((c) => Number(c.id) === cid);
+        if (found) openCampaignPayModal(found, org);
+      });
+    });
+
     root.querySelectorAll('[data-toggle-camp]').forEach((btn) => {
       btn.addEventListener('click', async () => {
         try {
@@ -871,14 +1059,36 @@ export async function mount({ root, app, signal, params }) {
       });
     });
 
-    // Live Campaign Creator Form -> Real-time Smartphone Mockup Sync
     const campForm = root.querySelector('#studioCreateCampaignForm');
     if (campForm) {
-      const updatePreview = () => {
+      const syncBudgetUI = () => {
+        const totals = getDraftTotals();
+        state.draft.daily_budget_usd = totals.daily;
+        state.draft.duration_days = totals.days;
+        const dailyInp = campForm.querySelector('#campDailyUsd');
+        const dailyRng = campForm.querySelector('#campDailyRange');
+        if (dailyInp) {
+          dailyInp.max = String(totals.maxDailyForDays);
+          if (Number(dailyInp.value) !== totals.daily) dailyInp.value = String(totals.daily);
+        }
+        if (dailyRng) {
+          dailyRng.max = String(Math.min(200, totals.maxDailyForDays));
+          dailyRng.value = String(Math.min(200, totals.daily));
+        }
+        const lbl = campForm.querySelector('#campDailyLabel');
+        if (lbl) lbl.textContent = `\$${totals.daily} USD/día`;
+        const totEl = campForm.querySelector('#campTotalUsdVal');
+        if (totEl) totEl.textContent = `\$${totals.totalUsd} USD`;
+        const reachEl = campForm.querySelector('#campTotalReachVal');
+        if (reachEl) reachEl.textContent = `${fmtNum(totals.totalReach)} personas`;
+        const subTxt = campForm.querySelector('#submitCampaignTxt');
+        if (subTxt) {
+          subTxt.textContent = state.draft.comp_activate && isExecutive
+            ? 'Activar Campaña (Cortesía)'
+            : `Continuar al Pago (\$${totals.totalUsd} USD · ${fmtNum(totals.totalReach)} pers.)`;
+        }
         const host = root.querySelector('#studioPhonePreviewHost');
         if (host) host.innerHTML = renderPhonePreviewHtml(org);
-        const valEl = root.querySelector('#campSliderVal');
-        if (valEl) valEl.textContent = fmtNum(state.draft.impressions_allocated);
       };
 
       campForm.querySelector('#campSourcePost')?.addEventListener('change', (e) => {
@@ -893,13 +1103,13 @@ export async function mount({ root, app, signal, params }) {
           campForm.querySelector('#campBody').value = state.draft.body;
           campForm.querySelector('#campMedia').value = state.draft.media_url;
         }
-        updatePreview();
+        syncBudgetUI();
       });
 
-      const bindField = (sel, key, transform = (v) => v) => {
+      const bindField = (sel, key) => {
         campForm.querySelector(sel)?.addEventListener('input', (e) => {
-          state.draft[key] = transform(e.target.value);
-          updatePreview();
+          state.draft[key] = e.target.value;
+          syncBudgetUI();
         });
       };
       bindField('#campTitle', 'title');
@@ -908,11 +1118,26 @@ export async function mount({ root, app, signal, params }) {
       bindField('#campCtaLabel', 'cta_label');
       bindField('#campCtaUrl', 'cta_url');
       bindField('#campCity', 'target_city');
-      bindField('#campSlider', 'impressions_allocated', Number);
 
+      campForm.querySelector('#campDailyUsd')?.addEventListener('input', (e) => {
+        state.draft.daily_budget_usd = Number(e.target.value) || 1;
+        syncBudgetUI();
+      });
+      campForm.querySelector('#campDailyRange')?.addEventListener('input', (e) => {
+        state.draft.daily_budget_usd = Number(e.target.value) || 1;
+        syncBudgetUI();
+      });
+      campForm.querySelector('#campDurationDays')?.addEventListener('change', (e) => {
+        state.draft.duration_days = Number(e.target.value) || 1;
+        syncBudgetUI();
+      });
+      campForm.querySelector('#campCompActivate')?.addEventListener('change', (e) => {
+        state.draft.comp_activate = Boolean(e.target.checked);
+        syncBudgetUI();
+      });
       campForm.querySelector('#campCountry')?.addEventListener('change', (e) => {
         state.draft.target_country = e.target.value;
-        updatePreview();
+        syncBudgetUI();
       });
       campForm.querySelector('#campCtaType')?.addEventListener('change', (e) => {
         state.draft.cta_type = e.target.value;
@@ -921,7 +1146,7 @@ export async function mount({ root, app, signal, params }) {
           state.draft.cta_label = preset.defaultText;
           campForm.querySelector('#campCtaLabel').value = preset.defaultText;
         }
-        updatePreview();
+        syncBudgetUI();
       });
 
       campForm.addEventListener('submit', async (ev) => {
@@ -931,6 +1156,7 @@ export async function mount({ root, app, signal, params }) {
         if (errBox) errBox.hidden = true;
         if (btn) btn.disabled = true;
         try {
+          const totals = getDraftTotals();
           const fd = new FormData(campForm);
           const payload = {
             org_id: org.id,
@@ -943,15 +1169,20 @@ export async function mount({ root, app, signal, params }) {
             cta_url: fd.get('cta_url'),
             target_country: fd.get('target_country'),
             target_city: fd.get('target_city'),
-            ends_at: fd.get('ends_at') || null,
-            impressions_allocated: Number(fd.get('impressions_allocated') || 5000),
+            daily_budget_usd: totals.daily,
+            duration_days: totals.days,
+            comp_activate: Boolean(state.draft.comp_activate && isExecutive),
           };
           const res = await app.api('/api/v1/studio/campaigns', { method: 'POST', body: payload });
           state.creatorOpen = false;
           await loadContext();
           await loadSectionData();
           renderStudio();
-          app.toast(res.requires_approval ? 'Enviada a Cola de Aprobación' : 'Campaña lanzada en el feed');
+          if (res.requires_payment && res.campaign) {
+            openCampaignPayModal(res.campaign, org);
+          } else {
+            app.toast('Campaña activada y publicada en el feed');
+          }
         } catch (err) {
           if (errBox) {
             errBox.textContent = err.message;
@@ -962,7 +1193,6 @@ export async function mount({ root, app, signal, params }) {
       });
     }
 
-    // Team subtabs, invite, upgrade lock, approvals, audit logs
     root.querySelectorAll('[data-team-tab]').forEach((btn) => {
       btn.addEventListener('click', () => {
         state.teamSubtab = btn.dataset.teamTab;
@@ -1070,7 +1300,6 @@ export async function mount({ root, app, signal, params }) {
       });
     });
 
-    // Billing actions
     root.querySelector('#studioChangePlanBtn')?.addEventListener('click', () =>
       app.openCredoOne({ audience: org.plan?.audience || 'business' })
     );
@@ -1114,6 +1343,23 @@ export async function mount({ root, app, signal, params }) {
     if (state.orgs.length === 0) {
       renderUpgradeGate();
     } else {
+      // Auto-capture PayPal campaign return if user came back from PayPal approve link
+      const paidCampId = Number(hashQuery?.get('paid_campaign') || 0);
+      const paypalOrderToken = hashQuery?.get('token') || '';
+      const org = getActiveOrg();
+      if (paidCampId && paypalOrderToken && org) {
+        try {
+          await app.api(`/api/v1/studio/campaigns/${paidCampId}/paypal-capture`, {
+            method: 'POST',
+            body: { org_id: org.id, order_id: paypalOrderToken },
+          });
+          app.toast('¡Pago de campaña verificado! Tu anuncio ya está activo');
+        } catch (err) {
+          app.toast(err.message || 'No se pudo verificar el pago de PayPal');
+        }
+        history.replaceState(null, '', '#/studio/campaigns');
+      }
+
       await loadSectionData();
       renderStudio();
     }

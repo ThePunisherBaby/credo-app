@@ -1,23 +1,23 @@
-// sw.js — Credo Offline-First Shell & Zero-Latency Local Image Cache (v45)
-const SHELL_CACHE = 'credo-shell-v45';
+// sw.js — Credo Offline-First Shell & Zero-Latency Local Image Cache (v46)
+const SHELL_CACHE = 'credo-shell-v46';
 const IMG_CACHE = 'credo-img-v2';
 const MAX_IMG_ENTRIES = 160;
 
 const SHELL_ASSETS = [
   '/',
-  '/styles.css?v=31',
-  '/credo-one.css?v=39',
-  '/app.js?v=45',
+  '/styles.css?v=32',
+  '/credo-one.css?v=40',
+  '/app.js?v=46',
   '/credo-one-sheet.js?v=39',
   '/springs.mjs?v=23',
   '/glass.js?v=23',
   '/audio-engine.js?v=23',
   '/i18n.js?v=23',
-  '/views/feed.js?v=43',
+  '/views/feed.js?v=46',
   '/views/explore.js?v=44',
   '/views/prayer.js?v=23',
   '/views/profile.js?v=45',
-  '/views/studio.js?v=26',
+  '/views/studio.js?v=46',
   '/views/vids.js?v=43',
   '/views/parishes.js?v=43',
   '/views/settings.js?v=45',
@@ -69,6 +69,18 @@ self.addEventListener('fetch', (event) => {
 
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
+
+  // Never intercept Credo Core OS (/diosesmiguia), Admin API, /admin 404 trap, or robots.txt
+  if (
+    url.pathname === '/diosesmiguia' ||
+    url.pathname.startsWith('/diosesmiguia/') ||
+    url.pathname.startsWith('/api/admin') ||
+    url.pathname === '/admin' ||
+    url.pathname.startsWith('/admin/') ||
+    url.pathname === '/robots.txt'
+  ) {
+    return;
+  }
 
   // Never touch live radio / audio / TTS streams
   if (

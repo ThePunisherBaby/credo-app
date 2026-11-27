@@ -171,12 +171,19 @@ setTimeout(() => {
 // GET /api/v1/live/stream/:slug — Instant pre-buffered same-origin MP3 radio stream
 router.get('/stream/:slug', async (req, res) => {
   try {
+    const { getSetting } = require('../services/systemState');
+    if (getSetting('pause_live_streams')?.enabled) {
+      return res.status(503).json({ error: 'Las transmisiones en vivo están pausadas temporalmente.' });
+    }
     const slug = String(req.params.slug || '').toLowerCase();
     let upstream = DEFAULT_UPSTREAM;
     const { rows } = await pool.query(
-      'SELECT stream_url FROM live_channels WHERE slug = $1 LIMIT 1',
+      'SELECT stream_url, is_live FROM live_channels WHERE slug = $1 LIMIT 1',
       [slug]
     );
+    if (rows[0] && rows[0].is_live === false) {
+      return res.status(503).json({ error: 'Esta transmisión fue detenida por la administración.' });
+    }
     if (rows[0]?.stream_url && /^https?:\/\//i.test(rows[0].stream_url)) {
       upstream = rows[0].stream_url;
     }
@@ -191,6 +198,10 @@ router.get('/stream/:slug', async (req, res) => {
 // GET /api/v1/live — ONLY real official radio channels (no EWTN, no mock TV, no 24/7 Rosary radio)
 router.get('/', async (_req, res) => {
   try {
+    const { getSetting } = require('../services/systemState');
+    if (getSetting('pause_live_streams')?.enabled) {
+      return res.json({ hero: null, radios: [], tv_channels: [], live_masses: [], all: [], paused: true });
+    }
     getRelay(DEFAULT_UPSTREAM);
 
     const payload = await apiCache.getOrLoad('live:channels', 20000, async () => {
@@ -199,7 +210,7 @@ router.get('/', async (_req, res) => {
                 frequency, country_code, city, accent_color, cover_url,
                 stream_url, youtube_live_id, is_hero, is_live, listeners_count, sort_order
            FROM live_channels
-          WHERE kind = 'radio' AND slug IN ('aire-96', 'reflexionando-la-palabra')
+          WHERE kind = 'radio' AND is_live = TRUE AND slug IN ('aire-96', 'reflexionando-la-palabra')
           ORDER BY is_hero DESC, sort_order ASC, id ASC`
       );
 

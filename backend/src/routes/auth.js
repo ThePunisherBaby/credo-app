@@ -135,7 +135,7 @@ router.post('/verify-cedula', async (req, res) => {
       });
     }
 
-    // Civil Laico: name MUST match official Cédula owner!
+    // Civil Laico: name MUST match official Cédula owner 100% EXACTLY!
     if (lookup.found && lookup.officialName) {
       const cmp = verifyNameMatchesCedula(full_name, lookup.officialName);
       if (!cmp.matches) {
@@ -146,7 +146,7 @@ router.post('/verify-cedula', async (req, res) => {
           lookup_status: 'mismatch',
           error_field: 'full_name',
           message:
-            'Los datos de tu nombre no coinciden con el titular de esta cédula. Escribe tu nombre y apellido reales tal como figuran en tu cédula.',
+            'El nombre escrito NO coincide exactamente con el titular de esta cédula. Escribe tus nombres y apellidos completos exactos tal como figuran en tu cédula.',
         });
       }
       return res.status(200).json({
@@ -155,11 +155,11 @@ router.post('/verify-cedula', async (req, res) => {
         name_matches: true,
         lookup_status: 'matched',
         error_field: '',
-        message: 'Identidad confirmada con tu cédula.',
+        message: 'Identidad exacta confirmada con tu cédula.',
       });
     }
 
-    // Valid JCE checksum, not yet indexed in online DGII: require at least 2 name words & manual review
+    // Valid JCE checksum, not found in online padrón: NEVER fake green match — route to manual review!
     const nameWords = String(full_name || '').trim().split(/\s+/).filter((w) => w.length >= 2);
     if (nameWords.length < 2) {
       return res.status(200).json({
@@ -168,18 +168,18 @@ router.post('/verify-cedula', async (req, res) => {
         name_matches: false,
         lookup_status: 'incomplete_name',
         error_field: 'full_name',
-        message: 'Escribe tu nombre y apellido completos tal como figuran en tu cédula.',
+        message: 'Escribe tus nombres y apellidos completos exactos tal como figuran en tu cédula.',
       });
     }
 
     return res.status(200).json({
       valid_cedula: true,
       duplicate: false,
-      name_matches: true,
+      name_matches: false,
       requires_approval: true,
       lookup_status: 'manual_review',
       error_field: '',
-      message: 'Cédula válida · Se enviará a confirmación rápida.',
+      message: 'Cédula no disponible en padrón en línea · Pasará a verificación manual antes de activar acceso.',
     });
   } catch (err) {
     console.error('[auth/verify-cedula]', err);
@@ -189,6 +189,13 @@ router.post('/verify-cedula', async (req, res) => {
 
 router.post('/register', async (req, res) => {
   try {
+    const { getSetting, getClientIp } = require('../services/systemState');
+    if (getSetting('block_registrations')?.enabled) {
+      return res.status(503).json({
+        error: 'Los nuevos registros están temporalmente pausados por la administración de Credo.',
+      });
+    }
+
     const {
       email,
       password,
@@ -209,6 +216,7 @@ router.post('/register', async (req, res) => {
     const cleanEmail = String(email || '').trim().toLowerCase();
     const cleanPhone = String(phone || '').trim().slice(0, 32);
     const cedulaDigits = normalizeDigits(cedula);
+    const clientIp = getClientIp(req);
 
     if (!cleanEmail || !password || !cleanName) {
       return res.status(400).json({ error: 'Completa tu nombre completo, correo electrónico y contraseña.' });
@@ -466,18 +474,33 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ error: 'Credenciales incorrectas.' });
     }
 
-    if (user.account_status && user.account_status !== 'active') {
+    if (
+      (user.account_status && user.account_status !== 'active') ||
+      user.moderation_status === 'banned' ||
+      (user.moderation_status === 'suspended' &&
+        (!user.suspended_until || new Date(user.suspended_until).getTime() > Date.now()))
+    ) {
       return res.status(403).json({
         error:
-          user.account_status === 'pending'
+          user.moderation_reason ||
+          (user.account_status === 'pending'
             ? 'Tu cuenta está pendiente de confirmación administrativa.'
-            : 'Esta cuenta ha sido deshabilitada por la administración de Credo.',
+            : 'Esta cuenta ha sido suspendida o bloqueada por la administración de Credo.'),
       });
     }
 
+    const { getClientIp } = require('../services/systemState');
+    pool
+      .query(`UPDATE users SET last_ip = $2, last_user_agent = $3, last_seen_at = NOW() WHERE id = $1`, [
+        user.id,
+        getClientIp(req),
+        String(req.headers['user-agent'] || '').slice(0, 220),
+      ])
+      .catch(() => {});
+
     const token = signToken(user);
     const enriched = await enrichUser(user);
-    return res.json({ token, user: enriched });
+    return res.json({ token, user: { ...enriched, role: user.role || 'user' } });
   } catch (err) {
     console.error('[auth/login]', err);
     return res.status(500).json({ error: 'Login failed' });
@@ -487,7 +510,15 @@ router.post('/login', async (req, res) => {
 router.get('/me', requireAuth, async (req, res) => {
   try {
     const enriched = await enrichUser(req.user);
-    return res.json({ user: enriched });
+    return res.json({
+      user: {
+        ...enriched,
+        role: req.user.role || 'user',
+        moderation_status: req.user.moderation_status || 'active',
+        is_impersonating: Boolean(req.user._impersonated_by),
+        impersonator_name: req.user._impersonator_name || '',
+      },
+    });
   } catch (err) {
     console.error('[auth/me]', err);
     return res.status(500).json({ error: 'Failed to load profile' });

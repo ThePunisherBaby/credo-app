@@ -127,57 +127,42 @@ function decodeHtmlEntities(str) {
     .replace(/&([a-zA-Z]+);/g, (m, name) => (name in named ? named[name] : m));
 }
 
-function normalizeNameTokens(rawName, { dropHonorifics = false } = {}) {
-  const ascii = decodeHtmlEntities(rawName)
+function normalizeExactFullName(rawName) {
+  return decodeHtmlEntities(rawName)
     .replace(/ñ/gi, 'N')
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .toUpperCase()
-    .replace(/[^A-Z\s]/g, ' ');
-  const parts = ascii.split(/\s+/).filter(Boolean);
-  return parts.filter((tok, idx) => {
-    if (STOP_WORDS.has(tok)) return false;
-    if (dropHonorifics && idx < 2 && HONORIFICS.has(tok)) return false;
-    return tok.length >= 2;
-  });
+    .replace(/[^A-Z\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 /**
- * Compares user-entered full_name against the official Cédula holder name.
- * Requires >= 2 real tokens (given name + surname), zero mismatched tokens,
- * and coverage of both the start (given name) and end (surname) of the official name.
+ * STRICT EXACT FULL-NAME verification against the official Cédula holder name.
+ * Every single given name and surname must match 100% identically in exact order
+ * (only uppercase, diacritics/accents, and extra spaces are normalized).
+ * Zero partial/subset matching, zero prefix matching, zero dropped words.
  */
 function verifyNameMatchesCedula(enteredFullName, officialFullName) {
-  const userTokens = normalizeNameTokens(enteredFullName, { dropHonorifics: true });
-  const offTokens = normalizeNameTokens(officialFullName, { dropHonorifics: false });
+  const normUser = normalizeExactFullName(enteredFullName);
+  const normOfficial = normalizeExactFullName(officialFullName);
 
+  if (!normUser || !normOfficial) {
+    return { matches: false, reason: 'incomplete_name' };
+  }
+
+  const userTokens = normUser.split(' ');
+  const offTokens = normOfficial.split(' ');
   if (userTokens.length < 2 || offTokens.length < 2) {
     return { matches: false, reason: 'incomplete_name' };
   }
 
-  const matchedOfficialIndices = new Set();
-
-  for (const ut of userTokens) {
-    let foundIdx = offTokens.findIndex((ot, i) => !matchedOfficialIndices.has(i) && ot === ut);
-    if (foundIdx === -1 && ut.length >= 4) {
-      foundIdx = offTokens.findIndex((ot, i) => !matchedOfficialIndices.has(i) && ot.startsWith(ut));
-    }
-    if (foundIdx === -1) {
-      return { matches: false, reason: 'token_mismatch' };
-    }
-    matchedOfficialIndices.add(foundIdx);
+  if (normUser !== normOfficial) {
+    return { matches: false, reason: 'exact_name_mismatch' };
   }
 
-  // Must match at least one given-name token (first half) AND at least one surname token (second half)
-  const indices = [...matchedOfficialIndices].sort((a, b) => a - b);
-  const firstIdx = indices[0];
-  const lastIdx = indices[indices.length - 1];
-  const surnameStart = Math.max(1, offTokens.length - 2);
-  if (firstIdx > 1 || lastIdx < surnameStart) {
-    return { matches: false, reason: 'missing_given_or_surname' };
-  }
-
-  return { matches: true, reason: 'verified' };
+  return { matches: true, reason: 'verified_exact' };
 }
 
 async function queryDgiiPage(url, inputField, buttonField, cedula11) {

@@ -907,4 +907,216 @@ CREATE INDEX IF NOT EXISTS idx_reg_requests_email_lower
 CREATE INDEX IF NOT EXISTS idx_reg_requests_cedula_hash
   ON registration_requests(cedula_hash);
 
+-- ============================================================================
+-- CREDO CORE OS — SUPER-ADMIN, TELEMETRY, IP BANS, PLATFORM AD SERVER,
+-- MODERATION, PAY-PER-CAMPAIGN ($1/DAY=500 REACH), KILL SWITCHES & AUDIT LOGS
+-- ============================================================================
+ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'user';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS moderation_status TEXT NOT NULL DEFAULT 'active';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS muted_until TIMESTAMPTZ;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS suspended_until TIMESTAMPTZ;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS moderation_reason TEXT NOT NULL DEFAULT '';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS token_version INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS last_ip TEXT NOT NULL DEFAULT '';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS last_user_agent TEXT NOT NULL DEFAULT '';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_style TEXT NOT NULL DEFAULT 'circle';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS cover_url TEXT NOT NULL DEFAULT '';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS plan_expires_at TIMESTAMPTZ;
+
+-- Automatically ensure Founder CTO (@paulinosstudios) & Admins have super_admin role
+UPDATE users
+   SET role = 'super_admin', is_admin = TRUE
+ WHERE LOWER(username) = 'paulinosstudios' OR is_cto = TRUE OR is_admin = TRUE;
+
+CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
+CREATE INDEX IF NOT EXISTS idx_users_moderation_status ON users(moderation_status);
+CREATE INDEX IF NOT EXISTS idx_users_last_ip ON users(last_ip) WHERE last_ip <> '';
+
+-- Pay-per-campaign pricing ($1 USD/day = 500 reach, up to $1,000 USD max per campaign)
+ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS daily_budget_cents INTEGER NOT NULL DEFAULT 100;
+ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS duration_days INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS total_budget_cents INTEGER NOT NULL DEFAULT 100;
+ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS payment_status TEXT NOT NULL DEFAULT 'unpaid';
+ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS paypal_order_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS paypal_capture_id TEXT NOT NULL DEFAULT '';
+
+ALTER TABLE campaigns DROP CONSTRAINT IF EXISTS campaigns_status_check;
+ALTER TABLE campaigns ADD CONSTRAINT campaigns_status_check CHECK (status IN (
+  'draft', 'pending_payment', 'pending_approval', 'scheduled', 'active', 'paused', 'completed', 'rejected'
+));
+
+-- Post moderation flags
+ALTER TABLE posts ADD COLUMN IF NOT EXISTS comments_disabled BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE posts ADD COLUMN IF NOT EXISTS is_hidden BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- Enterprise leads CRM notes
+ALTER TABLE enterprise_leads ADD COLUMN IF NOT EXISTS internal_notes TEXT NOT NULL DEFAULT '';
+ALTER TABLE enterprise_leads ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+-- IP Blacklist (exact IP or CIDR range)
+CREATE TABLE IF NOT EXISTS ip_bans (
+  id SERIAL PRIMARY KEY,
+  ip_or_cidr TEXT NOT NULL UNIQUE,
+  reason TEXT NOT NULL DEFAULT '',
+  banned_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  expires_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_ip_bans_expires ON ip_bans(expires_at);
+
+-- Throttled IP & Session visit history (detect multi-accounts & count total unique IPs visited)
+CREATE TABLE IF NOT EXISTS ip_visit_history (
+  id BIGSERIAL PRIMARY KEY,
+  ip_address TEXT NOT NULL,
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  country_code TEXT NOT NULL DEFAULT '',
+  city TEXT NOT NULL DEFAULT '',
+  device_type TEXT NOT NULL DEFAULT 'web',
+  user_agent TEXT NOT NULL DEFAULT '',
+  hits_count INTEGER NOT NULL DEFAULT 1,
+  first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ip_visit_ip_user
+  ON ip_visit_history(ip_address, COALESCE(user_id, 0));
+CREATE INDEX IF NOT EXISTS idx_ip_visit_last_seen ON ip_visit_history(last_seen_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ip_visit_user ON ip_visit_history(user_id) WHERE user_id IS NOT NULL;
+
+-- Platform-Imposed Ad Server (overrides third-party campaigns)
+CREATE TABLE IF NOT EXISTS platform_ads (
+  id SERIAL PRIMARY KEY,
+  title TEXT NOT NULL,
+  body TEXT NOT NULL DEFAULT '',
+  format TEXT NOT NULL DEFAULT 'feed_injection' CHECK (format IN (
+    'feed_injection', 'sticky_top', 'sticky_bottom', 'section_gospel', 'section_prayer', 'interstitial', 'explore_pinned'
+  )),
+  media_url TEXT NOT NULL DEFAULT '',
+  cta_text TEXT NOT NULL DEFAULT 'Más información',
+  cta_url TEXT NOT NULL DEFAULT '',
+  cta_type TEXT NOT NULL DEFAULT 'web' CHECK (cta_type IN ('whatsapp', 'web', 'download', 'internal', 'lead')),
+  enforcement_level TEXT NOT NULL DEFAULT 'free_only' CHECK (enforcement_level IN (
+    'free_only', 'non_premium', 'total_imposition'
+  )),
+  frequency_every_n INTEGER NOT NULL DEFAULT 5,
+  target_country TEXT NOT NULL DEFAULT 'ALL',
+  target_city TEXT NOT NULL DEFAULT '',
+  target_platform TEXT NOT NULL DEFAULT 'all' CHECK (target_platform IN ('all', 'web', 'mobile')),
+  priority INTEGER NOT NULL DEFAULT 5 CHECK (priority BETWEEN 1 AND 10),
+  max_impressions INTEGER NOT NULL DEFAULT 0, -- 0 = unlimited
+  impressions_count INTEGER NOT NULL DEFAULT 0,
+  clicks_count INTEGER NOT NULL DEFAULT 0,
+  unique_reach_count INTEGER NOT NULL DEFAULT 0,
+  starts_at TIMESTAMPTZ,
+  ends_at TIMESTAMPTZ,
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_platform_ads_active ON platform_ads(is_active, format, priority DESC);
+
+CREATE TABLE IF NOT EXISTS platform_ad_events (
+  id BIGSERIAL PRIMARY KEY,
+  ad_id INTEGER NOT NULL REFERENCES platform_ads(id) ON DELETE CASCADE,
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  ip TEXT NOT NULL DEFAULT '',
+  event_type TEXT NOT NULL CHECK (event_type IN ('impression', 'click')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_platform_ad_events_ad_created ON platform_ad_events(ad_id, created_at DESC);
+
+-- Community Content & Profile Reports
+CREATE TABLE IF NOT EXISTS content_reports (
+  id SERIAL PRIMARY KEY,
+  reporter_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  target_type TEXT NOT NULL CHECK (target_type IN ('post', 'comment', 'user', 'prayer', 'live')),
+  target_id INTEGER NOT NULL,
+  reason TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'dismissed', 'actioned')),
+  resolved_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  resolution_note TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  resolved_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_content_reports_status ON content_reports(status, created_at DESC);
+
+-- Global System Settings & Kill Switches
+CREATE TABLE IF NOT EXISTS system_settings (
+  key TEXT PRIMARY KEY,
+  value_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+INSERT INTO system_settings (key, value_json) VALUES
+  ('maintenance_mode', '{"enabled":false,"message":"Credo está en mantenimiento programado. Volveremos en unos minutos."}'::jsonb),
+  ('block_registrations', '{"enabled":false}'::jsonb),
+  ('pause_media_uploads', '{"enabled":false}'::jsonb),
+  ('pause_live_streams', '{"enabled":false}'::jsonb),
+  ('pause_global_ads', '{"enabled":false}'::jsonb),
+  ('pause_paypal_checkout', '{"enabled":false}'::jsonb),
+  ('min_mobile_version', '{"version":"1.0.0","force_update":false}'::jsonb),
+  ('banned_words', '{"words":[]}'::jsonb)
+ON CONFLICT (key) DO NOTHING;
+
+-- Push & In-App Broadcasts
+CREATE TABLE IF NOT EXISTS push_broadcasts (
+  id SERIAL PRIMARY KEY,
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,
+  image_url TEXT NOT NULL DEFAULT '',
+  deep_link TEXT NOT NULL DEFAULT '#/feed',
+  segment_filter JSONB NOT NULL DEFAULT '{"audience":"all"}'::jsonb,
+  sent_count INTEGER NOT NULL DEFAULT 0,
+  opened_count INTEGER NOT NULL DEFAULT 0,
+  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_push_broadcasts_created ON push_broadcasts(created_at DESC);
+
+CREATE TABLE IF NOT EXISTS user_notifications (
+  id BIGSERIAL PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  broadcast_id INTEGER REFERENCES push_broadcasts(id) ON DELETE SET NULL,
+  kind TEXT NOT NULL DEFAULT 'broadcast',
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,
+  deep_link TEXT NOT NULL DEFAULT '#/feed',
+  is_read BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_user_notifications_user ON user_notifications(user_id, is_read, created_at DESC);
+
+-- PayPal Webhook Inspector Log
+CREATE TABLE IF NOT EXISTS paypal_webhook_events (
+  id BIGSERIAL PRIMARY KEY,
+  paypal_event_id TEXT NOT NULL DEFAULT '',
+  event_type TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'received' CHECK (status IN ('received', 'processed', 'error', 'invalid_signature')),
+  error_message TEXT NOT NULL DEFAULT '',
+  headers_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  payload_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  processed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_paypal_webhooks_created ON paypal_webhook_events(created_at DESC);
+
+-- Immutable Super-Admin Audit Logs
+CREATE TABLE IF NOT EXISTS admin_audit_logs (
+  id BIGSERIAL PRIMARY KEY,
+  admin_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  admin_name TEXT NOT NULL DEFAULT '',
+  action TEXT NOT NULL,
+  target_type TEXT NOT NULL DEFAULT '',
+  target_id TEXT NOT NULL DEFAULT '',
+  before_json JSONB,
+  after_json JSONB,
+  ip_address TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_admin_audit_created ON admin_audit_logs(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_admin_audit_action ON admin_audit_logs(action, created_at DESC);
+
+
 

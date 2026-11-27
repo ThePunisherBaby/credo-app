@@ -131,8 +131,15 @@ router.get('/', optionalAuth, async (req, res) => {
     const viewerId = req.user ? req.user.id : null;
 
     const runFeedQuery = async () => {
-      const clauses = [];
+      const clauses = ['COALESCE(p.is_hidden, FALSE) = FALSE'];
       const params = [];
+
+      if (viewerId) {
+        params.push(viewerId);
+        clauses.push(`(COALESCE(u.moderation_status, 'active') <> 'shadowbanned' OR p.author_id = $${params.length})`);
+      } else {
+        clauses.push(`COALESCE(u.moderation_status, 'active') <> 'shadowbanned'`);
+      }
 
       if (author_id) {
         params.push(Number(author_id));
@@ -186,72 +193,142 @@ router.get('/', optionalAuth, async (req, res) => {
       const posts = await hydratePosts(rows, viewerId);
       const last = posts[posts.length - 1];
 
-      // Interleave active Credo One campaigns for non-ad-free viewers on the global feed
+      const { getSetting } = require('../services/systemState');
+      const { isAdEligibleForViewer } = require('./platformAdsPublic');
+      const adsPaused = Boolean(getSetting('pause_global_ads')?.enabled);
       const isAdFreeViewer = Boolean(req.user && req.user.ad_free);
-      const viewerCountry = String(req.user?.country_code || req.query.country || 'DO').toUpperCase().slice(0, 4);
+      const viewerCountry = String(req.user?.country_code || req.headers['cf-ipcountry'] || req.query.country || 'DO').toUpperCase().slice(0, 4);
+      const ua = String(req.headers['user-agent'] || '');
+      const viewerPlatform = /Android|iPhone|iPad|Mobile|CredoAndroid/i.test(ua) ? 'mobile' : 'web';
       let finalPosts = posts;
 
-      if (!isAdFreeViewer && scope === 'global' && !author_id && !q && posts.length >= 2) {
-        const campRes = await pool
+      if (!adsPaused && scope === 'global' && !author_id && !q && posts.length >= 2) {
+        // 1. Platform-Imposed Ads (take priority ABOVE client campaigns; total_imposition shows even to paid accounts!)
+        const platRes = await pool
           .query(
-            `SELECT c.id, c.organization_id, c.post_id, c.title, c.body, c.media_url, c.media_kind,
-                    c.objective, c.cta_type, c.cta_label, c.cta_url, c.target_country, c.created_at,
-                    o.name AS org_name, o.slug AS org_slug, o.badge_type AS org_badge_type,
-                    o.avatar_style AS org_avatar_style, o.avatar_url AS org_avatar_url,
-                    o.avatar_color AS org_avatar_color, o.owner_user_id
-               FROM campaigns c
-               JOIN organizations o ON o.id = c.organization_id
-              WHERE c.status = 'active'
-                AND c.impressions_served < c.impressions_allocated
-                AND (c.starts_at IS NULL OR c.starts_at <= NOW())
-                AND (c.ends_at IS NULL OR c.ends_at >= NOW())
-                AND (c.target_country = 'ALL' OR c.target_country = $1)
-              ORDER BY (c.impressions_allocated - c.impressions_served) DESC, c.updated_at DESC
-              LIMIT 3`,
-            [viewerCountry]
+            `SELECT id, title, body, media_url, cta_text, cta_url, cta_type,
+                    enforcement_level, frequency_every_n, target_country, priority, created_at
+               FROM platform_ads
+              WHERE is_active = TRUE
+                AND format = 'feed_injection'
+                AND (starts_at IS NULL OR starts_at <= NOW())
+                AND (ends_at IS NULL OR ends_at >= NOW())
+                AND (max_impressions = 0 OR impressions_count < max_impressions)
+                AND (target_country = 'ALL' OR target_country = $1)
+                AND (target_platform = 'all' OR target_platform = $2)
+              ORDER BY priority DESC, id DESC
+              LIMIT 4`,
+            [viewerCountry, viewerPlatform]
           )
           .catch(() => ({ rows: [] }));
 
-        if (campRes.rows.length > 0) {
+        const platAds = platRes.rows
+          .filter((ad) => isAdEligibleForViewer(ad, req.user))
+          .map((ad) => ({
+            id: `pad-${ad.id}`,
+            platform_ad_id: ad.id,
+            is_sponsored: true,
+            is_platform_ad: true,
+            enforcement_level: ad.enforcement_level,
+            frequency_every_n: Math.max(1, Number(ad.frequency_every_n || 5)),
+            post_type: 'announcement',
+            title: ad.title,
+            content: ad.body || '',
+            image_url: ad.media_url || '',
+            media_kind: 'photo',
+            youtube_id: '',
+            channel_name: ad.enforcement_level === 'total_imposition' ? 'Anuncio Oficial · Credo' : 'Patrocinado · Credo',
+            source_url: ad.cta_url || '',
+            cta_type: ad.cta_type || 'web',
+            cta_label: ad.cta_text || 'Más información',
+            cta_url: ad.cta_url || '',
+            org_badge_type: 'enterprise_gold',
+            org_avatar_style: 'square',
+            created_at: ad.created_at,
+            author: {
+              id: 0,
+              username: 'credo_oficial',
+              full_name: 'Credo Oficial',
+              title_prefix: '',
+              avatar_url: '/icons/credo-192.png',
+              avatar_color: '#D4AF37',
+              is_ceo: false,
+              one_badge: 'enterprise_gold',
+              avatar_style: 'square',
+            },
+            reactions: { amen: 0, pray: 0, gratitude: 0 },
+            my_reactions: [],
+            comments_count: 0,
+          }));
+
+        // 2. Client Paid Credo One Campaigns (only for non-ad-free viewers)
+        let clientAds = [];
+        if (!isAdFreeViewer) {
+          const campRes = await pool
+            .query(
+              `SELECT c.id, c.organization_id, c.post_id, c.title, c.body, c.media_url, c.media_kind,
+                      c.objective, c.cta_type, c.cta_label, c.cta_url, c.target_country, c.created_at,
+                      o.name AS org_name, o.slug AS org_slug, o.badge_type AS org_badge_type,
+                      o.avatar_style AS org_avatar_style, o.avatar_url AS org_avatar_url,
+                      o.avatar_color AS org_avatar_color, o.owner_user_id
+                 FROM campaigns c
+                 JOIN organizations o ON o.id = c.organization_id
+                WHERE c.status = 'active'
+                  AND c.payment_status IN ('paid', 'comped')
+                  AND c.impressions_served < c.impressions_allocated
+                  AND (c.starts_at IS NULL OR c.starts_at <= NOW())
+                  AND (c.ends_at IS NULL OR c.ends_at >= NOW())
+                  AND (c.target_country = 'ALL' OR c.target_country = $1)
+                ORDER BY (c.impressions_allocated - c.impressions_served) DESC, c.updated_at DESC
+                LIMIT 3`,
+              [viewerCountry]
+            )
+            .catch(() => ({ rows: [] }));
+
+          clientAds = campRes.rows.map((c) => ({
+            id: `camp-${c.id}`,
+            campaign_id: c.id,
+            is_sponsored: true,
+            post_type: 'announcement',
+            title: c.title,
+            content: c.body,
+            image_url: c.media_url || '',
+            media_kind: c.media_kind || 'photo',
+            youtube_id: '',
+            channel_name: 'Patrocinado',
+            source_url: c.cta_url || '',
+            cta_type: c.cta_type,
+            cta_label: c.cta_label,
+            cta_url: c.cta_url,
+            org_badge_type: c.org_badge_type,
+            org_avatar_style: c.org_avatar_style,
+            created_at: c.created_at,
+            author: {
+              id: c.owner_user_id,
+              username: c.org_slug,
+              full_name: c.org_name,
+              title_prefix: '',
+              avatar_url: c.org_avatar_url || '',
+              avatar_color: c.org_avatar_color || '#0A84FF',
+              is_ceo: false,
+              one_badge: c.org_badge_type,
+              avatar_style: c.org_avatar_style,
+            },
+            reactions: { amen: 0, pray: 0, gratitude: 0 },
+            my_reactions: [],
+            comments_count: 0,
+          }));
+        }
+
+        const queue = [...platAds, ...clientAds];
+        if (queue.length > 0) {
+          const step = platAds[0]?.frequency_every_n || 5;
           finalPosts = [];
-          let campIdx = 0;
+          let adIdx = 0;
           for (let i = 0; i < posts.length; i++) {
             finalPosts.push(posts[i]);
-            if ((i === 1 || (i > 1 && (i - 1) % 6 === 0)) && campIdx < campRes.rows.length) {
-              const c = campRes.rows[campIdx++];
-              finalPosts.push({
-                id: `camp-${c.id}`,
-                campaign_id: c.id,
-                is_sponsored: true,
-                post_type: 'announcement',
-                title: c.title,
-                content: c.body,
-                image_url: c.media_url || '',
-                media_kind: c.media_kind || 'photo',
-                youtube_id: '',
-                channel_name: 'Patrocinado',
-                source_url: c.cta_url || '',
-                cta_type: c.cta_type,
-                cta_label: c.cta_label,
-                cta_url: c.cta_url,
-                org_badge_type: c.org_badge_type,
-                org_avatar_style: c.org_avatar_style,
-                created_at: c.created_at,
-                author: {
-                  id: c.owner_user_id,
-                  username: c.org_slug,
-                  full_name: c.org_name,
-                  title_prefix: '',
-                  avatar_url: c.org_avatar_url || '',
-                  avatar_color: c.org_avatar_color || '#0A84FF',
-                  is_ceo: false,
-                  one_badge: c.org_badge_type,
-                  avatar_style: c.org_avatar_style,
-                },
-                reactions: { amen: 0, pray: 0, gratitude: 0 },
-                my_reactions: [],
-                comments_count: 0,
-              });
+            if ((i === 1 || (i > 1 && (i + 1) % step === 0)) && adIdx < queue.length) {
+              finalPosts.push(queue[adIdx++]);
             }
           }
         }
@@ -535,13 +612,27 @@ router.get('/:id/comments', async (req, res) => {
   }
 });
 
-// Comments — ALL authenticated users (clergy + lay)
+// Comments — ALL authenticated users (clergy + lay), enforcing mute, comments_disabled & banned_words
 router.post('/:id/comments', requireAuth, async (req, res) => {
   try {
+    const { containsBannedWord } = require('../services/systemState');
+    if (req.user.moderation_status === 'muted') {
+      if (!req.user.muted_until || new Date(req.user.muted_until).getTime() > Date.now()) {
+        return res.status(403).json({ error: req.user.moderation_reason || 'Tu cuenta está en modo solo lectura temporalmente.' });
+      }
+    }
     const postId = Number(req.params.id);
     const { content } = req.body || {};
     if (!content || !String(content).trim()) {
       return res.status(400).json({ error: 'content is required' });
+    }
+    const pCheck = await pool.query('SELECT comments_disabled FROM posts WHERE id = $1 LIMIT 1', [postId]);
+    if (pCheck.rows[0]?.comments_disabled) {
+      return res.status(403).json({ error: 'Los comentarios están desactivados en esta publicación.' });
+    }
+    const badWord = containsBannedWord(content);
+    if (badWord) {
+      return res.status(400).json({ error: 'Tu comentario contiene palabras no permitidas por la moderación de Credo.' });
     }
 
     const { rows } = await pool.query(

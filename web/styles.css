@@ -4433,6 +4433,10 @@ html, body {
   background: light-dark(rgba(255, 59, 48, 0.1), rgba(255, 69, 58, 0.18));
   color: light-dark(#C9182B, #FF6961);
 }
+.cedula-status-pill--warn {
+  background: light-dark(rgba(217, 119, 6, 0.12), rgba(245, 158, 11, 0.2));
+  color: light-dark(#B45309, #FCD34D);
+}
 
 .reg-role-cards {
   display: grid;
@@ -4513,8 +4517,145 @@ html, body {
   display: grid;
   place-items: center;
   cursor: pointer;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.28);
 }
+
+/* ==========================================================================
+   14. Global Clean Flat Buttons (Zero Ugly Black Shadows) + Platform Ads + Impersonation
+   ========================================================================== */
+button,
+.btn,
+.btn-gold,
+.btn-primary,
+.btn-soft,
+.btn-ghost,
+.credo-one-trigger,
+.co-cta-btn,
+.co-cta-sapphire,
+.co-cta-gold,
+.co-cta-glass,
+.cto-btn-primary,
+.cto-btn-secondary,
+.ig-icon-btn,
+.icon-btn-44,
+.pass-toggle-btn,
+.seg-btn,
+.seg-tab,
+.reg-role-btn,
+.prof-avatar-cam-btn,
+.source-pill-box,
+.card,
+.ig-auth-card {
+  box-shadow: none !important;
+}
+
+.btn-gold,
+.btn-primary {
+  border: 1px solid rgba(10, 132, 255, 0.35);
+}
+.btn-soft {
+  border: 1px solid var(--sep);
+}
+
+/* Super-Admin Safe Impersonation Floating Red Bar */
+.credo-impersonate-bar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: max(8px, env(safe-area-inset-top)) 16px 8px;
+  background: #DC2626;
+  color: #FFFFFF;
+  font-size: 0.82rem;
+  font-weight: 700;
+  border-bottom: 1px solid #991B1B;
+}
+.credo-impersonate-exit {
+  padding: 5px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  background: rgba(0, 0, 0, 0.25);
+  color: #FFFFFF;
+  font-size: 0.78rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+/* Platform-Imposed Sticky Banner Ad */
+.credo-plat-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 14px;
+  border: 1px solid light-dark(#CBD5E1, #27272F);
+  background: light-dark(#F8FAFC, #0E0E13);
+  color: light-dark(#0F172A, #F8FAFC);
+  margin: 8px 0 12px;
+}
+.credo-plat-banner--bottom {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: calc(82px + env(safe-area-inset-bottom, 0px));
+  z-index: 45;
+  max-width: 680px;
+  margin: 0 auto;
+}
+.credo-plat-banner-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.credo-plat-banner-img {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+.credo-plat-banner-cta {
+  padding: 7px 13px;
+  border-radius: 10px;
+  background: #0A84FF;
+  color: #FFFFFF;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-decoration: none;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.credo-plat-banner-close {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 1px solid light-dark(#CBD5E1, #2E2E38);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+/* Platform-Imposed Interstitial Splash */
+dialog.credo-interstitial-dlg {
+  width: min(460px, calc(100vw - 24px));
+  padding: 0;
+  border: 1px solid #27272F;
+  border-radius: 20px;
+  background: #0A0A0D;
+  color: #FFFFFF;
+  overflow: hidden;
+}
+dialog.credo-interstitial-dlg::backdrop {
+  background: rgba(0, 0, 0, 0.75);
+}
+
 
 
 

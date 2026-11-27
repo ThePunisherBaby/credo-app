@@ -28,6 +28,10 @@ const credoOneRoutes = require('./routes/credoOne');
 const studioRoutes = require('./routes/studio');
 const campaignsTelemetryRoutes = require('./routes/campaignsTelemetry');
 const panelAdminRoutes = require('./routes/panelAdmin');
+const adminCoreRoutes = require('./routes/adminCore');
+const platformAdsPublicRoutes = require('./routes/platformAdsPublic');
+const { ipBanMiddleware, maintenanceMiddleware, refreshSystemState } = require('./services/systemState');
+const { recordRequestTelemetry } = require('./services/liveTelemetry');
 
 const app = express();
 app.set('trust proxy', 1);
@@ -73,12 +77,14 @@ app.use(
         styleSrc: [
           "'self'",
           "'unsafe-inline'",
+          'https://fonts.googleapis.com',
           'https://*.paypal.com',
           'https://*.paypalobjects.com',
         ],
         fontSrc: [
           "'self'",
           'data:',
+          'https://fonts.gstatic.com',
           'https://*.paypal.com',
           'https://*.paypalobjects.com',
         ],
@@ -162,7 +168,8 @@ app.use(
       if (
         req.path.includes('/stream') ||
         req.path.includes('/rosary/audio') ||
-        res.getHeader('Content-Type') === 'audio/mpeg'
+        res.getHeader('Content-Type') === 'audio/mpeg' ||
+        res.getHeader('Content-Type') === 'text/event-stream'
       ) {
         return false;
       }
@@ -171,6 +178,22 @@ app.use(
   })
 );
 app.use(express.json({ limit: '22mb' }));
+
+// Global Security & Telemetry Middlewares (IP/CIDR bans -> live in-memory telemetry -> maintenance mode)
+app.use(ipBanMiddleware);
+app.use(optionalAuth);
+app.use(recordRequestTelemetry);
+app.use(maintenanceMiddleware);
+
+// Strictly hide /admin (returns 404 Not Found so nobody probes an exposed /admin route)
+app.all(['/admin', '/admin/*'], (_req, res) => {
+  res.status(404).type('text/plain').send('Not Found');
+});
+
+// Robots.txt strictly disallows indexing of /diosesmiguia
+app.get('/robots.txt', (_req, res) => {
+  res.type('text/plain').send('User-agent: *\nDisallow: /diosesmiguia\nDisallow: /api/admin\n');
+});
 
 // Health check for Hostinger VPS / Coolify
 app.get('/health', async (_req, res) => {
@@ -202,6 +225,8 @@ app.use('/api/v1/rosary', rosaryRoutes);
 app.use('/api/v1/credo-one', credoOneRoutes);
 app.use('/api/v1/studio', studioRoutes);
 app.use('/api/v1/panel-admin', panelAdminRoutes);
+app.use('/api/v1/platform-ads', platformAdsPublicRoutes);
+app.use('/api/admin', adminCoreRoutes);
 app.use('/api/campaigns', campaignsTelemetryRoutes);
 app.use('/api/v1/campaigns', campaignsTelemetryRoutes);
 app.post('/api/webhooks/paypal', credoOneRoutes.handlePayPalWebhook);
@@ -296,6 +321,9 @@ if (fs.existsSync(publicDir)) {
       maxAge: '7d',
       etag: true,
       setHeaders: (res, filePath) => {
+        if (filePath.includes('/diosesmiguia/')) {
+          res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+        }
         if (filePath.endsWith('index.html') || filePath.endsWith('sw.js')) {
           res.setHeader('Cache-Control', 'no-cache, must-revalidate');
         } else if (
@@ -312,6 +340,18 @@ if (fs.existsSync(publicDir)) {
       },
     })
   );
+
+  // Private Master Admin Console: Credo Core OS exclusively at /diosesmiguia/*
+  app.get(['/diosesmiguia', '/diosesmiguia/*'], (req, res, next) => {
+    if (req.path.startsWith('/api/')) return next();
+    const coreHtml = path.join(publicDir, 'diosesmiguia', 'index.html');
+    if (fs.existsSync(coreHtml)) {
+      res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+      res.setHeader('Cache-Control', 'no-store, must-revalidate');
+      return res.sendFile(coreHtml);
+    }
+    return res.status(404).send('Not Found');
+  });
 
   // SPA fallback
   app.get('*', (req, res, next) => {
@@ -334,6 +374,7 @@ async function start() {
   while (attempts < 20) {
     try {
       await initDatabase();
+      await refreshSystemState();
       await seedCredoOnePlans();
       await seedIfEmpty();
       await purgeMockDataAndSyncReal();

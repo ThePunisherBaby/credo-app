@@ -66,6 +66,7 @@ export async function mount({ root, app, signal }) {
       </div>
     </section>
     <hr class="stories-divider" />
+    <div id="feedPlatTopSlot"></div>
 
     <div class="feed-list" id="feedList" aria-live="polite">
       ${igSkeletonHTML(2)}
@@ -74,8 +75,42 @@ export async function mount({ root, app, signal }) {
   `;
 
   const storiesStrip = root.querySelector('#storiesStrip');
+  const feedPlatTopSlot = root.querySelector('#feedPlatTopSlot');
   const feedList = root.querySelector('#feedList');
   const sentinel = root.querySelector('#feedSentinel');
+
+  const renderPlatformTopAds = () => {
+    const ads = Array.isArray(app.platformAds) ? app.platformAds : [];
+    const topAds = ads.filter((a) => a.format === 'sticky_top' || a.format === 'section_gospel');
+    if (!feedPlatTopSlot) return;
+    if (topAds.length === 0) {
+      feedPlatTopSlot.innerHTML = '';
+      return;
+    }
+    feedPlatTopSlot.innerHTML = topAds
+      .map((ad) => `
+        <aside class="credo-plat-banner" data-plat-banner="${ad.id}" style="margin:8px 12px">
+          <div class="credo-plat-banner-left">
+            ${ad.media_url ? `<img class="credo-plat-banner-img" src="${app.esc(ad.media_url)}" alt="" loading="lazy" />` : ''}
+            <div style="min-width:0">
+              <div style="font-size:0.66rem;font-weight:800;text-transform:uppercase;letter-spacing:0.06em;color:#D4AF37">
+                ${ad.format === 'section_gospel' ? 'Patrocinador del Evangelio' : 'Anuncio Oficial'}
+              </div>
+              <strong style="display:block;font-size:0.84rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${app.esc(ad.title)}</strong>
+              ${ad.body ? `<span style="display:block;font-size:0.74rem;opacity:0.78;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${app.esc(ad.body)}</span>` : ''}
+            </div>
+          </div>
+          ${ad.cta_url ? `<a href="${app.esc(ad.cta_url)}" target="_blank" rel="noopener noreferrer" class="credo-plat-banner-cta" data-plat-banner-click="${ad.id}">${app.esc(ad.cta_text || 'Ver más')} ↗</a>` : ''}
+        </aside>
+      `)
+      .join('');
+    topAds.forEach((ad) => app.trackPlatformAd?.(ad.id, 'impression'));
+    feedPlatTopSlot.querySelectorAll('[data-plat-banner-click]').forEach((a) => {
+      a.addEventListener('click', () => app.trackPlatformAd?.(a.dataset.platBannerClick, 'click'));
+    });
+  };
+  renderPlatformTopAds();
+  window.addEventListener('credo:platform-ads-ready', renderPlatformTopAds, { signal });
 
   const feedCoBtn = root.querySelector('#feedCredoOneBtn');
   app.syncCredoOneButton(feedCoBtn, app.user);
@@ -291,32 +326,39 @@ export async function mount({ root, app, signal }) {
       : '';
 
     const commentsCount = Number(p.comments_count || 0);
-    const isSponsored = Boolean(p.is_sponsored && p.campaign_id);
-    const isEntSponsor = isSponsored && p.org_badge_type === 'enterprise_gold';
-    const sponsorCtaHtml = isSponsored
-      ? (p.cta_type === 'lead_form'
-          ? `<button type="button" class="ig-sponsored-cta-bar${isEntSponsor ? ' ig-sponsored-cta-bar--gold' : ''}" data-camp-cta="${p.campaign_id}" data-camp-lead="1"><span>✦ ${app.esc(p.cta_label || 'Solicitar Información')}</span><span>Abrir formulario ↗</span></button>`
-          : `<a href="${app.esc(p.cta_url || '#/explore')}" target="_blank" rel="noopener noreferrer" class="ig-sponsored-cta-bar${isEntSponsor ? ' ig-sponsored-cta-bar--gold' : ''}" data-camp-cta="${p.campaign_id}"><span>${app.esc(p.cta_label || 'Más información')}</span><span>↗</span></a>`)
-      : '';
+    const isPlatformAd = Boolean(p.is_platform_ad && p.platform_ad_id);
+    const isSponsored = isPlatformAd || Boolean(p.is_sponsored && p.campaign_id);
+    const isEntSponsor = isSponsored && (p.org_badge_type === 'enterprise_gold' || isPlatformAd);
+    const sponsorCtaHtml = isPlatformAd
+      ? (p.cta_url
+          ? `<a href="${app.esc(p.cta_url)}" target="_blank" rel="noopener noreferrer" class="ig-sponsored-cta-bar ig-sponsored-cta-bar--gold" data-plat-ad-cta="${p.platform_ad_id}"><span>${app.esc(p.cta_label || 'Más información')}</span><span>↗</span></a>`
+          : '')
+      : isSponsored
+        ? (p.cta_type === 'lead_form'
+            ? `<button type="button" class="ig-sponsored-cta-bar${isEntSponsor ? ' ig-sponsored-cta-bar--gold' : ''}" data-camp-cta="${p.campaign_id}" data-camp-lead="1"><span>✦ ${app.esc(p.cta_label || 'Solicitar Información')}</span><span>Abrir formulario ↗</span></button>`
+            : `<a href="${app.esc(p.cta_url || '#/explore')}" target="_blank" rel="noopener noreferrer" class="ig-sponsored-cta-bar${isEntSponsor ? ' ig-sponsored-cta-bar--gold' : ''}" data-camp-cta="${p.campaign_id}"><span>${app.esc(p.cta_label || 'Más información')}</span><span>↗</span></a>`)
+        : '';
 
     return `
-      <article class="ig-post${deferClass}${staggerClass}"${staggerAttr} data-post-id="${p.id}"${isSponsored ? ` data-sponsored-campaign="${p.campaign_id}"` : ''}>
+      <article class="ig-post${deferClass}${staggerClass}"${staggerAttr} data-post-id="${p.id}"${isPlatformAd ? ` data-platform-ad="${p.platform_ad_id}"` : isSponsored ? ` data-sponsored-campaign="${p.campaign_id}"` : ''}>
         <header class="ig-post-head">
-          <a href="#/user/${author.id}" class="avatar${isEntSponsor ? ' ig-avatar-square' : ''}" data-zoomable data-zoom-name="${app.esc(authorDisplay)}" data-zoom-src="${app.esc(avUrl)}" data-zoom-bg="${app.esc(author.avatar_color || '#0F1E36')}" style="--av-bg:${app.esc(author.avatar_color || '#0F1E36')}" aria-label="${app.esc(author.full_name)}">
+          <a href="${isPlatformAd ? '#/feed' : `#/user/${author.id}`}" class="avatar${isEntSponsor ? ' ig-avatar-square' : ''}" data-zoomable data-zoom-name="${app.esc(authorDisplay)}" data-zoom-src="${app.esc(avUrl)}" data-zoom-bg="${app.esc(author.avatar_color || '#0F1E36')}" style="--av-bg:${app.esc(author.avatar_color || '#0F1E36')}" aria-label="${app.esc(author.full_name)}">
             ${avUrl ? `<img src="${app.esc(avUrl)}" alt="" loading="lazy" />` : app.initials(author.full_name)}
           </a>
           <div class="post-author-info">
             <div class="post-author-row">
-              <a href="#/user/${author.id}" class="post-author-name">${app.esc(authorDisplay)}</a>
+              <a href="${isPlatformAd ? '#/feed' : `#/user/${author.id}`}" class="post-author-name">${app.esc(authorDisplay)}</a>
               ${author.is_ceo ? '<span class="rank-tag">CEO</span>' : ''}
               ${app.renderCtoInsignia(author)}
               ${app.renderPlanInsignia(author)}
-              ${isEntSponsor ? '<span class="co-badge-gold" style="padding:1px 7px;font-size:0.64rem">✦ Enterprise</span>' : ''}
+              ${isPlatformAd ? '<span class="co-badge-gold" style="padding:1px 7px;font-size:0.64rem">✦ Oficial</span>' : isEntSponsor ? '<span class="co-badge-gold" style="padding:1px 7px;font-size:0.64rem">✦ Enterprise</span>' : ''}
             </div>
             <div class="post-meta-line">
-              ${isSponsored
-                ? `<span class="ig-sponsored-pill${isEntSponsor ? ' ig-sponsored-pill--gold' : ''}">Patrocinado</span>`
-                : `${sourcePillHtml}<span>${app.relTime(p.created_at)}</span>`}
+              ${isPlatformAd
+                ? `<span class="ig-sponsored-pill ig-sponsored-pill--gold">Destacado · Plataforma Credo</span>`
+                : isSponsored
+                  ? `<span class="ig-sponsored-pill${isEntSponsor ? ' ig-sponsored-pill--gold' : ''}">Patrocinado</span>`
+                  : `${sourcePillHtml}<span>${app.relTime(p.created_at)}</span>`}
             </div>
           </div>
         </header>
@@ -560,6 +602,12 @@ export async function mount({ root, app, signal }) {
       return;
     }
 
+    const platCta = e.target.closest('[data-plat-ad-cta]');
+    if (platCta) {
+      app.trackPlatformAd?.(Number(platCta.dataset.platAdCta), 'click');
+      return;
+    }
+
     const campCta = e.target.closest('[data-camp-cta]');
     if (campCta) {
       const cid = Number(campCta.dataset.campCta);
@@ -617,12 +665,20 @@ export async function mount({ root, app, signal }) {
     }
   });
 
-  // Sponsored campaign impression telemetry (fires once when >= 50% visible)
+  // Sponsored campaign & platform ad impression telemetry (fires once when >= 50% visible)
   const trackedImpressions = new Set();
+  const trackedPlatAds = new Set();
   const impObserver = new IntersectionObserver(
     (entries) => {
       entries.forEach((en) => {
         if (!en.isIntersecting) return;
+        const platId = Number(en.target.dataset.platformAd);
+        if (platId && !trackedPlatAds.has(platId)) {
+          trackedPlatAds.add(platId);
+          impObserver.unobserve(en.target);
+          app.trackPlatformAd?.(platId, 'impression');
+          return;
+        }
         const cid = Number(en.target.dataset.sponsoredCampaign);
         if (!cid || trackedImpressions.has(cid)) return;
         trackedImpressions.add(cid);
@@ -671,6 +727,10 @@ export async function mount({ root, app, signal }) {
     feedList.querySelectorAll('[data-sponsored-campaign]').forEach((el) => {
       const cid = Number(el.dataset.sponsoredCampaign);
       if (cid && !trackedImpressions.has(cid)) impObserver.observe(el);
+    });
+    feedList.querySelectorAll('[data-platform-ad]').forEach((el) => {
+      const pid = Number(el.dataset.platformAd);
+      if (pid && !trackedPlatAds.has(pid)) impObserver.observe(el);
     });
     if (lazyMediaObserver) {
       feedList.querySelectorAll('video[loading="lazy"][data-src]').forEach((vid) => {
