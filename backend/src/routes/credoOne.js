@@ -357,14 +357,21 @@ router.get('/paypal/client-token', optionalAuth, async (req, res) => {
   }
 });
 
-// POST /api/v1/credo-one/paypal/orders — Creates authoritative server-side Orders v2 order for PayPal SDK v6
+// POST /api/v1/credo-one/paypal/orders — Creates authoritative server-side Orders v2 order for PayPal SDK v6 & v5
 router.post('/paypal/orders', requireAuth, async (req, res) => {
   try {
+    const { getSetting } = require('../services/systemState');
+    if (getSetting('pause_paypal_checkout')?.enabled) {
+      return res.status(503).json({
+        error: 'PAYPAL_PAUSED',
+        message: 'Los pagos con PayPal están pausados temporalmente por administración.',
+      });
+    }
     const {
       plan_sku,
       billing_cycle = 'monthly',
       vault = false,
-      payment_source = 'paypal',
+      payment_source = 'auto',
       organization_name = '',
     } = req.body || {};
 
@@ -399,14 +406,16 @@ router.post('/paypal/orders', requireAuth, async (req, res) => {
       returnUrl: `${origin}/?${qs.toString()}`,
       cancelUrl: `${origin}/?paypal_cancel=1&plan_sku=${encodeURIComponent(kernelPlan.sku)}`,
       vault: Boolean(vault),
-      paymentSource: payment_source === 'card' ? 'card' : 'paypal',
+      paymentSource: payment_source === 'card' ? 'card' : vault ? 'paypal' : 'auto',
     });
 
     const amountCents = safeCycle === 'annual' ? kernelPlan.price_annual_cents : kernelPlan.price_monthly_cents;
+    const approveUrl = (order.links || []).find((l) => l.rel === 'approve' || l.rel === 'payer-action')?.href || '';
     return res.status(201).json({
       orderId: order.id,
       id: order.id,
       status: order.status,
+      approve_url: approveUrl,
       amount_cents: amountCents,
       amount_usd: (amountCents / 100).toFixed(2),
       links: order.links || [],
@@ -444,6 +453,13 @@ router.post('/paypal/orders/:orderId/capture', requireAuth, async (req, res) => 
       if (existingOrder && String(existingOrder.status).toUpperCase() === 'COMPLETED') {
         orderData = existingOrder;
       } else {
+        const issue = capErr?.payload?.details?.[0]?.issue || '';
+        if (issue === 'INSTRUMENT_DECLINED') {
+          return res.status(402).json({
+            error: 'INSTRUMENT_DECLINED',
+            message: 'Tu banco o tarjeta rechazó el cobro. Intenta con otra tarjeta o con tu saldo de PayPal.',
+          });
+        }
         throw capErr;
       }
     }
@@ -498,9 +514,16 @@ router.post('/paypal/orders/:orderId/capture', requireAuth, async (req, res) => 
   }
 });
 
-// POST /api/v1/credo-one/paypal/subscriptions — Creates server-side Subscription v1 for SDK v6
+// POST /api/v1/credo-one/paypal/subscriptions — Creates server-side Subscription v1 for SDK v6 & v5
 router.post('/paypal/subscriptions', requireAuth, async (req, res) => {
   try {
+    const { getSetting } = require('../services/systemState');
+    if (getSetting('pause_paypal_checkout')?.enabled) {
+      return res.status(503).json({
+        error: 'PAYPAL_PAUSED',
+        message: 'Los pagos con PayPal están pausados temporalmente por administración.',
+      });
+    }
     const {
       plan_sku,
       billing_cycle = 'monthly',
@@ -556,10 +579,12 @@ router.post('/paypal/subscriptions', requireAuth, async (req, res) => {
       cancelUrl: `${origin}/?paypal_cancel=1&plan_sku=${encodeURIComponent(kernelPlan.sku)}`,
     });
 
+    const approveUrl = (sub.links || []).find((l) => l.rel === 'approve')?.href || '';
     return res.status(201).json({
       subscriptionId: sub.id,
       id: sub.id,
       status: sub.status,
+      approve_url: approveUrl,
       links: sub.links || [],
     });
   } catch (err) {
@@ -993,6 +1018,51 @@ async function handlePayPalWebhook(req, res) {
   apiCache.invalidate('users:');
       }
       return res.status(200).json({ received: true, event_type: eventType });
+    }
+
+    // Handle Paid Studio Campaign capture webhook (custom_id = "camp:<id>:org:<orgId>:u:<userId>")
+    if (eventType === 'PAYMENT.CAPTURE.COMPLETED' && String(resource.custom_id || '').startsWith('camp:')) {
+      const m = String(resource.custom_id).match(/^camp:(\d+):org:(\d+):u:(\d+)/);
+      if (m) {
+        const campId = Number(m[1]);
+        const orgId = Number(m[2]);
+        const userId = Number(m[3]);
+        const capId = String(resource.id || eventId);
+        const orderId = String(resource.supplementary_data?.related_ids?.order_id || capId);
+        const paidCents = Math.round(Number(resource.amount?.value || 0) * 100);
+        const cRes = await pool.query('SELECT * FROM campaigns WHERE id = $1 AND organization_id = $2 LIMIT 1', [campId, orgId]);
+        const camp = cRes.rows[0];
+        if (camp && camp.payment_status !== 'paid' && paidCents >= Number(camp.total_budget_cents || 100)) {
+          await pool.query(
+            `UPDATE campaigns
+                SET payment_status = 'paid',
+                    paypal_order_id = COALESCE(NULLIF(paypal_order_id, ''), $2),
+                    paypal_capture_id = $3,
+                    status = CASE WHEN status IN ('draft', 'pending_payment') THEN 'active' ELSE status END,
+                    updated_at = NOW()
+              WHERE id = $1`,
+            [camp.id, orderId, capId]
+          );
+          await pool.query(
+            `INSERT INTO billing_transactions (
+               user_id, organization_id, paypal_event_id, paypal_sale_id,
+               plan_sku, amount_cents, currency, status, description, raw_payload
+             ) VALUES ($1,$2,$3,$4,'campaign_reach',$5,'USD','completed',$6,$7::jsonb)
+             ON CONFLICT (paypal_event_id) DO NOTHING`,
+            [
+              userId,
+              orgId,
+              `camp-order-${orderId}`,
+              capId,
+              paidCents,
+              `Campaña Publicitaria #${camp.id} · ${camp.title.slice(0, 60)}`,
+              JSON.stringify(event),
+            ]
+          );
+          apiCache.invalidate('posts:');
+        }
+        return res.status(200).json({ received: true, event_type: eventType, campaign_id: campId });
+      }
     }
 
     const paypalSubId = resource.billing_agreement_id || resource.id || '';

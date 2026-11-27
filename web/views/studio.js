@@ -242,101 +242,194 @@ export async function mount({ root, app, signal, params }) {
     }
   }
 
-  function openCampaignPayModal(campaign, org) {
+  async function ensurePayPalSmartSdk(clientId) {
+    if (!clientId) throw new Error('PAYPAL_CLIENT_ID no configurado en el servidor.');
+    if (window.paypal?.Buttons) return window.paypal;
+    return new Promise((resolve, reject) => {
+      const v6 = document.getElementById('credo-paypal-sdk-v6');
+      if (v6) {
+        v6.remove();
+        try { delete window.paypal; } catch {}
+      }
+      const existing = document.getElementById('credo-paypal-sdk-v5');
+      if (existing) existing.remove();
+      if (window.paypal && !window.paypal.Buttons) {
+        try { delete window.paypal; } catch {}
+      }
+      const s = document.createElement('script');
+      s.id = 'credo-paypal-sdk-v5';
+      s.src = `https://www.paypal.com/sdk/js?client-id=${encodeURIComponent(clientId)}&intent=capture&currency=USD&components=buttons&enable-funding=card,paylater&disable-funding=sepa,giropay,sofort,bancontact,eps,ideal,mybank,p24&locale=es_DO`;
+      s.async = true;
+      s.onload = () => (window.paypal?.Buttons ? resolve(window.paypal) : reject(new Error('PayPal SDK no disponible')));
+      s.onerror = () => reject(new Error('No se pudo cargar el SDK oficial de PayPal.'));
+      document.head.appendChild(s);
+    });
+  }
+
+  async function openCampaignPayModal(campaign, org) {
     const totalCents = Number(campaign.total_budget_cents || 0) || Math.max(100, Math.round((Number(campaign.impressions_allocated || 500) / REACH_PER_USD) * 100));
     const totalUsd = (totalCents / 100).toFixed(2);
     const dailyUsd = ((Number(campaign.daily_budget_cents || totalCents) / 100)).toFixed(0);
     const days = Number(campaign.duration_days || 1);
     const reach = Number(campaign.impressions_allocated || 0);
     let currentOrderId = campaign.paypal_order_id || '';
+    let cachedApproveUrl = '';
 
-    const dlg = app.openModal(
-      'Pagar y Activar Campaña',
-      `
-      <div style="display:flex;flex-direction:column;gap:14px">
-        <div style="padding:14px;border-radius:12px;background:var(--surface-2);border:1px solid var(--sep)">
-          <div style="font-size:0.74rem;text-transform:uppercase;letter-spacing:0.06em;color:var(--label-2);font-weight:700">Resumen de Alcance Pagado</div>
-          <strong style="display:block;font-size:1.02rem;margin-top:4px">${app.esc(campaign.title)}</strong>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px;padding-top:10px;border-top:1px solid var(--sep)">
+    // Render unobstructed inline checkout inside .studio-main (never inside <dialog showModal()> top-layer!)
+    const mainEl = root.querySelector('.studio-main');
+    if (!mainEl) return;
+
+    mainEl.innerHTML = `
+      <div class="studio-glass-panel" style="padding:20px;display:flex;flex-direction:column;gap:16px;max-width:640px">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
+          <div>
+            <span class="co-badge-popular">Pago Seguro · PayPal Live</span>
+            <h2 style="margin:6px 0 2px;font-size:1.18rem;font-weight:800;color:var(--st-ink)">Pagar y Activar Campaña</h2>
+          </div>
+          <button type="button" class="co-back-btn" style="margin:0" id="campPayBackBtn">← Volver a Campañas</button>
+        </div>
+
+        <div style="padding:14px;border-radius:12px;background:var(--st-card-2);border:1px solid var(--st-border)">
+          <div style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.06em;color:var(--st-muted);font-weight:700">Resumen de Alcance Garantizado</div>
+          <strong style="display:block;font-size:1.02rem;margin-top:4px;color:var(--st-ink)">${app.esc(campaign.title)}</strong>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px;padding-top:10px;border-top:1px solid var(--st-border)">
             <div>
-              <div style="font-size:0.72rem;color:var(--label-2)">Inversión total</div>
-              <strong style="font-size:1.2rem;font-variant-numeric:tabular-nums">\$${totalUsd} USD</strong>
-              <div style="font-size:0.72rem;color:var(--label-2)">\$${dailyUsd}/día × ${days} día${days === 1 ? '' : 's'}</div>
+              <div style="font-size:0.72rem;color:var(--st-muted)">Inversión total</div>
+              <strong style="font-size:1.25rem;color:var(--st-ink);font-variant-numeric:tabular-nums">$${totalUsd} USD</strong>
+              <div style="font-size:0.72rem;color:var(--st-muted)">$${dailyUsd}/día × ${days} día${days === 1 ? '' : 's'}</div>
             </div>
             <div>
-              <div style="font-size:0.72rem;color:var(--label-2)">Alcance garantizado</div>
-              <strong style="font-size:1.2rem;color:#0A84FF;font-variant-numeric:tabular-nums">${fmtNum(reach)} pers.</strong>
-              <div style="font-size:0.72rem;color:var(--label-2)">500 personas por \$1 USD</div>
+              <div style="font-size:0.72rem;color:var(--st-muted)">Alcance garantizado</div>
+              <strong style="font-size:1.25rem;color:#0A84FF;font-variant-numeric:tabular-nums">${fmtNum(reach)} pers.</strong>
+              <div style="font-size:0.72rem;color:var(--st-muted)">500 personas por $1 USD</div>
             </div>
           </div>
         </div>
 
-        <p style="margin:0;font-size:0.82rem;color:var(--label-2);line-height:1.45">
-          El pago se procesa de forma segura en PayPal. Una vez apruebes el pago, regresa aquí y pulsa confirmar para activar la difusión en el feed al instante.
-        </p>
+        <div id="campPayStatus" class="co-pp-status" hidden></div>
+        <div id="campPayErr" class="co-inline-error" hidden role="alert"></div>
 
-        <div id="campPayErr" class="claim-form-err" hidden role="alert"></div>
+        <div id="campPayPalSdkHost" style="min-height:96px;padding:12px;border-radius:12px;background:#FFFFFF;border:1px solid var(--st-border)">
+          <div style="text-align:center;color:#475569;font-size:0.84rem;padding:18px 0">Cargando botones oficiales de PayPal y Tarjeta…</div>
+        </div>
 
-        <div style="display:flex;flex-direction:column;gap:8px">
-          <button type="button" class="btn btn-gold btn-block" id="campStartPaypalBtn">
-            Pagar \$${totalUsd} USD con PayPal ↗
+        <div style="display:flex;flex-direction:column;gap:8px;padding-top:4px;border-top:1px solid var(--st-border)">
+          <button type="button" class="co-cta-btn co-cta-glass" id="campDirectRedirectBtn" style="min-height:42px;font-size:0.84rem">
+            <span>Abrir pago en ventana directa de PayPal ($${totalUsd} USD) ↗</span>
           </button>
-          <button type="button" class="btn btn-soft btn-block" id="campConfirmPaypalBtn" ${currentOrderId ? '' : 'hidden'}>
-            ✓ Confirmar Pago y Activar Campaña
+          <button type="button" class="co-cta-btn co-cta-sapphire" id="campConfirmPaypalBtn" ${currentOrderId ? '' : 'hidden'}>
+            <span>✓ Confirmar Pago y Activar Campaña</span>
           </button>
         </div>
       </div>
-      `
-    );
+    `;
 
-    const errBox = dlg.querySelector('#campPayErr');
-    const startBtn = dlg.querySelector('#campStartPaypalBtn');
-    const confirmBtn = dlg.querySelector('#campConfirmPaypalBtn');
+    const errBox = mainEl.querySelector('#campPayErr');
+    const statusBox = mainEl.querySelector('#campPayStatus');
+    const sdkHost = mainEl.querySelector('#campPayPalSdkHost');
+    const redirectBtn = mainEl.querySelector('#campDirectRedirectBtn');
+    const confirmBtn = mainEl.querySelector('#campConfirmPaypalBtn');
 
-    startBtn?.addEventListener('click', async () => {
-      errBox.hidden = true;
-      startBtn.disabled = true;
-      startBtn.textContent = 'Generando orden PayPal…';
+    const setStatus = (msg) => {
+      if (!statusBox) return;
+      statusBox.textContent = msg || '';
+      statusBox.hidden = !msg;
+    };
+    const setErr = (msg) => {
+      if (!errBox) return;
+      errBox.textContent = msg || '';
+      errBox.hidden = !msg;
+    };
+
+    mainEl.querySelector('#campPayBackBtn')?.addEventListener('click', () => renderStudio());
+
+    const createCampaignOrder = async () => {
+      const res = await app.api(`/api/v1/studio/campaigns/${campaign.id}/paypal-order`, {
+        method: 'POST',
+        body: { org_id: org.id },
+      });
+      currentOrderId = res.order_id || res.orderId;
+      cachedApproveUrl = res.approve_url || '';
+      if (confirmBtn) confirmBtn.hidden = false;
+      return res;
+    };
+
+    const captureAndActivate = async (orderId) => {
+      setErr('');
+      setStatus('Verificando y activando tu campaña en el feed…');
+      await app.api(`/api/v1/studio/campaigns/${campaign.id}/paypal-capture`, {
+        method: 'POST',
+        body: { org_id: org.id, order_id: orderId || currentOrderId },
+      });
+      await loadContext();
+      await loadSectionData();
+      renderStudio();
+      app.toast('¡Pago confirmado! Tu campaña ya está activa en el feed.');
+    };
+
+    // Mount official PayPal Smart Buttons (PayPal Wallet + Debit/Credit Card)
+    try {
+      const plansRes = await app.api('/api/v1/credo-one/plans', { noCache: true });
+      const clientId = plansRes?.paypal?.client_id || '';
+      const paypal = await ensurePayPalSmartSdk(clientId);
+      if (sdkHost) sdkHost.innerHTML = '';
+
+      const buttons = paypal.Buttons({
+        style: { shape: 'pill', color: 'blue', layout: 'vertical', label: 'pay', height: 44 },
+        onClick: () => {
+          setErr('');
+          setStatus('Conectando con PayPal seguro…');
+        },
+        createOrder: async () => {
+          const res = await createCampaignOrder();
+          return res.order_id || res.orderId;
+        },
+        onApprove: async (data) => {
+          try {
+            await captureAndActivate(data.orderID || data.orderId);
+          } catch (err) {
+            setStatus('');
+            setErr(err.message || 'No se pudo capturar el pago de la campaña.');
+          }
+        },
+        onCancel: () => setStatus(''),
+        onError: (err) => {
+          setStatus('');
+          setErr(err?.message || 'Error procesando PayPal. Puedes usar el botón directo debajo.');
+        },
+      });
+      await buttons.render(sdkHost);
+    } catch (sdkErr) {
+      if (sdkHost) {
+        sdkHost.innerHTML = `<div style="text-align:center;color:#64748B;font-size:0.82rem;padding:12px">Usa el botón directo de PayPal debajo para completar tu pago.</div>`;
+      }
+      console.warn('[studio/paypal-sdk]', sdkErr?.message || sdkErr);
+    }
+
+    redirectBtn?.addEventListener('click', async () => {
+      setErr('');
+      redirectBtn.disabled = true;
       try {
-        const res = await app.api(`/api/v1/studio/campaigns/${campaign.id}/paypal-order`, {
-          method: 'POST',
-          body: { org_id: org.id },
-        });
-        currentOrderId = res.order_id;
+        const res = cachedApproveUrl ? { approve_url: cachedApproveUrl, order_id: currentOrderId } : await createCampaignOrder();
         if (res.approve_url) {
-          window.open(res.approve_url, '_blank', 'noopener,noreferrer');
+          window.location.href = res.approve_url;
+          return;
         }
-        startBtn.disabled = false;
-        startBtn.textContent = `Reabrir Ventana de PayPal (\$${totalUsd} USD) ↗`;
-        confirmBtn.hidden = false;
-        app.toast('Completa el pago en PayPal y luego pulsa "Confirmar Pago"');
+        throw new Error('PayPal no devolvió el enlace de aprobación.');
       } catch (err) {
-        errBox.textContent = err.message || 'No se pudo iniciar PayPal.';
-        errBox.hidden = false;
-        startBtn.disabled = false;
-        startBtn.textContent = `Pagar \$${totalUsd} USD con PayPal ↗`;
+        setErr(err.message || 'No se pudo iniciar el pago en PayPal.');
+        redirectBtn.disabled = false;
       }
     });
 
     confirmBtn?.addEventListener('click', async () => {
-      errBox.hidden = true;
       confirmBtn.disabled = true;
-      confirmBtn.textContent = 'Verificando captura en PayPal…';
       try {
-        await app.api(`/api/v1/studio/campaigns/${campaign.id}/paypal-capture`, {
-          method: 'POST',
-          body: { org_id: org.id, order_id: currentOrderId },
-        });
-        app.closeModal();
-        await loadContext();
-        await loadSectionData();
-        renderStudio();
-        app.toast('¡Pago confirmado! Tu campaña ya está activa en el feed');
+        await captureAndActivate(currentOrderId);
       } catch (err) {
-        errBox.textContent = err.message || 'El pago aún no aparece completado en PayPal.';
-        errBox.hidden = false;
+        setStatus('');
+        setErr(err.message || 'El pago aún no aparece completado en PayPal.');
         confirmBtn.disabled = false;
-        confirmBtn.textContent = '✓ Confirmar Pago y Activar Campaña';
       }
     });
   }
@@ -1343,9 +1436,10 @@ export async function mount({ root, app, signal, params }) {
     if (state.orgs.length === 0) {
       renderUpgradeGate();
     } else {
-      // Auto-capture PayPal campaign return if user came back from PayPal approve link
-      const paidCampId = Number(hashQuery?.get('paid_campaign') || 0);
-      const paypalOrderToken = hashQuery?.get('token') || '';
+      // Auto-capture PayPal campaign return from either window.location.search or hashQuery
+      const searchQ = new URLSearchParams(window.location.search);
+      const paidCampId = Number(searchQ.get('campaign_id') || hashQuery?.get('paid_campaign') || 0);
+      const paypalOrderToken = searchQ.get('token') || searchQ.get('order_id') || hashQuery?.get('token') || '';
       const org = getActiveOrg();
       if (paidCampId && paypalOrderToken && org) {
         try {
@@ -1357,7 +1451,7 @@ export async function mount({ root, app, signal, params }) {
         } catch (err) {
           app.toast(err.message || 'No se pudo verificar el pago de PayPal');
         }
-        history.replaceState(null, '', '#/studio/campaigns');
+        history.replaceState(null, '', `${window.location.pathname}#/studio/campaigns`);
       }
 
       await loadSectionData();

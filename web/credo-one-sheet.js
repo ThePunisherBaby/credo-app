@@ -27,7 +27,7 @@ function getPresentationCascade() {
   if (isEmbeddedWebView()) {
     return ['popup', 'modal', 'redirect'];
   }
-  return ['payment-handler', 'popup', 'modal', 'redirect'];
+  return ['auto', 'popup', 'modal', 'redirect'];
 }
 
 function loadPayPalSdkV6Core(coreUrl = 'https://www.paypal.com/web-sdk/v6/core') {
@@ -404,14 +404,15 @@ export function createCredoOneController(app) {
     app.toast(`¡${plan?.display_name || 'Credo One'} activado!`);
   }
 
-  // Runs automatically on app startup to resume PayPal SDK v6 redirect-mode returns (?paypal_return=1 / ?paypal_sub_return=1)
+  // Runs automatically on app startup to resume PayPal redirect-mode returns (plans, subscriptions, & Studio campaigns)
   async function handlePayPalReturnIfPresent() {
     const params = new URLSearchParams(window.location.search);
     const isOrderReturn = params.get('paypal_return') === '1';
     const isSubReturn = params.get('paypal_sub_return') === '1';
-    const isCancel = params.get('paypal_cancel') === '1';
+    const isCampaignReturn = params.get('paypal_campaign_return') === '1';
+    const isCancel = params.get('paypal_cancel') === '1' || params.get('paypal_campaign_cancel') === '1';
 
-    if (!isOrderReturn && !isSubReturn && !isCancel) return;
+    if (!isOrderReturn && !isSubReturn && !isCampaignReturn && !isCancel) return;
 
     const cleanUrl = `${window.location.pathname}${window.location.hash || '#/feed'}`;
     try {
@@ -426,6 +427,30 @@ export function createCredoOneController(app) {
 
     if (!app.token) {
       app.toast('Inicia sesión para completar la activación de tu pago PayPal.');
+      return;
+    }
+
+    if (isCampaignReturn) {
+      const campId = Number(params.get('campaign_id') || 0);
+      const orgId = Number(params.get('org_id') || 0);
+      const orderId = params.get('token') || params.get('order_id') || '';
+      if (campId && orderId) {
+        try {
+          app.toast('Confirmando pago de tu campaña en PayPal…');
+          await app.api(`/api/v1/studio/campaigns/${campId}/paypal-capture`, {
+            method: 'POST',
+            body: { org_id: orgId || undefined, order_id: orderId },
+          });
+          app.toast('¡Pago confirmado! Tu campaña ya está activa en el feed.');
+          if (location.hash.startsWith('#/studio')) {
+            app.navigate?.();
+          } else {
+            location.hash = '#/studio/campaigns';
+          }
+        } catch (err) {
+          app.toast(err?.message || 'No se pudo verificar el pago de la campaña.');
+        }
+      }
       return;
     }
 
@@ -447,7 +472,7 @@ export function createCredoOneController(app) {
             plan_sku: sku,
             billing_cycle: cycle,
             organization_name: orgName,
-            payment_method: 'PayPal SDK v6 (Redirect)',
+            payment_method: 'PayPal (Redirect)',
           },
         });
         await finalizeActivationSuccess(plan, res.subscription);
@@ -1038,8 +1063,8 @@ export function createCredoOneController(app) {
       state.vaultPaymentMethod = false;
     }
 
-    // Helper: create Orders v2 on server (strictly F# 8 PricingKernel amounts)
-    const createServerOrder = async (paymentSource = 'paypal') => {
+    // Helper: create Orders v2 on server (strictly F# 8 PricingKernel amounts, multi-funding ready)
+    const createServerOrder = async (paymentSource = 'auto') => {
       const res = await app.api('/api/v1/credo-one/paypal/orders', {
         method: 'POST',
         body: {
@@ -1050,7 +1075,7 @@ export function createCredoOneController(app) {
           organization_name: getOrgName(),
         },
       });
-      return { orderId: res.orderId || res.id };
+      return { orderId: res.orderId || res.id, approve_url: res.approve_url || '' };
     };
 
     const captureServerOrder = async (orderId, methodLabel) => {
@@ -1071,26 +1096,53 @@ export function createCredoOneController(app) {
 
     const startWithPresentationCascade = async (session, payloadPromiseFactory, flowTag) => {
       setErr('');
-      setStatus('Abriendo ventana segura de PayPal…');
+      setStatus('Conectando con PayPal seguro…');
       const modes = getPresentationCascade();
       let lastErr = null;
+
+      // CRITICAL PayPal Web SDK v6 contract:
+      // session.start({ presentationMode }, orderOrSubPromise) MUST receive an INVOKED Promise
+      // resolving to { orderId } or { subscriptionId } — NEVER an un-invoked callback function!
+      const rawPromise = Promise.resolve().then(() => payloadPromiseFactory());
+      const sdkPayloadPromise = rawPromise.then((res) => {
+        if (res?.subscriptionId) return { subscriptionId: res.subscriptionId };
+        if (res?.orderId) return { orderId: res.orderId };
+        throw new Error('El servidor no devolvió un identificador de pago PayPal válido.');
+      });
+      // Prevent unhandled rejection warning if session.start fails before awaiting sdkPayloadPromise
+      sdkPayloadPromise.catch(() => {});
 
       for (const presentationMode of modes) {
         try {
           if (presentationMode === 'redirect') {
             savePendingReturnMeta(plan, state.cycle, getOrgName(), flowTag);
           }
-          await session.start({ presentationMode }, payloadPromiseFactory);
+          await session.start({ presentationMode }, sdkPayloadPromise);
           setStatus('');
           return;
         } catch (err) {
           lastErr = err;
-          if (err?.isRecoverable) {
+          if (err?.isRecoverable || /popup|blocked|payment-handler|presentation/i.test(err?.message || '')) {
             continue;
           }
           break;
         }
       }
+
+      // Ultimate safety net: if every embedded/popup mode was blocked by browser policy,
+      // redirect directly to PayPal's official hosted approval URL returned by our server!
+      try {
+        const resolved = await rawPromise;
+        if (resolved?.approve_url) {
+          savePendingReturnMeta(plan, state.cycle, getOrgName(), flowTag);
+          setStatus('Redirigiendo a PayPal seguro…');
+          window.location.href = resolved.approve_url;
+          return;
+        }
+      } catch (serverErr) {
+        lastErr = serverErr;
+      }
+
       setStatus('');
       if (lastErr) {
         setErr(lastErr?.message || 'No se pudo iniciar la sesión de pago con PayPal.');
@@ -1149,7 +1201,10 @@ export function createCredoOneController(app) {
                 organization_name: getOrgName(),
               },
             });
-            return { subscriptionId: created.subscriptionId || created.id };
+            return {
+              subscriptionId: created.subscriptionId || created.id,
+              approve_url: created.approve_url || '',
+            };
           },
           'subscription'
         );
@@ -1187,7 +1242,6 @@ export function createCredoOneController(app) {
         },
       });
 
-      // Resume redirect session if SDK v6 detects returned state
       if (typeof ppSession.hasReturned === 'function' && ppSession.hasReturned()) {
         ppSession.resume().catch(() => {});
       }
@@ -1196,7 +1250,7 @@ export function createCredoOneController(app) {
       ppBtn.setAttribute('type', 'pay');
       ppBtn.className = 'paypal-blue co-v6-el';
       ppBtn.addEventListener('click', () => {
-        startWithPresentationCascade(ppSession, () => createServerOrder('paypal'), 'order');
+        startWithPresentationCascade(ppSession, () => createServerOrder('auto'), 'order');
       });
       stack.appendChild(ppBtn);
     }
@@ -1224,7 +1278,7 @@ export function createCredoOneController(app) {
       if (plDetails.productCode) plBtn.setAttribute('product-code', plDetails.productCode);
       plBtn.className = 'paypal-gold co-v6-el';
       plBtn.addEventListener('click', () => {
-        startWithPresentationCascade(plSession, () => createServerOrder('paypal'), 'paylater');
+        startWithPresentationCascade(plSession, () => createServerOrder('auto'), 'paylater');
       });
       stack.appendChild(plBtn);
     }
@@ -1251,7 +1305,7 @@ export function createCredoOneController(app) {
       if (crDetails.countryCode) crBtn.setAttribute('country-code', crDetails.countryCode);
       crBtn.className = 'paypal-blue co-v6-el';
       crBtn.addEventListener('click', () => {
-        startWithPresentationCascade(crSession, () => createServerOrder('paypal'), 'credit');
+        startWithPresentationCascade(crSession, () => createServerOrder('auto'), 'credit');
       });
       stack.appendChild(crBtn);
     }
@@ -1277,7 +1331,7 @@ export function createCredoOneController(app) {
       vBtn.setAttribute('type', 'pay');
       vBtn.className = 'co-v6-el';
       vBtn.addEventListener('click', () => {
-        startWithPresentationCascade(venmoSession, () => createServerOrder('paypal'), 'venmo');
+        startWithPresentationCascade(venmoSession, () => createServerOrder('auto'), 'venmo');
       });
       stack.appendChild(vBtn);
     }
@@ -1317,7 +1371,7 @@ export function createCredoOneController(app) {
               };
               session.onpaymentauthorized = async (ev) => {
                 try {
-                  const { orderId } = await createServerOrder('paypal');
+                  const { orderId } = await createServerOrder('auto');
                   await appleSessionApi.confirmOrder({
                     orderId,
                     token: ev.payment.token,
@@ -1362,23 +1416,25 @@ export function createCredoOneController(app) {
       const guestBtn = document.createElement('paypal-basic-card-button');
       guestBtn.className = 'co-v6-el';
       guestBtn.addEventListener('click', () => {
-        startWithPresentationCascade(guestSession, () => createServerOrder('paypal'), 'guest_card');
+        startWithPresentationCascade(guestSession, () => createServerOrder('auto'), 'guest_card');
       });
       guestContainer.appendChild(guestBtn);
       stack.appendChild(guestContainer);
     }
 
-    // 10. PCI-DSS INLINE CARD FIELDS (Visa / Mastercard / Amex + 3DS/SCA inside Dark Liquid Glass!)
-    if (cardWrap && typeof sdkInstance.createCardFieldsOneTimePaymentSession === 'function') {
+    // 10. PCI-DSS INLINE CARD FIELDS — ONLY mount when merchant account has ACDC (advanced_cards) enabled!
+    // Dominican Republic / non-ACDC accounts use <paypal-basic-card-button> & Smart Checkout seamlessly.
+    if (
+      cardWrap &&
+      !eligibleMethods._fallback &&
+      eligibleMethods.isEligible('advanced_cards') &&
+      typeof sdkInstance.createCardFieldsOneTimePaymentSession === 'function'
+    ) {
       try {
         const cardSession = sdkInstance.createCardFieldsOneTimePaymentSession();
         const cfStyle = {
-          input: {
-            color: '#09090B',
-          },
-          '.invalid': {
-            color: '#DC2626',
-          },
+          input: { color: '#09090B' },
+          '.invalid': { color: '#DC2626' },
         };
 
         cardWrap.innerHTML = `
@@ -1439,17 +1495,25 @@ export function createCredoOneController(app) {
 
         cardWrap.hidden = false;
       } catch {
-        // Card fields optional if account doesn't have ACDC enabled yet
+        cardWrap.hidden = true;
       }
+    } else if (cardWrap) {
+      cardWrap.hidden = true;
+    }
+
+    if (stack.children.length === 0) {
+      throw new Error('NO_V6_BUTTONS_MOUNTED');
     }
   }
 
   // =========================================================================
-  // ENGINE B: RESILIENT LIVE SMART CHECKOUT FALLBACK (when secret not paired yet)
+  // ENGINE B: RESILIENT LIVE SMART CHECKOUT (Server-Side Orders v2 & Subs v1)
   // =========================================================================
   async function mountPayPalV5Fallback({ dlg, host, errBox, statusBox, msgSlot, noticeBox, sdkBadge, plan, seq }) {
     const isAnnual = state.cycle === 'annual';
     const amountUsd = ((isAnnual ? plan.price_annual_cents : plan.price_monthly_cents) / 100).toFixed(2);
+    const ppPlanId = isAnnual ? plan.paypal_plan_id_annual : plan.paypal_plan_id_monthly;
+    const useSubscription = state.checkoutFlow === 'subscription' && Boolean(ppPlanId && state.paypal.subscriptions_ready);
     const getOrgName = () => dlg.querySelector('#coOrgName')?.value?.trim() || '';
 
     const setStatus = (msg) => {
@@ -1463,7 +1527,7 @@ export function createCredoOneController(app) {
       errBox.hidden = !msg;
     };
 
-    const paypal = await loadPayPalSdkV5Fallback(state.paypal.client_id, 'capture');
+    const paypal = await loadPayPalSdkV5Fallback(state.paypal.client_id, useSubscription ? 'subscription' : 'capture');
     if (seq !== state.mountSeq) return;
 
     if (sdkBadge) {
@@ -1472,8 +1536,7 @@ export function createCredoOneController(app) {
       sdkBadge.classList.add(isSb ? 'is-sandbox' : 'is-live');
     }
 
-    // Mount PayPal Pay Later messaging banner only when eligible (Pay in 4 threshold >= $30 USD)
-    if (msgSlot && Number(amountUsd) >= 30) {
+    if (!useSubscription && msgSlot && Number(amountUsd) >= 30) {
       msgSlot.innerHTML = `<div data-pp-message data-pp-placement="payment" data-pp-amount="${app.esc(amountUsd)}" data-pp-style-layout="text" data-pp-style-text-color="white" data-pp-style-logo-type="inline"></div>`;
       msgSlot.hidden = false;
     } else if (msgSlot) {
@@ -1484,19 +1547,97 @@ export function createCredoOneController(app) {
     host.innerHTML = '';
     host.classList.remove('co-paypal-host--v6');
 
-    const buttons = paypal.Buttons({
+    const buttonCfg = {
       style: {
         shape: 'pill',
         color: 'blue',
         layout: 'vertical',
-        label: 'pay',
+        label: useSubscription ? 'subscribe' : 'pay',
         height: 46,
       },
       onClick: () => {
         setErr('');
         setStatus('Conectando con PayPal seguro…');
       },
-      createOrder: (_data, actions) =>
+      onCancel: () => {
+        setStatus('');
+      },
+      onError: (err) => {
+        setStatus('');
+        const raw = err?.message || String(err || '');
+        setErr(
+          raw.includes('popup') || raw.includes('window')
+            ? 'Tu navegador bloqueó la ventana emergente de PayPal. Permite ventanas emergentes para credoapp.tech e intenta de nuevo.'
+            : raw || 'Error procesando el pago con PayPal.'
+        );
+      },
+    };
+
+    if (useSubscription) {
+      buttonCfg.createSubscription = async () => {
+        const res = await app.api('/api/v1/credo-one/paypal/subscriptions', {
+          method: 'POST',
+          body: {
+            plan_sku: plan.sku,
+            billing_cycle: state.cycle,
+            organization_name: getOrgName(),
+          },
+        });
+        return res.subscriptionId || res.id;
+      };
+      buttonCfg.onApprove = async (data) => {
+        try {
+          setStatus('Activando tu suscripción Credo One…');
+          const res = await app.api('/api/v1/credo-one/subscriptions/confirm', {
+            method: 'POST',
+            body: {
+              subscription_id: data.subscriptionID || data.subscriptionId,
+              plan_sku: plan.sku,
+              billing_cycle: state.cycle,
+              organization_name: getOrgName(),
+            },
+          });
+          setStatus('');
+          await finalizeActivationSuccess(plan, res.subscription);
+        } catch (err) {
+          setStatus('');
+          setErr(err?.message || 'No se pudo confirmar tu suscripción con Credo.');
+        }
+      };
+    } else if (state.paypal.oauth_healthy) {
+      buttonCfg.createOrder = async () => {
+        const res = await app.api('/api/v1/credo-one/paypal/orders', {
+          method: 'POST',
+          body: {
+            plan_sku: plan.sku,
+            billing_cycle: state.cycle,
+            payment_source: 'auto',
+            organization_name: getOrgName(),
+          },
+        });
+        return res.orderId || res.id;
+      };
+      buttonCfg.onApprove = async (data) => {
+        try {
+          setStatus('Capturando y verificando pago con núcleo F#…');
+          const res = await app.api(`/api/v1/credo-one/paypal/orders/${encodeURIComponent(data.orderID || data.orderId)}/capture`, {
+            method: 'POST',
+            body: {
+              plan_sku: plan.sku,
+              billing_cycle: state.cycle,
+              organization_name: getOrgName(),
+              payment_method: 'PayPal Smart Checkout',
+            },
+          });
+          setStatus('');
+          await finalizeActivationSuccess(plan, res.subscription);
+        } catch (err) {
+          setStatus('');
+          setErr(err?.message || 'No se pudo confirmar tu pago con Credo.');
+        }
+      };
+    } else {
+      buttonCfg.createOrder = (_data, actions) =>
         actions.order.create({
           intent: 'CAPTURE',
           application_context: {
@@ -1508,14 +1649,11 @@ export function createCredoOneController(app) {
             {
               description: `${plan.display_name} (${isAnnual ? 'Anual' : 'Mensual'}) · SKU ${plan.sku}`,
               custom_id: `${app.user?.id || 0}:${plan.sku}:${state.cycle}`,
-              amount: {
-                currency_code: 'USD',
-                value: amountUsd,
-              },
+              amount: { currency_code: 'USD', value: amountUsd },
             },
           ],
-        }),
-      onApprove: async (data, actions) => {
+        });
+      buttonCfg.onApprove = async (data, actions) => {
         try {
           setStatus('Capturando y verificando pago con núcleo F#…');
           const details = await actions.order.capture();
@@ -1538,21 +1676,10 @@ export function createCredoOneController(app) {
           setStatus('');
           setErr(err?.message || 'No se pudo confirmar tu pago con Credo.');
         }
-      },
-      onCancel: () => {
-        setStatus('');
-      },
-      onError: (err) => {
-        setStatus('');
-        const raw = err?.message || String(err || '');
-        setErr(
-          raw.includes('popup') || raw.includes('window')
-            ? 'Tu navegador bloqueó la ventana emergente de PayPal. Permite ventanas emergentes para credoapp.tech e intenta de nuevo.'
-            : (raw || 'Error procesando el pago con PayPal.')
-        );
-      },
-    });
+      };
+    }
 
+    const buttons = paypal.Buttons(buttonCfg);
     if (buttons.isEligible && !buttons.isEligible()) {
       setErr('Los botones de PayPal no están disponibles para esta región o moneda.');
       return;
@@ -1560,10 +1687,8 @@ export function createCredoOneController(app) {
 
     await buttons.render(host);
 
-    if (noticeBox && (app.user?.is_ceo || app.user?.is_admin)) {
-      noticeBox.innerHTML =
-        '<strong>Modo Administrador:</strong> PayPal Live Smart Checkout está activo. Para activar el motor completo <strong>PayPal Web SDK v6</strong> (Tarjetas PCI inline, Suscripciones automáticas, Vaulting 1-clic, Apple/Google Pay y Webhooks), vincula tu <code>PAYPAL_CLIENT_SECRET</code> Live correspondiente a este Client ID en el servidor.';
-      noticeBox.hidden = false;
+    if (noticeBox) {
+      noticeBox.hidden = true;
     }
   }
 
@@ -1586,32 +1711,38 @@ export function createCredoOneController(app) {
       if (seq !== state.mountSeq) return;
 
       if (tokenData?.v6_ready && tokenData?.client_token) {
-        await mountPayPalV6({
-          dlg,
-          host,
-          errBox,
-          statusBox,
-          msgSlot,
-          vaultRow,
-          cardWrap,
-          sdkBadge,
-          tokenData,
-          plan,
-          seq,
-        });
-      } else {
-        await mountPayPalV5Fallback({
-          dlg,
-          host,
-          errBox,
-          statusBox,
-          msgSlot,
-          noticeBox,
-          sdkBadge,
-          plan,
-          seq,
-        });
+        try {
+          await mountPayPalV6({
+            dlg,
+            host,
+            errBox,
+            statusBox,
+            msgSlot,
+            vaultRow,
+            cardWrap,
+            sdkBadge,
+            tokenData,
+            plan,
+            seq,
+          });
+          return;
+        } catch (v6Err) {
+          console.warn('[credo-one] SDK v6 fallback to Live Smart Checkout:', v6Err?.message || v6Err);
+          if (seq !== state.mountSeq) return;
+        }
       }
+
+      await mountPayPalV5Fallback({
+        dlg,
+        host,
+        errBox,
+        statusBox,
+        msgSlot,
+        noticeBox,
+        sdkBadge,
+        plan,
+        seq,
+      });
     } catch (err) {
       if (seq !== state.mountSeq) return;
       host.innerHTML = '';

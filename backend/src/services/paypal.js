@@ -237,96 +237,135 @@ async function paypalRequest(method, apiPath, body = null, { requestId = null } 
 }
 
 /**
- * Creates a server-side PayPal Orders v2 order using the exact F# 8 PricingKernel amount.
- * Supports PayPal Wallet, Pay Later, Venmo, Guest Card, PCI Card Fields, Apple Pay, Google Pay,
- * Redirect presentation return URLs, and optional PayPal Vaulting for 1-click returning buyers.
+ * Creates a server-side PayPal Orders v2 order for either:
+ *   1. A Credo One plan ({ plan, cycle, userId }) using the F# 8 PricingKernel amount, OR
+ *   2. A Credo One Studio pay-per-campaign reach order ({ amountCents, description, customId }).
+ *
+ * IMPORTANT: For PayPal Web SDK v6 & v5 Smart Buttons, do NOT pre-attach `payment_source.paypal`
+ * unless explicitly requesting vaulting, because pre-attaching `payment_source.paypal` locks the
+ * order to PayPal Wallet only and rejects Guest Debit/Credit Card, Pay Later, Venmo, and Apple Pay!
  */
 async function createOrderV2({
-  plan,
+  plan = null,
   cycle = 'monthly',
-  userId,
+  userId = 0,
+  amountCents = null,
+  currency = 'USD',
+  description = '',
+  customId = '',
+  referenceId = '',
+  itemName = '',
+  itemSku = '',
   returnUrl = 'https://credoapp.tech/?paypal_return=1',
   cancelUrl = 'https://credoapp.tech/?paypal_cancel=1',
   vault = false,
-  paymentSource = 'paypal',
+  paymentSource = 'auto',
   requestId = null,
 }) {
   const isAnnual = cycle === 'annual';
-  const cents = isAnnual ? plan.price_annual_cents : plan.price_monthly_cents;
-  const valueStr = (Number(cents) / 100).toFixed(2);
-  const cycleLabel = isAnnual ? 'Anual' : 'Mensual';
-  const customId = `${userId || 0}:${plan.sku}:${isAnnual ? 'annual' : 'monthly'}`;
+  let cents;
+  let resolvedRef;
+  let resolvedCustomId;
+  let resolvedDesc;
+  let resolvedItemName;
+  let resolvedSku;
+
+  if (plan && typeof plan === 'object') {
+    cents = isAnnual ? Number(plan.price_annual_cents) : Number(plan.price_monthly_cents);
+    const cycleLabel = isAnnual ? 'Anual' : 'Mensual';
+    resolvedRef = String(referenceId || plan.sku || 'credo_one').slice(0, 64);
+    resolvedCustomId = String(customId || `${userId || 0}:${plan.sku}:${isAnnual ? 'annual' : 'monthly'}`).slice(0, 127);
+    resolvedDesc = String(description || `${plan.display_name} (${cycleLabel}) - Credo One`).slice(0, 127);
+    resolvedItemName = String(itemName || `${plan.display_name} (${cycleLabel})`).slice(0, 127);
+    resolvedSku = String(itemSku || plan.sku || 'credo_one').slice(0, 64);
+  } else {
+    cents = Math.round(Number(amountCents || 0));
+    if (!Number.isFinite(cents) || cents < 100) {
+      throw new Error('Monto de orden PayPal inválido (mínimo $1.00 USD).');
+    }
+    resolvedRef = String(referenceId || 'credo_campaign').slice(0, 64);
+    resolvedCustomId = String(customId || `u:${userId || 0}:order`).slice(0, 127);
+    resolvedDesc = String(description || 'Campaña Credo One Studio').slice(0, 127);
+    resolvedItemName = String(itemName || resolvedDesc).slice(0, 127);
+    resolvedSku = String(itemSku || 'campaign_reach').slice(0, 64);
+  }
+
+  const curr = String(currency || 'USD').toUpperCase().slice(0, 3);
+  const valueStr = (cents / 100).toFixed(2);
 
   const payload = {
     intent: 'CAPTURE',
     purchase_units: [
       {
-        reference_id: plan.sku,
-        custom_id: customId,
-        description: `${plan.display_name} (${cycleLabel}) · Credo One`,
+        reference_id: resolvedRef,
+        custom_id: resolvedCustomId,
+        description: resolvedDesc,
         amount: {
-          currency_code: 'USD',
+          currency_code: curr,
           value: valueStr,
           breakdown: {
             item_total: {
-              currency_code: 'USD',
+              currency_code: curr,
               value: valueStr,
             },
           },
         },
         items: [
           {
-            name: `${plan.display_name} (${cycleLabel})`,
-            sku: plan.sku,
+            name: resolvedItemName,
+            sku: resolvedSku,
             quantity: '1',
             category: 'DIGITAL_GOODS',
             unit_amount: {
-              currency_code: 'USD',
+              currency_code: curr,
               value: valueStr,
             },
           },
         ],
       },
     ],
+    application_context: {
+      brand_name: 'Credo One',
+      locale: 'es-ES',
+      landing_page: 'NO_PREFERENCE',
+      shipping_preference: 'NO_SHIPPING',
+      user_action: 'PAY_NOW',
+      return_url: returnUrl,
+      cancel_url: cancelUrl,
+    },
   };
 
-  if (paymentSource === 'paypal') {
+  if (vault && (paymentSource === 'paypal' || paymentSource === 'auto')) {
+    delete payload.application_context;
     payload.payment_source = {
       paypal: {
         experience_context: {
           brand_name: 'Credo One',
-          locale: 'es-DO',
+          locale: 'es-ES',
           landing_page: 'LOGIN',
           shipping_preference: 'NO_SHIPPING',
           user_action: 'PAY_NOW',
           return_url: returnUrl,
           cancel_url: cancelUrl,
         },
+        attributes: {
+          vault: {
+            store_in_vault: 'ON_SUCCESS',
+            usage_type: 'MERCHANT',
+            customer_type: 'CONSUMER',
+          },
+        },
       },
     };
-    if (vault) {
-      payload.payment_source.paypal.attributes = {
-        vault: {
-          store_in_vault: 'ON_SUCCESS',
-          usage_type: 'MERCHANT',
-          customer_type: 'CONSUMER',
-        },
-      };
-    }
   } else if (paymentSource === 'card') {
+    delete payload.application_context;
     payload.payment_source = {
       card: {
         attributes: {
           verification: {
             method: 'SCA_WHEN_REQUIRED',
           },
-          ...(vault
-            ? {
-                vault: {
-                  store_in_vault: 'ON_SUCCESS',
-                },
-              }
-            : {}),
+          ...(vault ? { vault: { store_in_vault: 'ON_SUCCESS' } } : {}),
         },
       },
     };
@@ -334,18 +373,26 @@ async function createOrderV2({
 
   try {
     return await paypalRequest('POST', '/v2/checkout/orders', payload, {
-      requestId: requestId || `ord-${userId || 0}-${plan.sku}-${crypto.randomUUID().slice(0, 12)}`,
+      requestId: requestId || `ord-${userId || 0}-${resolvedSku}-${crypto.randomUUID().slice(0, 12)}`,
     });
   } catch (err) {
-    if (vault && (err.status === 422 || /vault/i.test(err.message || ''))) {
+    // Graceful retry without vaulting/payment_source if merchant account lacks Reference Transactions / ACDC
+    if ((vault || paymentSource === 'card') && (err.status === 422 || /vault|card|payment_source/i.test(err.message || ''))) {
       return createOrderV2({
         plan,
         cycle,
         userId,
+        amountCents: cents,
+        currency: curr,
+        description: resolvedDesc,
+        customId: resolvedCustomId,
+        referenceId: resolvedRef,
+        itemName: resolvedItemName,
+        itemSku: resolvedSku,
         returnUrl,
         cancelUrl,
         vault: false,
-        paymentSource,
+        paymentSource: 'auto',
         requestId: null,
       });
     }
@@ -384,7 +431,7 @@ async function createSubscriptionV1({
     custom_id: `${userId || 0}:${plan.sku}:${safeCycle}`,
     application_context: {
       brand_name: 'Credo One',
-      locale: 'es-DO',
+      locale: 'es-ES',
       shipping_preference: 'NO_SHIPPING',
       user_action: 'SUBSCRIBE_NOW',
       payment_method: {

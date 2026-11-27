@@ -70,6 +70,8 @@ app.use(
           'https://*.paypal.com',
           'https://www.paypalobjects.com',
           'https://*.paypalobjects.com',
+          'https://*.braintreegateway.com',
+          'https://*.braintree-api.com',
           'https://pay.google.com',
           'https://applepay.cdn-apple.com',
           'https://static.cloudflareinsights.com',
@@ -105,6 +107,7 @@ app.use(
           'https://*.paypalobjects.com',
           'https://www.paypal.com',
           'https://*.paypal.com',
+          'https://*.braintreegateway.com',
           'https://pay.google.com',
           'https:',
         ],
@@ -123,10 +126,20 @@ app.use(
           'https://www.sandbox.paypal.com',
           'https://*.paypal.com',
           'https://*.paypalobjects.com',
+          'https://*.braintreegateway.com',
+          'https://*.venmo.com',
           'https://*.firebaseapp.com',
           'https://pay.google.com',
           'https://*.cardinalcommerce.com',
         ],
+        childSrc: [
+          "'self'",
+          'blob:',
+          'https://*.paypal.com',
+          'https://*.paypalobjects.com',
+          'https://*.braintreegateway.com',
+        ],
+        workerSrc: ["'self'", 'blob:'],
         connectSrc: [
           "'self'",
           'https://media.credoapp.tech',
@@ -138,8 +151,12 @@ app.use(
           'https://*.paypalobjects.com',
           'https://api-m.paypal.com',
           'https://api-m.sandbox.paypal.com',
-          'https://payments.braintree-api.com',
-          'https://payments.sandbox.braintree-api.com',
+          'https://api.paypal.com',
+          'https://api.sandbox.paypal.com',
+          'https://*.braintree-api.com',
+          'https://*.braintreegateway.com',
+          'https://*.venmo.com',
+          'https://*.cardinalcommerce.com',
           'https://*.googleapis.com',
           'https://*.firebaseio.com',
           'wss://*.firebaseio.com',
@@ -158,7 +175,10 @@ app.use(
   })
 );
 app.use((_req, res, next) => {
-  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), interest-cohort=()');
+  res.setHeader(
+    'Permissions-Policy',
+    'camera=(), microphone=(), geolocation=(), interest-cohort=(), payment=(self "https://www.paypal.com" "https://*.paypal.com")'
+  );
   next();
 });
 app.use(cors());

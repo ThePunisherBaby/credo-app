@@ -490,20 +490,33 @@ router.post('/campaigns/:id/paypal-order', requireAuth, requireOrgRole(['owner',
       return res.status(400).json({ error: 'Monto de campaña fuera de los límites ($1 – $1,000 USD).' });
     }
 
+    const { PAYPAL_CLIENT_ID } = require('../config');
     const host = String(req.headers['x-forwarded-host'] || req.headers.host || 'credoapp.tech').split(',')[0].trim();
     const origin = host.includes('localhost') ? `http://${host}` : `https://${host}`;
     const order = await createOrderV2({
+      userId: req.user.id,
       amountCents: Number(camp.total_budget_cents),
       currency: 'USD',
-      description: `Campaña Credo #${camp.id}: ${camp.title.slice(0, 60)} (${camp.impressions_allocated.toLocaleString('en-US')} alcance)`,
+      referenceId: `camp_${camp.id}`,
+      itemName: `Campaña Credo #${camp.id}: ${camp.title.slice(0, 70)}`,
+      itemSku: `camp_${camp.id}`,
+      description: `Campaña Credo #${camp.id}: ${camp.title.slice(0, 50)} (${camp.impressions_allocated.toLocaleString('en-US')} alcance)`,
       customId: `camp:${camp.id}:org:${req.org.id}:u:${req.user.id}`,
-      returnUrl: `${origin}/#/studio/campaigns?paid_campaign=${camp.id}`,
-      cancelUrl: `${origin}/#/studio/campaigns?cancelled_campaign=${camp.id}`,
+      returnUrl: `${origin}/?paypal_campaign_return=1&campaign_id=${camp.id}&org_id=${req.org.id}#/studio/campaigns`,
+      cancelUrl: `${origin}/?paypal_campaign_cancel=1&campaign_id=${camp.id}#/studio/campaigns`,
+      paymentSource: 'auto',
     });
 
     await pool.query('UPDATE campaigns SET paypal_order_id = $2, updated_at = NOW() WHERE id = $1', [camp.id, order.id]);
     const approveLink = (order.links || []).find((l) => l.rel === 'approve' || l.rel === 'payer-action')?.href || '';
-    return res.json({ order_id: order.id, approve_url: approveLink, total_usd: totalUsd, reach: camp.impressions_allocated });
+    return res.json({
+      order_id: order.id,
+      orderId: order.id,
+      approve_url: approveLink,
+      client_id: PAYPAL_CLIENT_ID || '',
+      total_usd: totalUsd,
+      reach: camp.impressions_allocated,
+    });
   } catch (err) {
     console.error('[studio/campaigns/paypal-order]', err);
     return res.status(500).json({ error: err.message || 'No se pudo iniciar el pago de la campaña.' });
