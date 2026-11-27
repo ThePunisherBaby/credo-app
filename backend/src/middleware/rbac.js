@@ -110,7 +110,9 @@ async function getOrganizationPlan(orgId) {
             p.audit_logs_enabled, p.badge_type, p.is_enterprise
        FROM subscriptions s
        JOIN subscription_plans p ON p.sku = s.plan_sku
-      WHERE s.organization_id = $1 AND s.status = 'active'
+      WHERE s.organization_id = $1
+        AND s.status = 'active'
+        AND (s.current_period_end IS NULL OR s.current_period_end > NOW() - INTERVAL '2 days')
       ORDER BY p.sort_order DESC, s.updated_at DESC
       LIMIT 1`,
     [orgId]
@@ -240,10 +242,12 @@ async function reconcileUserEntitlements(userId) {
   }
 
   const { rows: subs } = await pool.query(
-    `SELECT s.plan_sku, p.ad_free, p.studio_access, p.badge_type, p.sort_order
+    `SELECT s.plan_sku, s.current_period_end, p.ad_free, p.studio_access, p.badge_type, p.sort_order
        FROM subscriptions s
        JOIN subscription_plans p ON p.sku = s.plan_sku
-      WHERE s.user_id = $1 AND s.status = 'active'
+      WHERE s.user_id = $1
+        AND s.status = 'active'
+        AND (s.current_period_end IS NULL OR s.current_period_end > NOW() - INTERVAL '2 days')
       ORDER BY p.sort_order DESC`,
     [userId]
   );
@@ -252,7 +256,9 @@ async function reconcileUserEntitlements(userId) {
   const { rows: orgAccess } = await pool.query(
     `SELECT 1
        FROM organization_members m
-       JOIN subscriptions s ON s.organization_id = m.organization_id AND s.status = 'active'
+       JOIN subscriptions s ON s.organization_id = m.organization_id
+        AND s.status = 'active'
+        AND (s.current_period_end IS NULL OR s.current_period_end > NOW() - INTERVAL '2 days')
        JOIN subscription_plans p ON p.sku = s.plan_sku AND p.studio_access = TRUE
       WHERE m.user_id = $1 AND m.status = 'active'
       LIMIT 1`,
@@ -267,6 +273,7 @@ async function reconcileUserEntitlements(userId) {
   const activePlanSku = highest ? highest.plan_sku : (user.is_ceo ? 'biz_one_enterprise' : '');
   const oneBadge = highest ? highest.badge_type : (user.is_ceo ? 'enterprise_gold' : '');
   const isCredoPlus = Boolean(activePlanSku);
+  const planExpiresAt = highest?.current_period_end || null;
 
   await pool.query(
     `UPDATE users
@@ -276,12 +283,44 @@ async function reconcileUserEntitlements(userId) {
             one_badge = $5,
             is_credo_plus = $6,
             credo_plus_plan = $2,
+            plan_expires_at = $7,
             updated_at = NOW()
       WHERE id = $1`,
-    [userId, activePlanSku, adFree, studioEligible, oneBadge, isCredoPlus]
+    [userId, activePlanSku, adFree, studioEligible, oneBadge, isCredoPlus, planExpiresAt]
   );
 
   return { active_plan_sku: activePlanSku, ad_free: adFree, studio_eligible: studioEligible, one_badge: oneBadge };
+}
+
+/**
+ * Periodic sweeper that flips lapsed one-time / manual / unrenewed subscriptions to 'expired'
+ * and reconciles user entitlements cleanly.
+ */
+async function expireLapsedSubscriptions() {
+  try {
+    const { rows } = await pool.query(
+      `UPDATE subscriptions
+          SET status = 'expired', updated_at = NOW()
+        WHERE status = 'active'
+          AND current_period_end IS NOT NULL
+          AND current_period_end < NOW() - INTERVAL '2 days'
+        RETURNING user_id, organization_id`
+    );
+    const seenUsers = new Set();
+    for (const r of rows) {
+      if (r.organization_id) {
+        await pauseOrganizationCampaigns(r.organization_id, 'subscription_expired').catch(() => {});
+      }
+      if (r.user_id && !seenUsers.has(r.user_id)) {
+        seenUsers.add(r.user_id);
+        await reconcileUserEntitlements(r.user_id).catch(() => {});
+      }
+    }
+    return rows.length;
+  } catch (err) {
+    console.warn('[rbac/expireLapsedSubscriptions]', err.message);
+    return 0;
+  }
 }
 
 /**
@@ -385,6 +424,7 @@ module.exports = {
   getOrganizationPlan,
   ensureOrgForSubscription,
   reconcileUserEntitlements,
+  expireLapsedSubscriptions,
   pauseOrganizationCampaigns,
   requireOrgRole,
 };

@@ -406,17 +406,20 @@ async function start() {
     }
   }
 
-  // Refresh real articles from aire96fm.com.do & reflexionandolapalabra.com every 15 minutes
+  // Refresh real articles & sweep expired subscriptions every 15 minutes
+  const { expireLapsedSubscriptions } = require('./middleware/rbac');
   setInterval(() => {
     syncOfficialSources()
       .then(() => mediaRoutes.warmUpProxyImages?.())
       .catch((e) => console.warn('[sync-interval]', e.message));
+    expireLapsedSubscriptions().catch(() => {});
   }, 15 * 60 * 1000);
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`[credo] Server listening on http://0.0.0.0:${PORT}`);
     warmUpRosaryCache();
     mediaRoutes.warmUpProxyImages?.();
+    expireLapsedSubscriptions().catch(() => {});
     const { bootstrapPayPalAutomation } = require('./services/paypal');
     bootstrapPayPalAutomation().catch((e) => console.warn('[paypal-boot]', e.message));
   });

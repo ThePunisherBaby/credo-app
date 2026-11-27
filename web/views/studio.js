@@ -244,23 +244,16 @@ export async function mount({ root, app, signal, params }) {
 
   async function ensurePayPalSmartSdk(clientId) {
     if (!clientId) throw new Error('PAYPAL_CLIENT_ID no configurado en el servidor.');
-    if (window.paypal?.Buttons) return window.paypal;
+    if (window.paypal_pay?.Buttons) return window.paypal_pay;
     return new Promise((resolve, reject) => {
-      const v6 = document.getElementById('credo-paypal-sdk-v6');
-      if (v6) {
-        v6.remove();
-        try { delete window.paypal; } catch {}
-      }
-      const existing = document.getElementById('credo-paypal-sdk-v5');
+      const existing = document.getElementById('credo-paypal-sdk-v5-pay');
       if (existing) existing.remove();
-      if (window.paypal && !window.paypal.Buttons) {
-        try { delete window.paypal; } catch {}
-      }
       const s = document.createElement('script');
-      s.id = 'credo-paypal-sdk-v5';
-      s.src = `https://www.paypal.com/sdk/js?client-id=${encodeURIComponent(clientId)}&intent=capture&currency=USD&components=buttons&enable-funding=card,paylater&disable-funding=sepa,giropay,sofort,bancontact,eps,ideal,mybank,p24&locale=es_DO`;
+      s.id = 'credo-paypal-sdk-v5-pay';
+      s.setAttribute('data-namespace', 'paypal_pay');
+      s.src = `https://www.paypal.com/sdk/js?client-id=${encodeURIComponent(clientId)}&intent=capture&currency=USD&components=buttons,messages&enable-funding=card,paylater&disable-funding=sepa,giropay,sofort,bancontact,eps,ideal,mybank,p24&locale=es_DO`;
       s.async = true;
-      s.onload = () => (window.paypal?.Buttons ? resolve(window.paypal) : reject(new Error('PayPal SDK no disponible')));
+      s.onload = () => (window.paypal_pay?.Buttons ? resolve(window.paypal_pay) : reject(new Error('PayPal SDK no disponible')));
       s.onerror = () => reject(new Error('No se pudo cargar el SDK oficial de PayPal.'));
       document.head.appendChild(s);
     });
@@ -974,14 +967,19 @@ export async function mount({ root, app, signal, params }) {
             <tbody>
               ${(b.transactions || []).length === 0 ? `
                 <tr><td colspan="5" style="text-align:center;color:var(--st-muted);padding:22px">Sin cargos registrados todavía en este ciclo.</td></tr>
-              ` : b.transactions.map((tx) => `
+              ` : b.transactions.map((tx) => {
+                const st = String(tx.status || 'completed').toLowerCase();
+                const isRefunded = st === 'refunded' || st === 'failed';
+                const stLabel = st === 'refunded' ? 'Reembolsado' : st === 'failed' ? 'Fallido' : 'Completado';
+                return `
                 <tr>
                   <th scope="row">${new Date(tx.created_at).toLocaleDateString('es-DO')}</th>
                   <td data-label="Descripción">${app.esc(tx.description || tx.plan_sku)}</td>
                   <td data-label="Referencia"><code>${app.esc(tx.paypal_sale_id || '—')}</code></td>
                   <td data-label="Monto"><strong>${fmtUsd(tx.amount_cents)} ${app.esc(tx.currency || 'USD')}</strong></td>
-                  <td data-label="Estado"><span class="co-status-pill co-status-active">${app.esc(tx.status)}</span></td>
-                </tr>`).join('')}
+                  <td data-label="Estado"><span class="co-status-pill ${isRefunded ? 'co-status-rejected' : 'co-status-active'}">${stLabel}</span></td>
+                </tr>`;
+              }).join('')}
             </tbody>
           </table>
         </div>
@@ -1439,13 +1437,17 @@ export async function mount({ root, app, signal, params }) {
       // Auto-capture PayPal campaign return from either window.location.search or hashQuery
       const searchQ = new URLSearchParams(window.location.search);
       const paidCampId = Number(searchQ.get('campaign_id') || hashQuery?.get('paid_campaign') || 0);
+      const returnOrgId = Number(searchQ.get('org_id') || hashQuery?.get('org_id') || 0);
+      if (returnOrgId && state.orgs.some((o) => Number(o.id) === returnOrgId)) {
+        state.activeOrgId = returnOrgId;
+      }
       const paypalOrderToken = searchQ.get('token') || searchQ.get('order_id') || hashQuery?.get('token') || '';
       const org = getActiveOrg();
       if (paidCampId && paypalOrderToken && org) {
         try {
           await app.api(`/api/v1/studio/campaigns/${paidCampId}/paypal-capture`, {
             method: 'POST',
-            body: { org_id: org.id, order_id: paypalOrderToken },
+            body: { org_id: returnOrgId || org.id, order_id: paypalOrderToken },
           });
           app.toast('¡Pago de campaña verificado! Tu anuncio ya está activo');
         } catch (err) {

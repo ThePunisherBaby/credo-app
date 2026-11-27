@@ -490,7 +490,7 @@ async function runCmdSearch(q) {
         .map(
           (c) => `
         <button type="button" class="core-cmd-item" data-cmd="campaign" data-id="${c.id}">
-          <span><strong>#${c.id} ${esc(c.name)}</strong></span>
+          <span><strong>#${c.id} ${esc(c.title || '(Sin título)')}</strong></span>
           ${statusBadge(c.status)}
         </button>`
         )
@@ -2494,13 +2494,13 @@ async function renderFinanceView(vp) {
                         (c) => `
                   <tr>
                     <th scope="row">
-                      <div>#${c.id} ${esc(c.name)}</div>
-                      <div style="font-size:11px;color:var(--c-muted);font-weight:400">${esc(c.headline || '')}</div>
+                      <div>#${c.id} ${esc(c.title || '(Sin título)')}</div>
+                      <div style="font-size:11px;color:var(--c-muted);font-weight:400">${esc(String(c.body || '').slice(0, 90))}</div>
                     </th>
                     <td data-label="Cliente">${esc(c.org_name || '—')}<div class="mono" style="font-size:11px;color:var(--c-muted)">@${esc(c.creator_username || '—')}</div></td>
-                    <td data-label="Presupuesto" class="mono"><strong>${fmtUsd(c.total_budget_usd || 0)}</strong><div style="font-size:11px;color:var(--c-muted)">${fmtUsd(c.daily_budget_usd || 0)}/d × ${c.duration_days || 1}d</div></td>
+                    <td data-label="Presupuesto" class="mono"><strong>${fmtUsd(Number(c.total_budget_cents || 0) / 100)}</strong><div style="font-size:11px;color:var(--c-muted)">${fmtUsd(Number(c.daily_budget_cents || 0) / 100)}/d × ${c.duration_days || 1}d</div></td>
                     <td data-label="Alcance" class="mono">${fmtNum(c.impressions_served)} / ${fmtNum(c.impressions_allocated)} · CTR ${esc(c.ctr)}%</td>
-                    <td data-label="Estado">${statusBadge(c.status)} ${statusBadge(c.payment_status || 'pending')}</td>
+                    <td data-label="Estado">${statusBadge(c.status)} ${statusBadge(c.payment_status || 'unpaid')}</td>
                     <td data-label="Acciones">
                       <button type="button" class="action-pill action-pill--gold" data-camp-edit="${c.id}">Administrar</button>
                     </td>
@@ -2545,7 +2545,7 @@ async function renderFinanceView(vp) {
           : `
         <div class="core-table-wrap">
           <table class="core-table">
-            <thead><tr><th>Organización</th><th>Contacto</th><th>Estado</th><th>Notas Internas</th><th>Acciones</th></tr></thead>
+            <thead><tr><th>Organización</th><th>Contacto</th><th>Estado</th><th>Objetivo / Notas Internas</th><th>Acciones</th></tr></thead>
             <tbody>
               ${
                 (leadsRes.leads || []).length
@@ -2553,10 +2553,10 @@ async function renderFinanceView(vp) {
                       .map(
                         (l) => `
                   <tr>
-                    <th scope="row">${esc(l.organization_name || 'Sin nombre')}<div class="mono" style="font-size:11px;color:var(--c-muted)">${esc(l.organization_type || '')} · ${esc(l.country_code || '')}</div></th>
-                    <td data-label="Contacto">${esc(l.contact_name || '')}<div class="mono" style="font-size:11px;color:var(--c-muted)">${esc(l.contact_email || '')} · ${esc(l.contact_phone || '')}</div></td>
+                    <th scope="row">${esc(l.company_name || 'Sin nombre')}<div class="mono" style="font-size:11px;color:var(--c-muted)">RNC: ${esc(l.tax_id || '—')} · ${esc(l.contact_role || '—')}</div></th>
+                    <td data-label="Contacto">${esc(l.contact_name || '')}<div class="mono" style="font-size:11px;color:var(--c-muted)">${esc(l.corporate_email || '')} · ${esc(l.whatsapp_phone || '')}</div></td>
                     <td data-label="Estado">${statusBadge(l.status || 'new')}</td>
-                    <td data-label="Notas">${esc(l.internal_notes || l.notes || '—')}</td>
+                    <td data-label="Notas">${esc(l.internal_notes || l.campaign_goal || '—')}</td>
                     <td data-label="Acciones">
                       <div class="core-table-actions">
                         <button type="button" class="action-pill" data-lead-note="${l.id}">Editar CRM</button>
@@ -2587,7 +2587,7 @@ async function renderFinanceView(vp) {
       const c = (campsRes.campaigns || []).find((x) => x.id === Number(b.dataset.campEdit));
       if (!c) return;
       openModal(
-        `Administrar Campaña #${c.id} · ${c.name}`,
+        `Administrar Campaña #${c.id} · ${c.title || ''}`,
         `
         <form id="campAdminForm" class="core-form">
           <div class="core-form-grid">
@@ -2602,7 +2602,7 @@ async function renderFinanceView(vp) {
             <div class="core-field">
               <label>Estado Pago</label>
               <select name="payment_status">
-                ${['paid', 'comped', 'pending', 'refunded']
+                ${['paid', 'comped', 'unpaid', 'refunded']
                   .map((s) => `<option value="${s}" ${c.payment_status === s ? 'selected' : ''}>${s}</option>`)
                   .join('')}
               </select>
@@ -2667,7 +2667,7 @@ async function renderFinanceView(vp) {
       const l = (leadsRes.leads || []).find((x) => x.id === Number(b.dataset.leadNote));
       if (!l) return;
       openModal(
-        `CRM Lead #${l.id} · ${l.organization_name || ''}`,
+        `CRM Lead #${l.id} · ${l.company_name || ''}`,
         `
         <form id="leadCrmForm" class="core-form">
           <div class="core-field">

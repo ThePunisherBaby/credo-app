@@ -1,5 +1,5 @@
-// sw.js — Credo Offline-First Shell & Zero-Latency Local Image Cache (v48)
-const SHELL_CACHE = 'credo-shell-v48';
+// sw.js — Credo Offline-First Shell & Zero-Latency Local Image Cache (v49)
+const SHELL_CACHE = 'credo-shell-v49';
 const IMG_CACHE = 'credo-img-v2';
 const MAX_IMG_ENTRIES = 160;
 
@@ -7,8 +7,8 @@ const SHELL_ASSETS = [
   '/',
   '/styles.css?v=33',
   '/credo-one.css?v=40',
-  '/app.js?v=48',
-  '/credo-one-sheet.js?v=48',
+  '/app.js?v=49',
+  '/credo-one-sheet.js?v=49',
   '/springs.mjs?v=23',
   '/glass.js?v=23',
   '/audio-engine.js?v=23',
@@ -17,7 +17,7 @@ const SHELL_ASSETS = [
   '/views/explore.js?v=44',
   '/views/prayer.js?v=23',
   '/views/profile.js?v=45',
-  '/views/studio.js?v=48',
+  '/views/studio.js?v=49',
   '/views/vids.js?v=43',
   '/views/parishes.js?v=43',
   '/views/settings.js?v=45',

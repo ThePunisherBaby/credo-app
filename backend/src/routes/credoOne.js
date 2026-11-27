@@ -41,6 +41,32 @@ function resolveOrigin(req) {
   return `https://${host}`;
 }
 
+async function supersedePreviousAudienceSubscriptions(userId, audience, keepPaypalSubId) {
+  try {
+    const { rows: prevSubs } = await pool.query(
+      `SELECT s.id, s.paypal_subscription_id
+         FROM subscriptions s
+         JOIN subscription_plans p ON p.sku = s.plan_sku
+        WHERE s.user_id = $1
+          AND s.status = 'active'
+          AND p.audience = $2
+          AND s.paypal_subscription_id <> $3`,
+      [userId, audience, String(keepPaypalSubId || '')]
+    );
+    for (const prev of prevSubs) {
+      await pool.query(`UPDATE subscriptions SET status = 'cancelled', updated_at = NOW() WHERE id = $1`, [prev.id]);
+      const ppId = String(prev.paypal_subscription_id || '');
+      if (ppId && !ppId.startsWith('ORD-') && !ppId.startsWith('MANUAL-') && !ppId.startsWith('ENT-LEAD-') && isPayPalConfigured()) {
+        cancelPayPalSubscription(ppId, 'Reemplazada automáticamente por cambio de plan Credo One').catch((e) =>
+          console.warn('[credo-one/supersede] PayPal cancel skipped:', e.message)
+        );
+      }
+    }
+  } catch (err) {
+    console.warn('[credo-one/supersede]', err.message);
+  }
+}
+
 async function activateCapturedOrder({
   user,
   kernelPlan,
@@ -64,13 +90,19 @@ async function activateCapturedOrder({
 
   // Idempotent check — return existing activation cleanly if already applied
   const dupCheck = await pool.query(
-    `SELECT bt.id, bt.subscription_id
+    `SELECT bt.id, bt.subscription_id, bt.user_id
        FROM billing_transactions bt
       WHERE bt.paypal_event_id = $1
       LIMIT 1`,
     [`order-${orderId}`]
   );
   if (dupCheck.rows.length > 0) {
+    if (Number(dupCheck.rows[0].user_id) !== Number(user.id)) {
+      const err = new Error('Esta orden de PayPal ya pertenece a otra cuenta.');
+      err.httpStatus = 403;
+      err.code = 'ORDER_ALREADY_CLAIMED';
+      throw err;
+    }
     const subExisting = await pool.query('SELECT * FROM subscriptions WHERE id = $1 LIMIT 1', [
       dupCheck.rows[0].subscription_id,
     ]);
@@ -97,6 +129,7 @@ async function activateCapturedOrder({
 
   const periodEnd = new Date(Date.now() + (safeCycle === 'annual' ? 365 : 30) * 86400 * 1000);
   const subKey = `ORD-${orderId}`;
+  await supersedePreviousAudienceSubscriptions(user.id, kernelPlan.audience, subKey);
 
   const { rows: subRows } = await pool.query(
     `INSERT INTO subscriptions (
@@ -194,7 +227,9 @@ router.get('/plans', optionalAuth, async (req, res) => {
                 p.display_name, p.audience
            FROM subscriptions s
            JOIN subscription_plans p ON p.sku = s.plan_sku
-          WHERE s.user_id = $1 AND s.status IN ('active', 'pending')
+          WHERE s.user_id = $1
+            AND s.status IN ('active', 'pending')
+            AND (s.current_period_end IS NULL OR s.current_period_end > NOW() - INTERVAL '2 days')
           ORDER BY p.sort_order DESC`,
         [req.user.id]
       );
@@ -474,8 +509,22 @@ router.post('/paypal/orders/:orderId/capture', requireAuth, async (req, res) => 
       });
     }
 
-    // Resolve plan_sku & billing_cycle securely from custom_id first, then request body
-    const customParts = String(pu.custom_id || cap?.custom_id || '').split(':');
+    // Resolve plan_sku & billing_cycle securely from custom_id first, rejecting foreign or Studio campaign orders
+    const rawCustomId = String(pu.custom_id || cap?.custom_id || '');
+    if (rawCustomId.startsWith('camp:')) {
+      return res.status(403).json({
+        error: 'CAMPAIGN_ORDER_MISMATCH',
+        message: 'Esta orden corresponde a una campaña de Studio, no a una suscripción de Credo One.',
+      });
+    }
+    const customParts = rawCustomId.split(':');
+    const orderOwnerId = Number(customParts[0] || 0);
+    if (orderOwnerId > 0 && orderOwnerId !== Number(req.user.id)) {
+      return res.status(403).json({
+        error: 'ORDER_OWNER_MISMATCH',
+        message: 'Esta orden de PayPal pertenece a otra cuenta de Credo.',
+      });
+    }
     const resolvedSku = customParts[1] || plan_sku;
     const resolvedCycle = (customParts[2] || billing_cycle) === 'annual' ? 'annual' : 'monthly';
 
@@ -634,6 +683,26 @@ router.post('/subscriptions/confirm', requireAuth, async (req, res) => {
       });
     }
 
+    // Ownership verification: prevent claiming another user's PayPal subscription
+    const subCustomParts = String(ppSub.custom_id || '').split(':');
+    const subOwnerId = Number(subCustomParts[0] || 0);
+    if (subOwnerId > 0 && subOwnerId !== Number(req.user.id)) {
+      return res.status(403).json({
+        error: 'SUBSCRIPTION_OWNER_MISMATCH',
+        message: 'Esta suscripción de PayPal pertenece a otra cuenta de Credo.',
+      });
+    }
+    const existingClaim = await pool.query(
+      `SELECT user_id FROM subscriptions WHERE paypal_subscription_id = $1 LIMIT 1`,
+      [String(subscription_id)]
+    );
+    if (existingClaim.rows[0] && Number(existingClaim.rows[0].user_id) !== Number(req.user.id)) {
+      return res.status(403).json({
+        error: 'SUBSCRIPTION_ALREADY_CLAIMED',
+        message: 'Esta suscripción de PayPal ya está vinculada a otra cuenta.',
+      });
+    }
+
     const reportedVal = Number(ppSub.billing_info?.last_payment?.amount?.value ?? -1);
     const reportedCents = reportedVal >= 0 ? Math.round(reportedVal * 100) : -1;
     const fsharpVerdict = fsharpKernel.verifyPayment(plan.sku, safeCycle, reportedCents);
@@ -669,6 +738,8 @@ router.post('/subscriptions/confirm', requireAuth, async (req, res) => {
     const periodEnd = ppSub.billing_info?.next_billing_time
       ? new Date(ppSub.billing_info.next_billing_time)
       : new Date(Date.now() + (safeCycle === 'annual' ? 365 : 30) * 86400 * 1000);
+
+    await supersedePreviousAudienceSubscriptions(req.user.id, plan.audience, String(subscription_id));
 
     const { rows: subRows } = await pool.query(
       `INSERT INTO subscriptions (
@@ -730,7 +801,7 @@ router.post('/subscriptions/confirm', requireAuth, async (req, res) => {
     }
 
     apiCache.invalidate('posts:');
-  apiCache.invalidate('users:');
+    apiCache.invalidate('users:');
     return res.status(201).json({
       subscription: subRows[0],
       organization: org,
@@ -742,50 +813,66 @@ router.post('/subscriptions/confirm', requireAuth, async (req, res) => {
   }
 });
 
-// POST /api/v1/credo-one/orders/confirm — Confirms Smart Checkout live capture (Engine B fallback + REST double-check)
+// POST /api/v1/credo-one/orders/confirm — Strictly verifies completed PayPal Orders v2 payment server-side
 router.post('/orders/confirm', requireAuth, async (req, res) => {
   try {
     const {
       order_id,
-      capture_id = '',
       plan_sku,
       billing_cycle = 'monthly',
-      amount_value,
-      status = '',
       organization_name = '',
     } = req.body || {};
 
     if (!order_id || !plan_sku) {
       return res.status(400).json({ error: 'order_id y plan_sku son requeridos' });
     }
-    if (String(status).toUpperCase() !== 'COMPLETED') {
-      return res.status(402).json({ error: 'El pago en PayPal no fue completado.' });
+    if (!isPayPalConfigured()) {
+      return res.status(503).json({
+        error: 'PAYPAL_REST_UNAVAILABLE',
+        message: 'La verificación segura de PayPal REST no está configurada en el servidor.',
+      });
     }
 
-    const kernelPlan = fsharpKernel.getPlanSpec(plan_sku);
+    // NEVER trust client-supplied status/amount — ALWAYS fetch authoritative order from PayPal REST API!
+    let ppOrder;
+    try {
+      ppOrder = await getOrderV2(order_id);
+    } catch (ppErr) {
+      return res.status(402).json({
+        error: 'PAYPAL_ORDER_NOT_VERIFIED',
+        message: 'No se pudo verificar esta orden en PayPal. Verifica tu cobro e inténtalo de nuevo.',
+      });
+    }
+
+    if (!ppOrder || String(ppOrder.status).toUpperCase() !== 'COMPLETED') {
+      return res.status(402).json({ error: 'La orden de PayPal no está en estado COMPLETED.' });
+    }
+
+    const pu = ppOrder.purchase_units?.[0] || {};
+    const cap = pu.payments?.captures?.[0] || null;
+    if (!cap || String(cap.status || '').toUpperCase() !== 'COMPLETED') {
+      return res.status(402).json({ error: 'La captura del pago en PayPal no está completada.' });
+    }
+
+    const rawCustomId = String(pu.custom_id || cap?.custom_id || '');
+    if (rawCustomId.startsWith('camp:')) {
+      return res.status(403).json({ error: 'Esta orden corresponde a una campaña de Studio.' });
+    }
+    const customParts = rawCustomId.split(':');
+    const orderOwnerId = Number(customParts[0] || 0);
+    if (orderOwnerId > 0 && orderOwnerId !== Number(req.user.id)) {
+      return res.status(403).json({ error: 'Esta orden de PayPal pertenece a otra cuenta de Credo.' });
+    }
+
+    const resolvedSku = customParts[1] || plan_sku;
+    const resolvedCycle = (customParts[2] || billing_cycle) === 'annual' ? 'annual' : 'monthly';
+    const kernelPlan = fsharpKernel.getPlanSpec(resolvedSku);
     if (!kernelPlan || kernelPlan.is_enterprise) {
       return res.status(404).json({ error: 'Plan Credo One no válido.' });
     }
 
-    const safeCycle = billing_cycle === 'annual' ? 'annual' : 'monthly';
-    let verifiedCents = Math.round(Number(amount_value || 0) * 100);
-    let verifiedCaptureId = String(capture_id || order_id);
-
-    if (isPayPalConfigured()) {
-      try {
-        const ppOrder = await getOrderV2(order_id);
-        if (!ppOrder || String(ppOrder.status).toUpperCase() !== 'COMPLETED') {
-          return res.status(402).json({ error: 'La orden de PayPal no está en estado COMPLETED.' });
-        }
-        const cap = ppOrder.purchase_units?.[0]?.payments?.captures?.[0];
-        if (cap?.amount?.value) {
-          verifiedCents = Math.round(Number(cap.amount.value) * 100);
-          verifiedCaptureId = cap.id || verifiedCaptureId;
-        }
-      } catch (ppErr) {
-        console.warn('[credo-one/orders/confirm] PayPal REST lookup skipped:', ppErr.message);
-      }
-    }
+    const verifiedCents = Math.round(Number(cap.amount?.value || 0) * 100);
+    const verifiedCaptureId = String(cap.id || order_id);
 
     const ppSnap = getPayPalStatusSnapshot();
     const methodLabel =
@@ -794,7 +881,7 @@ router.post('/orders/confirm', requireAuth, async (req, res) => {
     const result = await activateCapturedOrder({
       user: req.user,
       kernelPlan,
-      safeCycle,
+      safeCycle: resolvedCycle,
       orderId: order_id,
       captureId: verifiedCaptureId,
       verifiedCents,
@@ -828,8 +915,15 @@ router.post('/subscriptions/cancel', requireAuth, async (req, res) => {
     }
     const sub = rows[0];
 
-    if (sub.paypal_subscription_id && !sub.paypal_subscription_id.startsWith('ORD-') && isPayPalConfigured()) {
-      await cancelPayPalSubscription(sub.paypal_subscription_id, String(reason).slice(0, 127));
+    if (sub.paypal_subscription_id && String(sub.paypal_subscription_id).startsWith('I-') && isPayPalConfigured()) {
+      try {
+        await cancelPayPalSubscription(sub.paypal_subscription_id, String(reason).slice(0, 127));
+      } catch (ppCancelErr) {
+        // Tolerate 404/422 if PayPal already marked the subscription cancelled/expired
+        if (ppCancelErr?.status !== 404 && ppCancelErr?.status !== 422) {
+          console.warn('[credo-one/cancel] PayPal remote cancel warning:', ppCancelErr.message);
+        }
+      }
     }
 
     await pool.query(
@@ -953,22 +1047,22 @@ async function handlePayPalWebhook(req, res) {
       return res.status(400).json({ error: 'Invalid PayPal webhook payload' });
     }
 
-    const logIns = await pool
-      .query(
-        `INSERT INTO paypal_webhook_events (paypal_event_id, event_type, status, headers_json, payload_json)
-         VALUES ($1, $2, 'received', $3::jsonb, $4::jsonb)
-         RETURNING id`,
-        [
-          String(event.id || ''),
-          String(event.event_type || ''),
-          JSON.stringify(req.headers || {}),
-          JSON.stringify(event),
-        ]
-      )
-      .catch(() => ({ rows: [] }));
-    webhookLogId = logIns.rows[0]?.id || null;
-
     if (!req._skipSignatureForAdminReplay) {
+      const logIns = await pool
+        .query(
+          `INSERT INTO paypal_webhook_events (paypal_event_id, event_type, status, headers_json, payload_json)
+           VALUES ($1, $2, 'received', $3::jsonb, $4::jsonb)
+           RETURNING id`,
+          [
+            String(event.id || ''),
+            String(event.event_type || ''),
+            JSON.stringify(req.headers || {}),
+            JSON.stringify(event),
+          ]
+        )
+        .catch(() => ({ rows: [] }));
+      webhookLogId = logIns.rows[0]?.id || null;
+
       const verification = await verifyWebhookSignature(req.headers, event);
       if (!verification.verified) {
         console.warn('[paypal-webhook] Signature rejected:', verification.reason || verification.status);
@@ -984,40 +1078,98 @@ async function handlePayPalWebhook(req, res) {
       }
     }
 
-    const markProcessed = () => {
-      if (!webhookLogId) return;
-      pool
-        .query(`UPDATE paypal_webhook_events SET status = 'processed', processed_at = NOW() WHERE id = $1`, [webhookLogId])
-        .catch(() => {});
+    const finishOk = async (payload) => {
+      if (webhookLogId) {
+        await pool
+          .query(`UPDATE paypal_webhook_events SET status = 'processed', processed_at = NOW() WHERE id = $1`, [webhookLogId])
+          .catch(() => {});
+      }
+      return res.status(200).json(payload);
     };
 
     const eventId = String(event.id || '');
     const eventType = String(event.event_type || '');
     const resource = event.resource || {};
-    markProcessed();
 
-    // Handle Orders v2 capture/refund events cleanly
-    if (eventType === 'PAYMENT.CAPTURE.REFUNDED') {
-      const captureId = String(resource.id || '');
-      const txRes = await pool.query(
-        `SELECT subscription_id, user_id, organization_id
-           FROM billing_transactions
-          WHERE paypal_sale_id = $1
-          LIMIT 1`,
-        [captureId]
-      );
-      if (txRes.rows[0]) {
-        await pool.query(`UPDATE subscriptions SET status = 'cancelled', updated_at = NOW() WHERE id = $1`, [
-          txRes.rows[0].subscription_id,
-        ]);
-        if (txRes.rows[0].organization_id) {
-          await pauseOrganizationCampaigns(txRes.rows[0].organization_id, 'payment_refunded');
+    // Handle Orders v2 AND Subscriptions v1 refund/reversal events cleanly!
+    if (
+      eventType === 'PAYMENT.CAPTURE.REFUNDED' ||
+      eventType === 'PAYMENT.CAPTURE.REVERSED' ||
+      eventType === 'PAYMENT.SALE.REFUNDED' ||
+      eventType === 'PAYMENT.SALE.REVERSED'
+    ) {
+      const upHref = (resource.links || []).find((l) => l.rel === 'up')?.href || '';
+      const upMatch = upHref.match(/\/(?:captures|sale)\/([^/?]+)/i);
+      const originalCaptureOrSaleId = upMatch ? upMatch[1] : '';
+      const explicitSaleId = String(resource.sale_id || '');
+      const relatedOrderId = String(resource.supplementary_data?.related_ids?.order_id || '');
+      const billingAgreementId = String(resource.billing_agreement_id || '');
+      const candidateIds = [
+        originalCaptureOrSaleId,
+        explicitSaleId,
+        relatedOrderId,
+        billingAgreementId,
+        String(resource.id || ''),
+      ].filter(Boolean);
+
+      if (candidateIds.length > 0) {
+        const txRes = await pool.query(
+          `SELECT id, subscription_id, user_id, organization_id, plan_sku, paypal_sale_id
+             FROM billing_transactions
+            WHERE paypal_sale_id = ANY($1::text[]) OR paypal_event_id = ANY($2::text[])
+            ORDER BY created_at DESC
+            LIMIT 1`,
+          [candidateIds, candidateIds.flatMap((c) => [`order-${c}`, `camp-order-${c}`, `confirm-${c}`])]
+        );
+        let handledSubId = null;
+        if (txRes.rows[0]) {
+          const tx = txRes.rows[0];
+          await pool.query(`UPDATE billing_transactions SET status = 'refunded' WHERE id = $1`, [tx.id]);
+          if (tx.subscription_id) {
+            handledSubId = tx.subscription_id;
+            await pool.query(`UPDATE subscriptions SET status = 'cancelled', updated_at = NOW() WHERE id = $1`, [
+              tx.subscription_id,
+            ]);
+            if (tx.organization_id) {
+              await pauseOrganizationCampaigns(tx.organization_id, 'payment_refunded');
+            }
+            if (tx.user_id) {
+              await reconcileUserEntitlements(tx.user_id);
+            }
+          }
         }
-        await reconcileUserEntitlements(txRes.rows[0].user_id);
+
+        // Also cancel subscription directly via billing_agreement_id if refund didn't match tx.subscription_id
+        if (!handledSubId && billingAgreementId) {
+          const subByAg = await pool.query(
+            `SELECT id, user_id, organization_id FROM subscriptions WHERE paypal_subscription_id = $1 LIMIT 1`,
+            [billingAgreementId]
+          );
+          if (subByAg.rows[0]) {
+            const sb = subByAg.rows[0];
+            await pool.query(`UPDATE subscriptions SET status = 'cancelled', updated_at = NOW() WHERE id = $1`, [sb.id]);
+            if (sb.organization_id) {
+              await pauseOrganizationCampaigns(sb.organization_id, 'payment_refunded');
+            }
+            if (sb.user_id) {
+              await reconcileUserEntitlements(sb.user_id);
+            }
+          }
+        }
+
+        // Also pause & mark refunded any Studio Paid Campaign tied to this capture or order
+        await pool.query(
+          `UPDATE campaigns
+              SET payment_status = 'refunded',
+                  status = 'paused',
+                  updated_at = NOW()
+            WHERE paypal_capture_id = ANY($1::text[]) OR paypal_order_id = ANY($1::text[])`,
+          [candidateIds]
+        );
         apiCache.invalidate('posts:');
-  apiCache.invalidate('users:');
+        apiCache.invalidate('users:');
       }
-      return res.status(200).json({ received: true, event_type: eventType });
+      return finishOk({ received: true, event_type: eventType });
     }
 
     // Handle Paid Studio Campaign capture webhook (custom_id = "camp:<id>:org:<orgId>:u:<userId>")
@@ -1061,13 +1213,40 @@ async function handlePayPalWebhook(req, res) {
           );
           apiCache.invalidate('posts:');
         }
-        return res.status(200).json({ received: true, event_type: eventType, campaign_id: campId });
+        return finishOk({ received: true, event_type: eventType, campaign_id: campId });
+      }
+    }
+
+    // Handle Credo One one-time Order capture webhook (custom_id = "<userId>:<sku>:<monthly|annual>")
+    if (eventType === 'PAYMENT.CAPTURE.COMPLETED' && resource.custom_id) {
+      const mOrd = String(resource.custom_id).match(/^(\d+):([a-z0-9_]+):(monthly|annual)$/);
+      if (mOrd) {
+        const uid = Number(mOrd[1]);
+        const sku = mOrd[2];
+        const cycle = mOrd[3];
+        const kernelPlan = fsharpKernel.getPlanSpec(sku);
+        const uRes = await pool.query('SELECT * FROM users WHERE id = $1 LIMIT 1', [uid]);
+        if (kernelPlan && !kernelPlan.is_enterprise && uRes.rows[0]) {
+          const capId = String(resource.id || eventId);
+          const orderId = String(resource.supplementary_data?.related_ids?.order_id || capId);
+          const verifiedCents = Math.round(Number(resource.amount?.value || 0) * 100);
+          await activateCapturedOrder({
+            user: uRes.rows[0],
+            kernelPlan,
+            safeCycle: cycle,
+            orderId,
+            captureId: capId,
+            verifiedCents,
+            paymentMethodLabel: 'PayPal Webhook Capture',
+          });
+          return finishOk({ received: true, event_type: eventType, order_id: orderId });
+        }
       }
     }
 
     const paypalSubId = resource.billing_agreement_id || resource.id || '';
     if (!paypalSubId) {
-      return res.status(200).json({ received: true, ignored: 'missing_subscription_id' });
+      return finishOk({ received: true, ignored: 'missing_subscription_id' });
     }
 
     const { rows: subRows } = await pool.query(
@@ -1081,7 +1260,7 @@ async function handlePayPalWebhook(req, res) {
 
     if (!subRows[0]) {
       console.warn(`[paypal-webhook] Unmatched subscription ${paypalSubId} for ${eventType}`);
-      return res.status(200).json({ received: true, unmatched: true });
+      return finishOk({ received: true, unmatched: true });
     }
     const sub = subRows[0];
 
@@ -1188,12 +1367,20 @@ async function handlePayPalWebhook(req, res) {
       }
       await reconcileUserEntitlements(sub.user_id);
       apiCache.invalidate('posts:');
-  apiCache.invalidate('users:');
+      apiCache.invalidate('users:');
     }
 
-    return res.status(200).json({ received: true, event_type: eventType });
+    return finishOk({ received: true, event_type: eventType });
   } catch (err) {
     console.error('[paypal-webhook] Error:', err);
+    if (webhookLogId) {
+      await pool
+        .query(
+          `UPDATE paypal_webhook_events SET status = 'error', error_message = $2, processed_at = NOW() WHERE id = $1`,
+          [webhookLogId, String(err?.message || 'Webhook processing error').slice(0, 240)]
+        )
+        .catch(() => {});
+    }
     return res.status(500).json({ error: 'Webhook processing error' });
   }
 }

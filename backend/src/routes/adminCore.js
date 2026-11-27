@@ -778,6 +778,12 @@ router.post('/users/:id/plan', async (req, res) => {
     };
 
     const expDate = expires_at ? new Date(expires_at) : new Date(Date.now() + 365 * 86400 * 1000);
+    const resolveOneBadge = (rawVal, fallbackBadge) => {
+      if (rawVal === undefined) return fallbackBadge;
+      if (rawVal === true) return fallbackBadge || 'one_plus';
+      if (rawVal === false) return '';
+      return String(rawVal);
+    };
 
     if (!cleanSku) {
       // Revoke Credo One subscription cleanly
@@ -785,9 +791,19 @@ router.post('/users/:id/plan', async (req, res) => {
         `UPDATE subscriptions SET status = 'cancelled', updated_at = NOW() WHERE user_id = $1 AND status = 'active'`,
         [id]
       );
+      const revBadge = resolveOneBadge(one_badge, '');
       await pool.query(
-        `UPDATE users SET active_plan_sku = '', ad_free = FALSE, studio_eligible = FALSE, one_badge = COALESCE($2, ''), plan_expires_at = NULL, updated_at = NOW() WHERE id = $1`,
-        [id, one_badge !== undefined ? String(one_badge) : '']
+        `UPDATE users
+            SET active_plan_sku = '',
+                ad_free = FALSE,
+                studio_eligible = FALSE,
+                is_credo_plus = FALSE,
+                credo_plus_plan = '',
+                one_badge = $2,
+                plan_expires_at = NULL,
+                updated_at = NOW()
+          WHERE id = $1`,
+        [id, revBadge]
       );
     } else {
       const planRes = await pool.query('SELECT * FROM subscription_plans WHERE sku = $1 LIMIT 1', [cleanSku]);
@@ -795,7 +811,7 @@ router.post('/users/:id/plan', async (req, res) => {
       let org = null;
       if (plan && (plan.studio_access || plan.audience === 'business')) {
         org = await ensureOrgForSubscription(user, plan);
-        if (avatar_style && ['circle', 'square'].includes(avatar_style)) {
+        if (avatar_style && ['circle', 'square', 'squircle_blue', 'squircle_gold'].includes(avatar_style)) {
           await pool.query('UPDATE organizations SET avatar_style = $2 WHERE id = $1', [org.id, avatar_style]);
         }
       }
@@ -820,12 +836,15 @@ router.post('/users/:id/plan', async (req, res) => {
       );
 
       await reconcileUserEntitlements(id);
+      const nextBadge = resolveOneBadge(one_badge, plan?.badge_type || cleanSku);
       await pool.query(
         `UPDATE users SET
            active_plan_sku = $2,
            ad_free = $3,
            studio_eligible = $4,
-           one_badge = COALESCE($5, one_badge),
+           is_credo_plus = TRUE,
+           credo_plus_plan = $2,
+           one_badge = $5,
            plan_expires_at = $6,
            updated_at = NOW()
          WHERE id = $1`,
@@ -834,7 +853,7 @@ router.post('/users/:id/plan', async (req, res) => {
           cleanSku,
           Boolean(plan?.ad_free),
           Boolean(plan?.studio_access || plan?.audience === 'business'),
-          one_badge !== undefined ? String(one_badge) : plan?.badge_type || cleanSku,
+          nextBadge,
           expDate.toISOString(),
         ]
       );
@@ -847,11 +866,11 @@ router.post('/users/:id/plan', async (req, res) => {
       uParams.push(verified_badge ? 'verified' : 'unverified');
       updates.push(`verification_status = $${uParams.length}`);
     }
-    if (one_badge !== undefined) {
+    if (one_badge !== undefined && typeof one_badge !== 'boolean') {
       uParams.push(String(one_badge));
       updates.push(`one_badge = $${uParams.length}`);
     }
-    if (avatar_style && ['circle', 'square'].includes(avatar_style)) {
+    if (avatar_style && ['circle', 'square', 'squircle_blue', 'squircle_gold'].includes(avatar_style)) {
       uParams.push(avatar_style);
       updates.push(`avatar_style = $${uParams.length}`);
     }
@@ -1502,7 +1521,9 @@ router.get('/finance/overview', async (_req, res) => {
         COUNT(*)::int AS active_subs
         FROM subscriptions s
         JOIN subscription_plans p ON p.sku = s.plan_sku
-        WHERE s.status = 'active' AND s.paypal_subscription_id NOT LIKE 'MANUAL-%'
+        WHERE s.status = 'active'
+          AND s.paypal_subscription_id NOT LIKE 'MANUAL-%'
+          AND (s.current_period_end IS NULL OR s.current_period_end > NOW() - INTERVAL '2 days')
       `),
       pool.query(`
         SELECT

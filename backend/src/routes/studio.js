@@ -531,19 +531,57 @@ router.post('/campaigns/:id/paypal-capture', requireAuth, requireOrgRole(['owner
     const { rows } = await pool.query('SELECT * FROM campaigns WHERE id = $1 AND organization_id = $2', [campaignId, req.org.id]);
     const camp = rows[0];
     if (!camp) return res.status(404).json({ error: 'Campaña no encontrada.' });
+    if (camp.payment_status === 'paid' || camp.payment_status === 'comped') {
+      return res.json({ ok: true, already_paid: true, campaign: camp });
+    }
 
     const orderId = String(req.body?.order_id || camp.paypal_order_id || '').trim();
     if (!orderId) return res.status(400).json({ error: 'order_id requerido.' });
 
+    // Anti-replay: ensure this PayPal order has NOT already paid for another campaign
+    const replayCheck = await pool.query(
+      `SELECT id FROM campaigns WHERE paypal_order_id = $1 AND id <> $2 AND payment_status = 'paid' LIMIT 1`,
+      [orderId, camp.id]
+    );
+    if (replayCheck.rows.length > 0) {
+      return res.status(409).json({ error: 'Esta orden de PayPal ya fue utilizada en otra campaña.' });
+    }
+
     let captured;
     try {
       captured = await captureOrderV2(orderId);
-    } catch {
-      captured = await getOrderV2(orderId);
+    } catch (capErr) {
+      const existing = await getOrderV2(orderId).catch(() => null);
+      if (existing && String(existing.status).toUpperCase() === 'COMPLETED') {
+        captured = existing;
+      } else {
+        const issue = capErr?.payload?.details?.[0]?.issue || '';
+        if (issue === 'INSTRUMENT_DECLINED') {
+          return res.status(402).json({ error: 'Tu banco o tarjeta rechazó el cobro. Intenta con otra tarjeta o con PayPal.' });
+        }
+        throw capErr;
+      }
     }
 
     const pu = captured?.purchase_units?.[0];
     const cap = pu?.payments?.captures?.[0];
+    const customId = String(pu?.custom_id || cap?.custom_id || '');
+    const expectedPrefix = `camp:${camp.id}:org:${req.org.id}:`;
+    if (!customId.startsWith(expectedPrefix)) {
+      return res.status(403).json({
+        error: 'Esta orden de PayPal no corresponde a esta campaña ni organización.',
+      });
+    }
+
+    const captureId = String(cap?.id || orderId);
+    const capReplay = await pool.query(
+      `SELECT id FROM campaigns WHERE paypal_capture_id = $1 AND id <> $2 LIMIT 1`,
+      [captureId, camp.id]
+    );
+    if (capReplay.rows.length > 0) {
+      return res.status(409).json({ error: 'Esta captura de PayPal ya fue acreditada en otra campaña.' });
+    }
+
     const paidVal = Number(cap?.amount?.value || pu?.amount?.value || 0);
     const paidCents = Math.round(paidVal * 100);
     const statusOk = captured?.status === 'COMPLETED' || cap?.status === 'COMPLETED';
@@ -562,7 +600,7 @@ router.post('/campaigns/:id/paypal-capture', requireAuth, requireOrgRole(['owner
               updated_at = NOW()
         WHERE id = $1
         RETURNING *`,
-      [camp.id, orderId, String(cap?.id || orderId), nextStatus]
+      [camp.id, orderId, captureId, nextStatus]
     );
 
     await pool.query(
@@ -575,7 +613,7 @@ router.post('/campaigns/:id/paypal-capture', requireAuth, requireOrgRole(['owner
         req.user.id,
         req.org.id,
         `camp-order-${orderId}`,
-        String(cap?.id || orderId),
+        captureId,
         paidCents,
         `Campaña Publicitaria #${camp.id} · ${camp.title.slice(0, 60)} (${camp.impressions_allocated.toLocaleString('es-DO')} alcance)`,
       ]
@@ -599,6 +637,9 @@ router.patch('/campaigns/:id/toggle', requireAuth, requireOrgRole(['owner', 'adm
     if (!rows[0]) return res.status(404).json({ error: 'Campaña no encontrada' });
 
     const camp = rows[0];
+    if (camp.status === 'pending_payment' || camp.payment_status === 'unpaid' || camp.payment_status === 'refunded') {
+      return res.status(402).json({ error: 'Completa el pago de esta campaña en PayPal antes de activarla.' });
+    }
     if (camp.status === 'pending_approval') {
       return res.status(409).json({ error: 'Aprueba primero esta campaña en la Cola de Aprobación.' });
     }
@@ -861,10 +902,20 @@ router.post('/approvals/:id/decide', requireAuth, requireOrgRole(['owner', 'admi
     );
 
     if (reqRow.campaign_id) {
-      await pool.query(
-        'UPDATE campaigns SET status = $2, updated_at = NOW() WHERE id = $1',
-        [reqRow.campaign_id, nextCampaignStatus]
-      );
+      if (decision === 'approve') {
+        await pool.query(
+          `UPDATE campaigns
+              SET status = CASE WHEN payment_status IN ('paid', 'comped') THEN 'active' ELSE 'pending_payment' END,
+                  updated_at = NOW()
+            WHERE id = $1`,
+          [reqRow.campaign_id]
+        );
+      } else {
+        await pool.query(
+          'UPDATE campaigns SET status = $2, updated_at = NOW() WHERE id = $1',
+          [reqRow.campaign_id, nextCampaignStatus]
+        );
+      }
     }
 
     await writeAuditLog({

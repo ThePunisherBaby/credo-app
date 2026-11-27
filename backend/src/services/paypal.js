@@ -30,8 +30,11 @@ const PAYPAL_WEBHOOK_EVENTS = [
   'BILLING.SUBSCRIPTION.EXPIRED',
   'BILLING.SUBSCRIPTION.PAYMENT.FAILED',
   'PAYMENT.SALE.COMPLETED',
+  'PAYMENT.SALE.REFUNDED',
+  'PAYMENT.SALE.REVERSED',
   'PAYMENT.CAPTURE.COMPLETED',
   'PAYMENT.CAPTURE.REFUNDED',
+  'PAYMENT.CAPTURE.REVERSED',
   'VAULT.PAYMENT-TOKEN.CREATED',
 ];
 
@@ -200,8 +203,8 @@ async function generateBrowserSafeClientToken(domains = ['credoapp.tech']) {
   };
 }
 
-async function paypalRequest(method, apiPath, body = null, { requestId = null } = {}) {
-  const token = await getAccessToken();
+async function paypalRequest(method, apiPath, body = null, { requestId = null, _retried401 = false } = {}) {
+  const token = await getAccessToken({ forceRefresh: _retried401 });
   const headers = {
     Authorization: `Bearer ${token}`,
     Accept: 'application/json',
@@ -216,6 +219,12 @@ async function paypalRequest(method, apiPath, body = null, { requestId = null } 
     headers,
     body: body ? JSON.stringify(body) : undefined,
   });
+
+  if (res.status === 401 && !_retried401) {
+    cachedAccessToken = null;
+    cachedAccessTokenExpiresAt = 0;
+    return paypalRequest(method, apiPath, body, { requestId, _retried401: true });
+  }
 
   if (res.status === 204) return null;
   const text = await res.text();
@@ -592,7 +601,23 @@ async function ensureWebhookRegistered(webhookUrl = 'https://credoapp.tech/api/w
 
   if (existing?.id) {
     resolvedWebhookId = existing.id;
-    return { webhook_id: existing.id, url: existing.url, created: false };
+    const registeredNames = new Set((existing.event_types || []).map((et) => et.name));
+    const missing = PAYPAL_WEBHOOK_EVENTS.filter((name) => !registeredNames.has(name));
+    let upgraded = false;
+    if (missing.length > 0) {
+      await paypalRequest('PATCH', `/v1/notifications/webhooks/${encodeURIComponent(existing.id)}`, [
+        {
+          op: 'replace',
+          path: '/event_types',
+          value: PAYPAL_WEBHOOK_EVENTS.map((name) => ({ name })),
+        },
+      ]).then(() => {
+        upgraded = true;
+      }).catch((err) => {
+        console.warn('[paypal] Webhook event_types PATCH warning:', err.message);
+      });
+    }
+    return { webhook_id: existing.id, url: existing.url, created: false, upgraded };
   }
 
   const created = await paypalRequest(
