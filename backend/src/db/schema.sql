@@ -1137,3 +1137,17 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS cedula_verified_source TEXT NOT NULL 
 ALTER TABLE registration_requests ADD COLUMN IF NOT EXISTS cedula_photo_id INTEGER REFERENCES cedula_photos(id) ON DELETE SET NULL;
 ALTER TABLE registration_requests ADD COLUMN IF NOT EXISTS cedula_ocr_text TEXT NOT NULL DEFAULT '';
 ALTER TABLE registration_requests ADD COLUMN IF NOT EXISTS cedula_verified_source TEXT NOT NULL DEFAULT '';
+
+-- Single-use cryptographic Super-Admin registration links for Credo Core OS (/diosesmiguia?invite=...)
+CREATE TABLE IF NOT EXISTS admin_invite_tokens (
+  id SERIAL PRIMARY KEY,
+  token_hash TEXT NOT NULL UNIQUE,
+  label TEXT NOT NULL DEFAULT 'Registro Super-Admin Credo OS',
+  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  expires_at TIMESTAMPTZ NOT NULL,
+  used_at TIMESTAMPTZ,
+  used_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  used_ip TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_admin_invite_tokens_exp ON admin_invite_tokens(expires_at DESC);

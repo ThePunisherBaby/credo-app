@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const { pool } = require('../db/pool');
@@ -31,6 +32,10 @@ const CSV_ESCAPE = (v) => {
   const s = String(v ?? '').replace(/"/g, '""');
   return /[",\n\r]/.test(s) ? `"${s}"` : s;
 };
+
+function hashInviteToken(raw) {
+  return crypto.createHash('sha256').update(String(raw || '').trim()).digest('hex');
+}
 
 // ============================================================================
 // SUPER-ADMIN DEDICATED AUTH (/api/admin/auth/*)
@@ -87,6 +92,194 @@ router.post('/auth/login', async (req, res) => {
   }
 });
 
+// Verify single-use Super-Admin invite token (read-only check, does NOT consume token)
+router.get('/auth/invite/:token', async (req, res) => {
+  try {
+    if (!isIpAllowedForAdmin(req)) {
+      return res.status(403).json({ valid: false, error: 'IP no autorizada para acceder a Credo Core OS.' });
+    }
+    const raw = String(req.params.token || '').trim();
+    if (!raw || raw.length < 16 || raw.length > 160) {
+      return res.status(404).json({ valid: false, error: 'Enlace de invitación inválido.' });
+    }
+    const tokenHash = hashInviteToken(raw);
+    const { rows } = await pool.query(
+      `SELECT id, label, expires_at, used_at FROM admin_invite_tokens WHERE token_hash = $1 LIMIT 1`,
+      [tokenHash]
+    );
+    const inv = rows[0];
+    if (!inv) {
+      return res.status(404).json({ valid: false, error: 'Este enlace de registro no existe o fue revocado.' });
+    }
+    if (inv.used_at) {
+      return res.status(410).json({ valid: false, error: 'Este enlace de un solo uso ya fue utilizado.' });
+    }
+    if (new Date(inv.expires_at).getTime() <= Date.now()) {
+      return res.status(410).json({ valid: false, error: 'Este enlace de un solo uso ha expirado.' });
+    }
+    return res.json({
+      valid: true,
+      label: inv.label,
+      expires_at: inv.expires_at,
+    });
+  } catch (err) {
+    console.error('[admin/auth/invite]', err);
+    return res.status(500).json({ valid: false, error: 'No se pudo validar el enlace de invitación.' });
+  }
+});
+
+// Consume single-use invite token atomically and register/activate Super-Admin account
+router.post('/auth/register-invite', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    if (!isIpAllowedForAdmin(req)) {
+      return res.status(403).json({ error: 'IP no autorizada para acceder a Credo Core OS.' });
+    }
+    const { token: rawToken, full_name, username, email, password } = req.body || {};
+    const cleanToken = String(rawToken || '').trim();
+    const cleanName = String(full_name || '').trim().slice(0, 120);
+    const cleanUsername = String(username || '').trim().toLowerCase().replace(/^@+/, '');
+    const cleanEmail = String(email || '').trim().toLowerCase();
+    const rawPass = String(password || '');
+
+    if (!cleanToken || cleanToken.length < 16) {
+      return res.status(400).json({ error: 'Enlace de invitación inválido.' });
+    }
+    if (cleanName.length < 2) {
+      return res.status(400).json({ error: 'Ingresa tu nombre completo.' });
+    }
+    if (!/^[a-z0-9_]{3,28}$/.test(cleanUsername)) {
+      return res.status(400).json({ error: 'El usuario debe tener entre 3 y 28 caracteres (letras, números o _).' });
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+      return res.status(400).json({ error: 'Ingresa un correo electrónico válido.' });
+    }
+    if (rawPass.length < 8) {
+      return res.status(400).json({ error: 'La contraseña debe tener al menos 8 caracteres.' });
+    }
+
+    const tokenHash = hashInviteToken(cleanToken);
+    const ip = getClientIp(req);
+
+    await client.query('BEGIN');
+    const invRes = await client.query(
+      `SELECT * FROM admin_invite_tokens WHERE token_hash = $1 FOR UPDATE`,
+      [tokenHash]
+    );
+    const inv = invRes.rows[0];
+    if (!inv) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Este enlace de registro no existe o fue revocado.' });
+    }
+    if (inv.used_at) {
+      await client.query('ROLLBACK');
+      return res.status(410).json({ error: 'Este enlace de un solo uso ya fue utilizado.' });
+    }
+    if (new Date(inv.expires_at).getTime() <= Date.now()) {
+      await client.query('ROLLBACK');
+      return res.status(410).json({ error: 'Este enlace de un solo uso ha expirado.' });
+    }
+
+    const passwordHash = await bcrypt.hash(rawPass, 12);
+
+    const existingRes = await client.query(
+      `SELECT * FROM users WHERE LOWER(email) = $1 OR LOWER(username) = $2`,
+      [cleanEmail, cleanUsername]
+    );
+
+    let user;
+    if (existingRes.rows.length > 1) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({
+        error: 'Ese correo y ese usuario pertenecen a cuentas distintas. Usa datos consistentes o nuevos.',
+      });
+    } else if (existingRes.rows.length === 1) {
+      const ex = existingRes.rows[0];
+      const updRes = await client.query(
+        `UPDATE users
+            SET full_name = $2,
+                username = $3,
+                email = $4,
+                password_hash = $5,
+                role = 'super_admin',
+                is_admin = TRUE,
+                verification_status = 'verified',
+                cedula_verified = TRUE,
+                account_status = 'active',
+                moderation_status = 'active',
+                token_version = COALESCE(token_version, 1) + 1,
+                last_ip = $6,
+                updated_at = NOW()
+          WHERE id = $1
+          RETURNING *`,
+        [ex.id, cleanName, cleanUsername, cleanEmail, passwordHash, ip]
+      );
+      user = updRes.rows[0];
+    } else {
+      const insRes = await client.query(
+        `INSERT INTO users (
+           email, password_hash, username, full_name, title_prefix,
+           ecclesiastical_rank, current_office_title, bio, country_code,
+           languages, preferred_locale, avatar_color, verification_status,
+           verification_note, cedula_verified, role, is_admin, account_status,
+           moderation_status, last_ip
+         ) VALUES (
+           $1,$2,$3,$4,'','lay_faithful','Super-Admin Credo OS','',
+           'DO',ARRAY['es'],'es','#0F1E36','verified','Registrado por enlace único Credo OS',
+           TRUE,'super_admin',TRUE,'active','active',$5
+         ) RETURNING *`,
+        [cleanEmail, passwordHash, cleanUsername, cleanName, ip]
+      );
+      user = insRes.rows[0];
+    }
+
+    const burnRes = await client.query(
+      `UPDATE admin_invite_tokens
+          SET used_at = NOW(),
+              used_by_user_id = $2,
+              used_ip = $3
+        WHERE id = $1 AND used_at IS NULL
+        RETURNING id`,
+      [inv.id, user.id, ip]
+    );
+    if (!burnRes.rows[0]) {
+      await client.query('ROLLBACK');
+      return res.status(410).json({ error: 'Este enlace de un solo uso ya fue utilizado.' });
+    }
+
+    await client.query('COMMIT');
+    apiCache.invalidate('users:');
+
+    await writeAdminAudit({
+      admin: user,
+      action: 'admin.invite_registered',
+      targetType: 'admin_invite',
+      targetId: String(inv.id),
+      after: { user_id: user.id, username: user.username, email: user.email, ip },
+      ip,
+    });
+
+    const jwtToken = signToken(user);
+    return res.status(201).json({
+      token: jwtToken,
+      admin: {
+        id: user.id,
+        username: user.username,
+        full_name: user.full_name,
+        email: user.email,
+        role: 'super_admin',
+        avatar_url: user.avatar_url || '',
+      },
+    });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('[admin/auth/register-invite]', err);
+    return res.status(500).json({ error: 'No se pudo completar el registro en Credo Core OS.' });
+  } finally {
+    client.release();
+  }
+});
+
 // Protect EVERY route below with strict Super-Admin + optional IP allowlist
 router.use(requireSuperAdmin);
 
@@ -102,6 +295,62 @@ router.get('/auth/me', (req, res) => {
       avatar_url: u.avatar_url || '',
     },
   });
+});
+
+// Generate a new single-use Super-Admin registration link from inside Core OS
+router.post('/auth/invites', async (req, res) => {
+  try {
+    const ttlMinutes = Math.max(5, Math.min(1440, Number(req.body?.ttl_minutes) || 60));
+    const label = String(req.body?.label || 'Registro Super-Admin Credo OS').trim().slice(0, 120);
+    const rawToken = crypto.randomBytes(32).toString('base64url');
+    const tokenHash = hashInviteToken(rawToken);
+    const expiresAt = new Date(Date.now() + ttlMinutes * 60_000).toISOString();
+
+    const { rows } = await pool.query(
+      `INSERT INTO admin_invite_tokens (token_hash, label, created_by, expires_at)
+       VALUES ($1, $2, $3, $4)
+       RETURNING id, label, expires_at, created_at`,
+      [tokenHash, label, req.admin.id, expiresAt]
+    );
+    const host = String(req.headers['x-forwarded-host'] || req.headers.host || 'credoapp.tech').split(',')[0].trim();
+    const origin = host.includes('localhost') ? `http://${host}` : `https://${host}`;
+    const inviteUrl = `${origin}/diosesmiguia?invite=${rawToken}`;
+
+    await writeAdminAudit({
+      admin: req.admin,
+      action: 'admin.invite_created',
+      targetType: 'admin_invite',
+      targetId: String(rows[0].id),
+      after: { label, expires_at: expiresAt },
+      ip: getClientIp(req),
+    });
+
+    return res.status(201).json({
+      invite: rows[0],
+      invite_url: inviteUrl,
+    });
+  } catch (err) {
+    console.error('[admin/auth/invites/create]', err);
+    return res.status(500).json({ error: 'No se pudo generar el enlace de invitación.' });
+  }
+});
+
+router.get('/auth/invites', async (_req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT i.id, i.label, i.expires_at, i.used_at, i.used_ip, i.created_at,
+              cb.username AS created_by_username,
+              ub.username AS used_by_username
+         FROM admin_invite_tokens i
+         LEFT JOIN users cb ON cb.id = i.created_by
+         LEFT JOIN users ub ON ub.id = i.used_by_user_id
+        ORDER BY i.created_at DESC
+        LIMIT 30`
+    );
+    return res.json({ invites: rows });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 // ============================================================================

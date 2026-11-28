@@ -144,7 +144,11 @@ async function api(path, opts = {}) {
     data = { raw: text };
   }
   if (res.status === 401 || res.status === 403) {
-    if (path !== '/auth/login') {
+    const isPreAuth =
+      path === '/auth/login' ||
+      path === '/auth/register-invite' ||
+      path.startsWith('/auth/invite/');
+    if (!isPreAuth) {
       handleUnauthorized();
     }
     throw new Error(data.error || 'Sesión expirada o sin privilegios Super-Admin.');
@@ -211,6 +215,7 @@ function meterClass(pct) {
 function showLoginGate(msg = '') {
   stopSse();
   $('coreApp').hidden = true;
+  if ($('coreInviteGate')) $('coreInviteGate').hidden = true;
   $('coreLoginGate').hidden = false;
   const errEl = $('coreLoginErr');
   if (msg) {
@@ -230,6 +235,7 @@ function handleUnauthorized() {
 
 function showAppShell() {
   $('coreLoginGate').hidden = true;
+  if ($('coreInviteGate')) $('coreInviteGate').hidden = true;
   $('coreApp').hidden = false;
   const chip = $('coreAdminChip');
   if (chip && state.admin) {
@@ -3188,10 +3194,240 @@ function bindGlobalEvents() {
       btn.textContent = 'Desbloquear Consola Maestra';
     }
   });
+
+  // Show/hide password toggle on single-use invite registration form
+  $('invTogglePass')?.addEventListener('click', () => {
+    const inp = $('invPassword');
+    const btn = $('invTogglePass');
+    if (!inp || !btn) return;
+    const nextShow = inp.type === 'password';
+    inp.type = nextShow ? 'text' : 'password';
+    btn.textContent = nextShow ? 'Ocultar' : 'Mostrar';
+    btn.setAttribute('aria-pressed', nextShow ? 'true' : 'false');
+    inp.focus();
+  });
+
+  $('coreInviteGoLogin')?.addEventListener('click', () => {
+    try {
+      history.replaceState(null, '', BASE_PATH);
+    } catch {}
+    showLoginGate('');
+  });
+}
+
+function initPostInteractionValidation(formEl) {
+  if (!formEl || formEl.dataset.mwgBound === '1') return;
+  formEl.dataset.mwgBound = '1';
+
+  const supportsUserInvalid = typeof CSS !== 'undefined' && CSS.supports?.('selector(:user-invalid)');
+  const dirtyState = new WeakMap();
+  const flagged = new WeakSet();
+  const announced = new WeakSet();
+
+  const announcer = document.createElement('div');
+  announcer.setAttribute('aria-live', 'polite');
+  announcer.className = 'visually-hidden';
+  document.body.append(announcer);
+  let announceTimer = null;
+  let announcedField = null;
+
+  const linkError = (el, shown) => {
+    const errorId = el.dataset.error;
+    if (!errorId) return;
+    const ids = (el.getAttribute('aria-describedby') || '').split(/\s+/).filter((id) => id && id !== errorId);
+    if (shown) ids.push(errorId);
+    if (ids.length) el.setAttribute('aria-describedby', ids.join(' '));
+    else el.removeAttribute('aria-describedby');
+  };
+
+  const spokenText = (node) => {
+    const copy = node.cloneNode(true);
+    copy.querySelectorAll('[aria-hidden="true"]').forEach((n) => n.remove());
+    copy.querySelectorAll('[role="img"][aria-label]').forEach((n) => n.replaceWith(`${n.getAttribute('aria-label')}: `));
+    return copy.textContent.replace(/\s+/g, ' ').trim();
+  };
+
+  const announceError = (el) => {
+    const errEl = document.getElementById(el.dataset.error || '');
+    if (!errEl) return;
+    const label = el.labels?.[0] ? `${spokenText(el.labels[0])}: ` : '';
+    clearTimeout(announceTimer);
+    announcer.textContent = '';
+    announcedField = el;
+    announceTimer = setTimeout(() => {
+      announcer.textContent = label + spokenText(errEl);
+    }, 500);
+  };
+
+  const syncAria = (el, announce = false) => {
+    if (!el?.matches?.('input, select, textarea')) return;
+    const invalid = supportsUserInvalid ? el.matches(':user-invalid') : el.classList.contains('user-invalid-fallback');
+    if (invalid) {
+      if (announce && !announced.has(el)) {
+        announceError(el);
+        announced.add(el);
+      }
+      el.setAttribute('aria-invalid', 'true');
+      linkError(el, true);
+      flagged.add(el);
+    } else if (flagged.has(el) || el.getAttribute('aria-invalid') !== 'true') {
+      el.setAttribute('aria-invalid', 'false');
+      linkError(el, false);
+      flagged.delete(el);
+      announced.delete(el);
+      if (announcedField === el) {
+        clearTimeout(announceTimer);
+        announcer.textContent = '';
+      }
+    }
+  };
+
+  const updateFallback = (el, announce = false) => {
+    if (supportsUserInvalid || !el?.validity) return;
+    const isValid = el.validity.valid;
+    el.classList.toggle('user-invalid-fallback', !isValid);
+    el.classList.toggle('user-valid-fallback', isValid);
+    syncAria(el, announce);
+  };
+
+  formEl.querySelectorAll('input, select, textarea').forEach((el) => {
+    el.setAttribute('aria-invalid', 'false');
+  });
+
+  formEl.addEventListener(
+    'blur',
+    (e) => {
+      const el = e.target;
+      if (!supportsUserInvalid) {
+        const st = dirtyState.get(el) || { hasInteracted: false, hasBlurred: false };
+        st.hasBlurred = true;
+        dirtyState.set(el, st);
+        if (st.hasInteracted) updateFallback(el, true);
+      } else {
+        syncAria(el, true);
+      }
+    },
+    true
+  );
+
+  formEl.addEventListener('input', (e) => {
+    const el = e.target;
+    if (!supportsUserInvalid) {
+      const st = dirtyState.get(el) || { hasInteracted: false, hasBlurred: false };
+      st.hasInteracted = true;
+      dirtyState.set(el, st);
+      if (st.hasBlurred) updateFallback(el, false);
+    } else if (el.hasAttribute('aria-invalid')) {
+      syncAria(el, false);
+    }
+  });
+
+  formEl.addEventListener(
+    'invalid',
+    (e) => {
+      const el = e.target;
+      announced.add(el);
+      if (!supportsUserInvalid) {
+        dirtyState.set(el, { hasInteracted: true, hasBlurred: true });
+        updateFallback(el, false);
+      } else {
+        syncAria(el, false);
+      }
+    },
+    true
+  );
+}
+
+async function openInviteGate(inviteToken) {
+  stopSse();
+  $('coreApp').hidden = true;
+  $('coreLoginGate').hidden = true;
+  const gate = $('coreInviteGate');
+  const checking = $('coreInviteChecking');
+  const invalidBox = $('coreInviteInvalid');
+  const invalidMsg = $('coreInviteInvalidMsg');
+  const form = $('coreInviteForm');
+  const metaEl = $('coreInviteMeta');
+  if (!gate) {
+    showLoginGate('');
+    return;
+  }
+
+  gate.hidden = false;
+  checking.hidden = false;
+  invalidBox.hidden = true;
+  form.hidden = true;
+
+  try {
+    const info = await api(`/auth/invite/${encodeURIComponent(inviteToken)}`);
+    checking.hidden = true;
+    if (!info?.valid) {
+      invalidMsg.textContent = info?.error || 'Este enlace de un solo uso ya no es válido.';
+      invalidBox.hidden = false;
+      return;
+    }
+    if (metaEl && info.expires_at) {
+      metaEl.textContent = `VÁLIDO HASTA ${fmtDate(info.expires_at).toUpperCase()}`;
+    }
+    form.hidden = false;
+    initPostInteractionValidation(form);
+    $('invFullName')?.focus();
+
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      if (!form.checkValidity()) {
+        form.reportValidity();
+        const firstBad = form.querySelector(':invalid');
+        firstBad?.focus();
+        return;
+      }
+      const errEl = $('coreInviteErr');
+      const btn = $('coreInviteSubmit');
+      errEl.hidden = true;
+      btn.disabled = true;
+      btn.textContent = 'Creando acceso Super-Admin…';
+      try {
+        const res = await api('/auth/register-invite', {
+          method: 'POST',
+          body: {
+            token: inviteToken,
+            full_name: $('invFullName').value.trim(),
+            username: $('invUsername').value.trim(),
+            email: $('invEmail').value.trim(),
+            password: $('invPassword').value,
+          },
+        });
+        state.token = res.token;
+        state.admin = res.admin;
+        localStorage.setItem(TOKEN_KEY, res.token);
+        $('invPassword').value = '';
+        try {
+          history.replaceState(null, '', BASE_PATH);
+        } catch {}
+        toast('Cuenta Super-Admin creada. Enlace consumido con éxito.', 'ok');
+        showAppShell();
+      } catch (err) {
+        errEl.textContent = err.message || 'No se pudo completar el registro.';
+        errEl.hidden = false;
+        btn.disabled = false;
+        btn.textContent = 'Crear cuenta Super-Admin y entrar';
+      }
+    };
+  } catch (err) {
+    checking.hidden = true;
+    invalidMsg.textContent = err?.message || 'Este enlace de un solo uso ya fue utilizado o expiró.';
+    invalidBox.hidden = false;
+  }
 }
 
 async function boot() {
   bindGlobalEvents();
+  const inviteToken = new URLSearchParams(window.location.search).get('invite')?.trim() || '';
+  if (inviteToken) {
+    await openInviteGate(inviteToken);
+    return;
+  }
+
   const saved = localStorage.getItem(TOKEN_KEY) || localStorage.getItem(MAIN_TOKEN_KEY) || '';
   if (!saved) {
     showLoginGate('');

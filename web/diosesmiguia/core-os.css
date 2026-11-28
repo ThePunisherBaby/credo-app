@@ -287,6 +287,54 @@ button, input, select, textarea { font: inherit; color: inherit; }
   font-size: 11px;
   color: var(--c-muted);
 }
+.core-field-hint {
+  display: block;
+  font-size: 11px;
+  color: var(--c-muted);
+  margin-bottom: 2px;
+}
+.core-field-err {
+  display: none;
+  font-size: 11.5px;
+  color: #FCA5A5;
+  margin-top: 2px;
+}
+.core-pass-wrap {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+}
+.core-pass-wrap input {
+  flex: 1;
+  min-width: 0;
+}
+.core-pass-toggle {
+  flex-shrink: 0;
+  min-height: 36px;
+  padding: 0 11px;
+}
+.core-field :is(input, select, textarea):is(:user-invalid, .user-invalid-fallback) {
+  border-color: var(--c-red);
+  background: rgba(239, 68, 68, 0.08);
+}
+.core-field :is(input, select, textarea):is(:user-invalid, .user-invalid-fallback) + .core-field-err,
+.core-field:has(.core-pass-wrap input:is(:user-invalid, .user-invalid-fallback)) .core-field-err {
+  display: block;
+}
+.core-field :is(input, select, textarea):is(:user-valid, .user-valid-fallback) {
+  border-color: rgba(16, 185, 129, 0.55);
+}
+.visually-hidden:where(:not(:focus-within, :active)) {
+  position: absolute !important;
+  clip-path: inset(50%) !important;
+  overflow: hidden !important;
+  width: 1px !important;
+  height: 1px !important;
+  margin: -1px !important;
+  padding: 0 !important;
+  border: 0 !important;
+  white-space: nowrap !important;
+}
 
 /* ==================== LAYOUT SHELL ==================== */
 .core-shell {

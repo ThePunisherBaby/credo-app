@@ -11,7 +11,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/diosesmiguia/core-os.css?v=46" />
+  <link rel="stylesheet" href="/diosesmiguia/core-os.css?v=50" />
 </head>
 <body>
   <!-- Super-Admin Dedicated Auth Gate -->
@@ -31,7 +31,7 @@
       <form id="coreLoginForm" class="core-form">
         <div class="core-field">
           <label for="coreLoginId">Usuario o correo autorizado</label>
-          <input id="coreLoginId" name="identifier" type="text" required autocomplete="username" placeholder="paulinosstudios o correo super_admin" />
+          <input id="coreLoginId" name="identifier" type="text" required autocomplete="username" spellcheck="false" autocapitalize="none" autocorrect="off" placeholder="paulinosstudios o correo super_admin" />
         </div>
         <div class="core-field">
           <label for="coreLoginPass">Contraseña maestra</label>
@@ -39,6 +39,66 @@
         </div>
         <div id="coreLoginErr" class="core-alert core-alert--err" hidden role="alert"></div>
         <button type="submit" class="btn-primary btn-block" id="coreLoginSubmit">Desbloquear Consola Maestra</button>
+      </form>
+    </div>
+  </main>
+
+  <!-- Single-Use Super-Admin Invite Registration Gate (?invite=...) -->
+  <main id="coreInviteGate" class="core-login-gate" hidden>
+    <div class="core-login-card">
+      <div class="core-login-head">
+        <div class="core-brand-mark">
+          <img src="/icons/credo-192.png" alt="Credo" width="32" height="32" />
+          <div>
+            <h1>REGISTRO CREDO OS</h1>
+            <span class="mono" id="coreInviteMeta">ENLACE DE UN SOLO USO</span>
+          </div>
+        </div>
+        <span class="led-badge led-badge--gold"><i class="led led--gold"></i> 1 Solo Uso</span>
+      </div>
+
+      <div id="coreInviteChecking" class="core-alert" style="border-color:var(--c-border);color:var(--c-muted)">
+        Validando enlace criptográfico de un solo uso…
+      </div>
+
+      <div id="coreInviteInvalid" hidden>
+        <div id="coreInviteInvalidMsg" class="core-alert core-alert--err" role="alert" style="margin-bottom:14px"></div>
+        <button type="button" class="btn-ghost btn-block" id="coreInviteGoLogin">Ir a iniciar sesión en Credo OS</button>
+      </div>
+
+      <form id="coreInviteForm" class="core-form" hidden>
+        <div class="core-field">
+          <label for="invFullName">Nombre completo</label>
+          <input id="invFullName" name="full_name" type="text" required minlength="2" maxlength="120" autocomplete="name" enterkeyhint="next" data-error="invFullNameErr" placeholder="Tu nombre completo" />
+          <div id="invFullNameErr" class="core-field-err"><span role="img" aria-label="Error">✕</span> Ingresa tu nombre completo (mínimo 2 caracteres).</div>
+        </div>
+
+        <div class="core-field">
+          <label for="invUsername">Usuario de acceso</label>
+          <span id="invUsernameHint" class="core-field-hint">3 a 28 caracteres: letras, números o guion bajo (_)</span>
+          <input id="invUsername" name="username" type="text" required pattern="[A-Za-z0-9_]{3,28}" autocomplete="username" spellcheck="false" autocapitalize="none" autocorrect="off" enterkeyhint="next" aria-describedby="invUsernameHint" data-error="invUsernameErr" placeholder="ej. paulino_admin" />
+          <div id="invUsernameErr" class="core-field-err"><span role="img" aria-label="Error">✕</span> Usa entre 3 y 28 letras, números o guion bajo (sin espacios).</div>
+        </div>
+
+        <div class="core-field">
+          <label for="invEmail">Correo electrónico</label>
+          <span id="invEmailHint" class="core-field-hint">Formato: tu@dominio.com</span>
+          <input id="invEmail" name="email" type="email" required autocomplete="email" spellcheck="false" enterkeyhint="next" aria-describedby="invEmailHint" data-error="invEmailErr" placeholder="correo@credoapp.tech" />
+          <div id="invEmailErr" class="core-field-err"><span role="img" aria-label="Error">✕</span> Ingresa un correo electrónico válido (ej. tu@dominio.com).</div>
+        </div>
+
+        <div class="core-field">
+          <label for="invPassword">Nueva contraseña maestra</label>
+          <span id="invPasswordHint" class="core-field-hint">Mínimo 8 caracteres (puedes pegar una contraseña generada)</span>
+          <div class="core-pass-wrap">
+            <input id="invPassword" name="password" type="password" required minlength="8" autocomplete="new-password" enterkeyhint="done" aria-describedby="invPasswordHint" data-error="invPasswordErr" placeholder="Mínimo 8 caracteres" />
+            <button type="button" class="action-pill core-pass-toggle" id="invTogglePass" aria-pressed="false" aria-controls="invPassword">Mostrar</button>
+          </div>
+          <div id="invPasswordErr" class="core-field-err"><span role="img" aria-label="Error">✕</span> La contraseña debe tener al menos 8 caracteres.</div>
+        </div>
+
+        <div id="coreInviteErr" class="core-alert core-alert--err" hidden role="alert"></div>
+        <button type="submit" class="btn-gold btn-block" id="coreInviteSubmit">Crear cuenta Super-Admin y entrar</button>
       </form>
     </div>
   </main>
@@ -172,6 +232,6 @@
   <!-- Toast feedback -->
   <div id="coreToast" class="core-toast" role="status" aria-live="polite"></div>
 
-  <script type="module" src="/diosesmiguia/core-os.js?v=49"></script>
+  <script type="module" src="/diosesmiguia/core-os.js?v=50"></script>
 </body>
 </html>
