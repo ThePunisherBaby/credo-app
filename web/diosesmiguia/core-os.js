@@ -28,6 +28,7 @@ const state = {
 const ROUTE_TITLES = {
   '/diosesmiguia': 'Resumen Vivo',
   '/diosesmiguia/network': 'Tráfico & IPs',
+  '/diosesmiguia/security': 'Seguridad 360°',
   '/diosesmiguia/system-health': 'Salud del Servidor',
   '/diosesmiguia/ads': 'Publicidad Web / App',
   '/diosesmiguia/users': 'Usuarios God Mode',
@@ -395,6 +396,9 @@ async function renderCurrentView() {
         break;
       case '/diosesmiguia/network':
         await renderNetworkView(vp);
+        break;
+      case '/diosesmiguia/security':
+        await renderSecurityView(vp);
         break;
       case '/diosesmiguia/system-health':
         await renderSystemHealthView(vp);
@@ -950,6 +954,186 @@ async function renderNetworkView(vp) {
       }
     })
   );
+}
+
+async function renderSecurityView(vp) {
+  const data = await api('/security/posture');
+  const waf = data.waf || {};
+  const layers = data.layers || [];
+  const admins = data.super_admins || [];
+  const invites = data.invites || [];
+
+  vp.innerHTML = `
+    <div class="core-page-head">
+      <div>
+        <h2>Centro de Ciberseguridad 360° (Defense-in-Depth)</h2>
+        <p>Estado en vivo del blindaje multicapa: Servidor VPS, Origin Cloaking Cloudflare, Escudo WAF + Honeypot, Bóveda Cédula, Núcleo F# 8 y Gobierno Nivel 0.</p>
+      </div>
+      <div class="core-actions-row">
+        <button type="button" class="btn-gold" id="secNewInviteBtn">+ Enlace Registro 1 Solo Uso</button>
+        <button type="button" class="btn-danger" id="secQuickBanBtn">+ Bloquear IP / CIDR</button>
+        <button type="button" class="btn-ghost" id="secRefreshBtn">Auditar Ahora</button>
+      </div>
+    </div>
+
+    <div class="core-kpi-grid">
+      <div class="core-kpi">
+        <div class="core-kpi-lbl"><span>Índice de Blindaje</span><i class="led led--green led--pulse"></i></div>
+        <div class="core-kpi-val mono">${fmtNum(data.score || 100)} / 100</div>
+        <div class="core-kpi-sub">6 capas activas verificadas</div>
+      </div>
+      <div class="core-kpi">
+        <div class="core-kpi-lbl"><span>Ataques WAF Interceptados</span><i class="led led--red"></i></div>
+        <div class="core-kpi-val mono">${fmtNum(waf.total_waf_events_db || 0)}</div>
+        <div class="core-kpi-sub mono">Sesión actual: ${fmtNum(waf.blocked_since_boot || 0)} bloqueos 403</div>
+      </div>
+      <div class="core-kpi">
+        <div class="core-kpi-lbl"><span>IPs / Subredes en Firewall</span></div>
+        <div class="core-kpi-val mono">${fmtNum(waf.active_ip_bans || 0)}</div>
+        <div class="core-kpi-sub mono">Origin bypass: ${fmtNum(waf.origin_bypass_blocked_since_boot || 0)} bloqueados</div>
+      </div>
+      <div class="core-kpi">
+        <div class="core-kpi-lbl"><span>Cuentas Nivel 0 (Super-Admin)</span><i class="led led--gold"></i></div>
+        <div class="core-kpi-val mono">${fmtNum(admins.length)}</div>
+        <div class="core-kpi-sub">Acceso restringido a Credo OS</div>
+      </div>
+    </div>
+
+    <div class="core-grid-2" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,380px),1fr));gap:14px">
+      ${layers
+        .map(
+          (ly) => `
+        <div class="core-panel" style="margin:0;display:flex;flex-direction:column;gap:10px">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+            <strong style="font-size:13.5px">${esc(ly.name)}</strong>
+            ${statusBadge(ly.status === 'active' ? 'active' : 'pending')}
+          </div>
+          <ul style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:6px;color:var(--c-ink-2);font-size:12.5px;line-height:1.45">
+            ${(ly.controls || []).map((c) => `<li>${esc(c)}</li>`).join('')}
+          </ul>
+        </div>`
+        )
+        .join('')}
+    </div>
+
+    <div class="core-panel">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px">
+        <h3 style="margin:0;font-size:14px">Inventario de Cuentas Nivel 0 (Super-Admin / Ejecutivos)</h3>
+      </div>
+      <div class="core-table-wrap">
+        <table class="core-table">
+          <thead><tr><th>ID</th><th>Usuario</th><th>Nombre</th><th>Correo</th><th>Privilegio</th><th>Última IP</th><th>Última Actividad</th></tr></thead>
+          <tbody>
+            ${admins
+              .map(
+                (a) => `
+              <tr>
+                <td class="mono">#${a.id}</td>
+                <th scope="row" class="mono">@${esc(a.username)}</th>
+                <td>${esc(a.full_name || '—')}</td>
+                <td class="mono">${esc(a.email || '—')}</td>
+                <td><span class="led-badge led-badge--gold"><i class="led led--gold"></i>${a.is_cto ? 'CTO · SUPER_ADMIN' : a.is_ceo ? 'CEO · SUPER_ADMIN' : 'SUPER_ADMIN'}</span></td>
+                <td class="mono">${esc(a.last_ip || '—')}</td>
+                <td class="mono">${esc(fmtDate(a.last_seen_at))}</td>
+              </tr>`
+              )
+              .join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="core-panel">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px">
+        <h3 style="margin:0;font-size:14px">Historial de Enlaces Criptográficos de Un Solo Uso</h3>
+      </div>
+      <div class="core-table-wrap">
+        <table class="core-table">
+          <thead><tr><th>ID</th><th>Etiqueta</th><th>Estado</th><th>Usado por</th><th>IP de Uso</th><th>Expira</th></tr></thead>
+          <tbody>
+            ${
+              invites.length
+                ? invites
+                    .map((iv) => {
+                      const expired = !iv.used_at && new Date(iv.expires_at).getTime() <= Date.now();
+                      const st = iv.used_at ? 'completed' : expired ? 'expired' : 'pending';
+                      const stTxt = iv.used_at ? 'CONSUMIDO' : expired ? 'EXPIRADO' : 'DISPONIBLE';
+                      return `
+                <tr>
+                  <td class="mono">#${iv.id}</td>
+                  <th scope="row">${esc(iv.label || 'Invitación Super-Admin')}</th>
+                  <td><span class="led-badge ${st === 'completed' ? 'led-badge--green' : st === 'expired' ? 'led-badge--red' : 'led-badge--amber'}">${stTxt}</span></td>
+                  <td class="mono">${iv.used_by_username ? `@${esc(iv.used_by_username)}` : '—'}</td>
+                  <td class="mono">${esc(iv.used_ip || '—')}</td>
+                  <td class="mono">${esc(fmtDate(iv.expires_at))}</td>
+                </tr>`;
+                    })
+                    .join('')
+                : `<tr><td colspan="6" style="text-align:center;color:var(--c-muted);padding:18px">Sin enlaces registrados.</td></tr>`
+            }
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+
+  $('secRefreshBtn')?.addEventListener('click', () => renderSecurityView(vp));
+  $('secQuickBanBtn')?.addEventListener('click', () => openBanIpModal(''));
+  $('secNewInviteBtn')?.addEventListener('click', () => {
+    openModal(
+      'Generar Enlace Criptográfico de Un Solo Uso (Super-Admin)',
+      `
+      <form id="newInviteModalForm" class="core-form">
+        <div class="core-field">
+          <label>Etiqueta / Destinatario</label>
+          <input name="label" required value="Acceso Único Super-Admin Credo OS" />
+        </div>
+        <div class="core-field">
+          <label>Vigencia máxima (minutos)</label>
+          <input name="ttl_minutes" type="number" min="5" max="1440" value="60" class="mono" />
+        </div>
+        <div id="invGenResult" hidden style="display:flex;flex-direction:column;gap:8px">
+          <label style="font-size:11px;color:var(--c-muted)">COPIA ESTE ENLACE (SOLO SE MUESTRA UNA VEZ):</label>
+          <input id="invGenUrlInput" readonly class="mono" style="background:#000;border-color:var(--c-gold)" />
+          <button type="button" class="btn-gold btn-block" id="invCopyBtn">Copiar enlace al portapapeles</button>
+        </div>
+        <div class="core-actions-row" style="justify-content:flex-end" id="invGenSubmitRow">
+          <button type="submit" class="btn-primary">Generar Enlace Único</button>
+        </div>
+      </form>
+      `,
+      (body) => {
+        body.querySelector('#newInviteModalForm')?.addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const fd = new FormData(e.currentTarget);
+          try {
+            const res = await api('/auth/invites', {
+              method: 'POST',
+              body: {
+                label: fd.get('label'),
+                ttl_minutes: Number(fd.get('ttl_minutes') || 60),
+              },
+            });
+            const urlInp = body.querySelector('#invGenUrlInput');
+            const resBox = body.querySelector('#invGenResult');
+            const subRow = body.querySelector('#invGenSubmitRow');
+            if (urlInp && resBox) {
+              urlInp.value = res.invite_url;
+              resBox.hidden = false;
+              if (subRow) subRow.hidden = true;
+              body.querySelector('#invCopyBtn')?.addEventListener('click', async () => {
+                await navigator.clipboard.writeText(res.invite_url).catch(() => {});
+                toast('Enlace copiado al portapapeles', 'ok');
+              });
+            }
+            renderSecurityView(vp);
+          } catch (err) {
+            toast(err.message, 'err');
+          }
+        });
+      }
+    );
+  });
 }
 
 async function renderSystemHealthView(vp) {

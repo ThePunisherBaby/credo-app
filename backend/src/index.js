@@ -172,16 +172,44 @@ app.use(
         upgradeInsecureRequests: [],
       },
     },
+    hsts: {
+      maxAge: 63072000,
+      includeSubDomains: true,
+      preload: true,
+    },
+    referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
   })
 );
-app.use((_req, res, next) => {
+app.disable('x-powered-by');
+
+app.use((req, res, next) => {
   res.setHeader(
     'Permissions-Policy',
     'camera=(), microphone=(), geolocation=(), interest-cohort=(), payment=(self "https://www.paypal.com" "https://*.paypal.com")'
   );
+  if (req.path.startsWith('/diosesmiguia') || req.path.startsWith('/api/admin')) {
+    res.setHeader('X-Frame-Options', 'DENY');
+  }
   next();
 });
-app.use(cors());
+
+// Strict Origin Allowlist CORS (blocks cross-origin API abuse from untrusted third-party sites while allowing Credo Web, VOXON & Native Apps)
+const ALLOWED_ORIGIN_RE =
+  /^(?:https:\/\/(?:[a-z0-9-]+\.)?(?:credoapp\.tech|voxon\.cloud|hstgr\.cloud)|capacitor:\/\/localhost|ionic:\/\/localhost|http:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?)$/i;
+
+app.use(
+  cors({
+    origin(origin, cb) {
+      if (!origin || ALLOWED_ORIGIN_RE.test(origin)) {
+        return cb(null, true);
+      }
+      return cb(null, false);
+    },
+    credentials: true,
+    maxAge: 86400,
+  })
+);
+
 app.use(
   compression({
     filter: (req, res) => {
@@ -197,12 +225,19 @@ app.use(
     },
   })
 );
-app.use(express.json({ limit: '22mb' }));
 
-// Global Security & Telemetry Middlewares (IP/CIDR bans -> Active WAF & Honeypot Shield -> auth -> live telemetry -> maintenance)
-const { securityShieldMiddleware } = require('./middleware/securityShield');
+// Global Security & Telemetry Middlewares (IP/CIDR bans -> Active WAF & Origin Cloaking Shield -> Body Parsers -> Input Sanitizer)
+const { securityShieldMiddleware, sanitizeInputMiddleware } = require('./middleware/securityShield');
 app.use(ipBanMiddleware);
 app.use(securityShieldMiddleware);
+
+// Route-scoped 22MB JSON parser ONLY for verified base64 media/OCR upload endpoints; strict 512KB limit everywhere else (Anti-RAM DoS)
+const largeMediaJsonParser = express.json({ limit: '22mb' });
+app.use(['/api/v1/auth/verify-cedula-photo', '/api/v1/media', '/api/v1/rosary'], largeMediaJsonParser);
+app.use(express.json({ limit: '512kb' }));
+app.use(express.urlencoded({ extended: false, limit: '256kb' }));
+app.use(sanitizeInputMiddleware);
+
 app.use(optionalAuth);
 app.use(recordRequestTelemetry);
 app.use(maintenanceMiddleware);
@@ -227,12 +262,27 @@ app.get('/health', async (_req, res) => {
   }
 });
 
-// Rate limiting for auth endpoints & strict anti-brute-force on Super-Admin Auth
+// Layered Rate Limiters: Global API Anti-Scraping + Auth Limiter + Strict Super-Admin Anti-Brute-Force
+const globalApiLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 360,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => require('./services/systemState').getClientIp(req) || req.ip,
+  skip: (req) =>
+    req.path === '/health' ||
+    req.path.startsWith('/api/webhooks/paypal') ||
+    req.path.startsWith('/api/v1/webhooks/paypal') ||
+    req.path.startsWith('/api/admin/telemetry/stream'),
+  message: { error: 'Límite de peticiones por minuto excedido. Espera unos segundos.' },
+});
+
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 80,
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: (req) => require('./services/systemState').getClientIp(req) || req.ip,
 });
 
 const adminAuthLimiter = rateLimit({
@@ -240,9 +290,11 @@ const adminAuthLimiter = rateLimit({
   max: 15,
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: (req) => require('./services/systemState').getClientIp(req) || req.ip,
   message: { error: 'Demasiados intentos en Credo Core OS. Intenta nuevamente en 15 minutos.' },
 });
 
+app.use('/api', globalApiLimiter);
 app.use('/api/v1/auth', authLimiter, authRoutes);
 app.use('/api/v1/units', unitsRoutes);
 app.use('/api/v1/users', usersRoutes);

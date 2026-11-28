@@ -1,5 +1,12 @@
 const { pool } = require('../db/pool');
-const { getClientIp, findActiveIpBan, refreshSystemState } = require('../services/systemState');
+const {
+  getClientIp,
+  getUpstreamProxyPeerIp,
+  isCloudflareEdgeIp,
+  isPrivateOrLoopbackIp,
+  findActiveIpBan,
+  refreshSystemState,
+} = require('../services/systemState');
 const { evictSessionsForUserOrIp } = require('../services/liveTelemetry');
 
 // Throttle DB writes per offending IP so high-volume bot floods never saturate PostgreSQL
@@ -7,6 +14,7 @@ const recentOffenderFlushes = new Map(); // ip -> timestamp
 const inMemoryWafStats = {
   blockedTotalSinceBoot: 0,
   autoBannedSinceBoot: 0,
+  originBypassBlockedSinceBoot: 0,
 };
 
 // High-confidence exploit, CMS scanner, secret probe, RCE & traversal signatures
@@ -24,11 +32,34 @@ const QUERY_INJECTION_RE = /(?:union\s+(?:all\s+)?select|information_schema|\$\{
 const MALICIOUS_UA_RE =
   /(?:sqlmap|nikto|nmap|masscan|zgrab|nuclei|acunetix|nessus|openvas|dirbuster|gobuster|ffuf|feroxbuster|wpscan|havij|jndi:|wp-admin|install\.php|xmlrpc\.php|libredtail)/i;
 
+const DANGEROUS_OBJECT_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
 function classifyThreat(req, ip) {
   const rawUrl = String(req.originalUrl || req.url || '');
   const pathOnly = String(req.path || '').toLowerCase();
   const ua = String(req.headers['user-agent'] || '');
   const cfWorker = String(req.headers['cf-worker'] || '').trim();
+  const hostHeader = String(req.headers['x-forwarded-host'] || req.headers.host || '')
+    .split(',')[0]
+    .trim()
+    .toLowerCase()
+    .replace(/:\d+$/, '');
+
+  // 0. Origin Cloaking: block external attackers hitting VPS IP directly with Host: credoapp.tech (bypassing Cloudflare WAF)
+  const peerIp = getUpstreamProxyPeerIp(req);
+  if (
+    (hostHeader === 'credoapp.tech' || hostHeader === 'www.credoapp.tech') &&
+    peerIp &&
+    !isPrivateOrLoopbackIp(peerIp) &&
+    !isCloudflareEdgeIp(peerIp)
+  ) {
+    inMemoryWafStats.originBypassBlockedSinceBoot += 1;
+    return {
+      rule: 'ORIGIN_BYPASS_BLOCKED',
+      reason: `Intento directo al IP origen saltándose Cloudflare bloqueado (${peerIp} -> ${pathOnly.slice(0, 60)})`,
+      autoBanHours: 72,
+    };
+  }
 
   // Never interfere with health checks or verified PayPal webhook endpoints
   if (
@@ -114,17 +145,15 @@ async function recordAndBanThreat({ ip, country, method, reqPath, ua, threat }) 
 
   const now = Date.now();
   const prev = recentOffenderFlushes.get(ip) || 0;
-  if (now - prev < 60_000) return; // Throttle DB writes to max 1/min per attacking IP
+  if (now - prev < 60_000) return;
   recentOffenderFlushes.set(ip, now);
   if (recentOffenderFlushes.size > 5000) {
     recentOffenderFlushes.clear();
   }
 
   try {
-    // 1. Evict immediately from live active sessions so bots NEVER appear as online users
     evictSessionsForUserOrIp({ ip });
 
-    // 2. Log into waf_events
     await pool.query(
       `INSERT INTO waf_events (ip_address, country_code, method, request_path, user_agent, rule_code, action_taken, hits_count)
        VALUES ($1, $2, $3, $4, $5, $6, 'auto_banned_403', 1)`,
@@ -138,7 +167,6 @@ async function recordAndBanThreat({ ip, country, method, reqPath, ua, threat }) 
       ]
     );
 
-    // 3. Auto-insert into ip_bans if not already banned
     if (!findActiveIpBan(ip)) {
       const expiresAt =
         threat.autoBanHours && threat.autoBanHours > 0
@@ -172,7 +200,6 @@ function securityShieldMiddleware(req, res, next) {
   const country = String(req.headers['cf-ipcountry'] || req.headers['x-country-code'] || '').toUpperCase().slice(0, 4);
   const ua = String(req.headers['user-agent'] || '');
 
-  // Fire-and-forget async auto-ban + telemetry eviction so attacker gets instant 0ms 403 drop
   recordAndBanThreat({
     ip,
     country,
@@ -188,12 +215,44 @@ function securityShieldMiddleware(req, res, next) {
   return res.status(403).type('text/plain').send('Forbidden');
 }
 
+// Recursively strips Prototype Pollution keys (__proto__, constructor, prototype) & null bytes from parsed JSON/query
+function sanitizeValue(val, depth = 0) {
+  if (depth > 8 || val === null || val === undefined) return val;
+  if (typeof val === 'string') {
+    return val.includes('\u0000') ? val.replace(/\u0000/g, '') : val;
+  }
+  if (Array.isArray(val)) {
+    for (let i = 0; i < val.length; i += 1) {
+      val[i] = sanitizeValue(val[i], depth + 1);
+    }
+    return val;
+  }
+  if (typeof val === 'object') {
+    for (const key of Object.keys(val)) {
+      if (DANGEROUS_OBJECT_KEYS.has(key)) {
+        delete val[key];
+      } else {
+        val[key] = sanitizeValue(val[key], depth + 1);
+      }
+    }
+    return val;
+  }
+  return val;
+}
+
+function sanitizeInputMiddleware(req, _res, next) {
+  if (req.body && typeof req.body === 'object') sanitizeValue(req.body, 0);
+  if (req.query && typeof req.query === 'object') sanitizeValue(req.query, 0);
+  return next();
+}
+
 function getWafStats() {
   return { ...inMemoryWafStats };
 }
 
 module.exports = {
   securityShieldMiddleware,
+  sanitizeInputMiddleware,
   classifyThreat,
   getWafStats,
 };

@@ -24,16 +24,36 @@ let settingsCache = { ...DEFAULT_SETTINGS };
 let ipBansCache = [];
 let lastLoadedAt = 0;
 
+// Official Cloudflare Edge IPv4 & IPv6 CIDR ranges (used to verify CF-Connecting-IP authenticity & Origin Cloaking)
+const CLOUDFLARE_CIDRS = [
+  '173.245.48.0/20',
+  '103.21.244.0/22',
+  '103.22.200.0/22',
+  '103.31.4.0/22',
+  '141.101.64.0/18',
+  '108.162.192.0/18',
+  '190.93.240.0/20',
+  '188.114.96.0/20',
+  '197.234.240.0/22',
+  '198.41.128.0/17',
+  '162.158.0.0/15',
+  '104.16.0.0/13',
+  '104.24.0.0/14',
+  '172.64.0.0/13',
+  '131.0.72.0/22',
+  '2400:cb00::/32',
+  '2606:4700::/32',
+  '2803:f800::/32',
+  '2405:b500::/32',
+  '2405:8100::/32',
+  '2a06:98c0::/29',
+  '2c0f:f248::/32',
+];
+
 function normalizeIp(raw) {
   let ip = String(raw || '').split(',')[0].trim().toLowerCase();
   if (ip.startsWith('::ffff:')) ip = ip.slice(7);
   return ip;
-}
-
-function getClientIp(req) {
-  const cf = req.headers['cf-connecting-ip'];
-  const xff = req.headers['x-forwarded-for'];
-  return normalizeIp(cf || xff || req.ip || req.socket?.remoteAddress || '');
 }
 
 function ipv4ToInt(ip) {
@@ -91,6 +111,47 @@ function ipMatchesRule(ip, rule) {
     return (ipV6 >> shift) === (baseV6 >> shift);
   }
   return false;
+}
+
+function isPrivateOrLoopbackIp(ip) {
+  const clean = normalizeIp(ip);
+  if (!clean) return false;
+  if (clean === '127.0.0.1' || clean === '::1' || clean === 'localhost') return true;
+  return (
+    ipMatchesRule(clean, '10.0.0.0/8') ||
+    ipMatchesRule(clean, '172.16.0.0/12') ||
+    ipMatchesRule(clean, '192.168.0.0/16') ||
+    ipMatchesRule(clean, 'fc00::/7') ||
+    ipMatchesRule(clean, 'fe80::/10')
+  );
+}
+
+function isCloudflareEdgeIp(ip) {
+  const clean = normalizeIp(ip);
+  if (!clean) return false;
+  return CLOUDFLARE_CIDRS.some((cidr) => ipMatchesRule(clean, cidr));
+}
+
+// Returns the true TCP peer IP observed by Traefik (last X-Forwarded-For hop / X-Real-IP) or local socket
+function getUpstreamProxyPeerIp(req) {
+  const realIp = String(req.headers['x-real-ip'] || '').trim();
+  if (realIp) return normalizeIp(realIp);
+  const xff = String(req.headers['x-forwarded-for'] || '').trim();
+  if (xff) {
+    const parts = xff.split(',').map((s) => s.trim()).filter(Boolean);
+    if (parts.length > 0) return normalizeIp(parts[parts.length - 1]);
+  }
+  return normalizeIp(req.socket?.remoteAddress || req.ip || '');
+}
+
+// Anti-spoofing Client IP resolver: ONLY trusts CF-Connecting-IP when connection arrived via verified Cloudflare Edge (or local loopback)
+function getClientIp(req) {
+  const peerIp = getUpstreamProxyPeerIp(req);
+  const cf = req.headers['cf-connecting-ip'];
+  if (cf && (isCloudflareEdgeIp(peerIp) || isPrivateOrLoopbackIp(peerIp))) {
+    return normalizeIp(cf);
+  }
+  return peerIp || normalizeIp(req.ip || req.socket?.remoteAddress || '');
 }
 
 async function refreshSystemState() {
@@ -267,8 +328,12 @@ function maintenanceMiddleware(req, res, next) {
 }
 
 module.exports = {
+  CLOUDFLARE_CIDRS,
   normalizeIp,
   getClientIp,
+  getUpstreamProxyPeerIp,
+  isPrivateOrLoopbackIp,
+  isCloudflareEdgeIp,
   ipMatchesRule,
   refreshSystemState,
   getAllSettings,

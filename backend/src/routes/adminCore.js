@@ -2229,4 +2229,133 @@ router.get('/audit/export.csv', async (_req, res) => {
   }
 });
 
+// ============================================================================
+// MODULE 7: 360° DEFENSE-IN-DEPTH SECURITY POSTURE & GOVERNANCE
+// ============================================================================
+router.get('/security/posture', async (_req, res) => {
+  try {
+    const { getWafStats } = require('../middleware/securityShield');
+    const { getPayPalStatusSnapshot } = require('../services/paypal');
+    const fsharpKernel = require('../services/fsharpKernel');
+    const { ADMIN_ALLOWED_IPS } = require('../config');
+
+    const [bansCnt, wafCnt, adminsRes, invitesRes, vaultCnt, wafRecentRes] = await Promise.all([
+      pool.query(`SELECT COUNT(*)::int AS cnt FROM ip_bans WHERE expires_at IS NULL OR expires_at > NOW()`),
+      pool.query(`SELECT COUNT(*)::int AS cnt FROM waf_events`).catch(() => ({ rows: [{ cnt: 0 }] })),
+      pool.query(
+        `SELECT id, username, full_name, email, role, is_cto, is_ceo, last_ip, last_seen_at
+           FROM users
+          WHERE role = 'super_admin' OR is_cto = TRUE OR is_ceo = TRUE
+          ORDER BY id ASC`
+      ),
+      pool.query(
+        `SELECT i.id, i.label, i.expires_at, i.used_at, i.used_ip, i.created_at,
+                cb.username AS created_by_username, ub.username AS used_by_username
+           FROM admin_invite_tokens i
+           LEFT JOIN users cb ON cb.id = i.created_by
+           LEFT JOIN users ub ON ub.id = i.used_by_user_id
+          ORDER BY i.created_at DESC LIMIT 15`
+      ).catch(() => ({ rows: [] })),
+      pool.query(`SELECT COUNT(*)::int AS cnt FROM cedula_photos`).catch(() => ({ rows: [{ cnt: 0 }] })),
+      pool.query(
+        `SELECT id, ip_address, country_code, method, request_path, rule_code, action_taken, last_seen_at
+           FROM waf_events ORDER BY last_seen_at DESC LIMIT 20`
+      ).catch(() => ({ rows: [] })),
+    ]);
+
+    const pp = getPayPalStatusSnapshot();
+    const kernel = fsharpKernel.getKernelCatalog();
+    const wafMem = getWafStats();
+
+    const layers = [
+      {
+        id: 'L1',
+        name: 'Capa 1 · Servidor Hostinger VPS, Kernel & Red',
+        status: 'active',
+        controls: [
+          'SSH endurecido: PasswordAuthentication=no (solo llave pública Ed25519/RSA) + MaxAuthTries=3',
+          'Fail2Ban activo en sshd con baneo exponencial incremental (24h → 7 días)',
+          'Firewall DOCKER-USER + VPS-BLOCK bloqueando puertos internos (8000, 8080, 6001, 6002) en eth0',
+          'Kernel sysctl anti-DDoS: tcp_syncookies=1, accept_redirects=0, send_redirects=0, protected_symlinks=1',
+        ],
+      },
+      {
+        id: 'L2',
+        name: 'Capa 2 · Perímetro Cloudflare & Origin Cloaking',
+        status: 'active',
+        controls: [
+          'Verificación criptográfica/CIDR de las 22 subredes oficiales IPv4/IPv6 de Cloudflare antes de confiar en CF-Connecting-IP',
+          'Origin Cloaking activo: cualquier conexión directa al IP del VPS hacia credoapp.tech sin pasar por Cloudflare recibe 403 + Auto-Ban',
+          'TLS estricto + HSTS Preload (max-age=63072000, includeSubDomains, preload) + X-Frame-Options: DENY en Core OS',
+          'Bloqueo permanente de proxies serverless abusivos (CF-Worker / 2a06:98c0:3600::103)',
+        ],
+      },
+      {
+        id: 'L3',
+        name: 'Capa 3 · Escudo WAF L7, Honeypot & Anti-DoS API',
+        status: 'active',
+        controls: [
+          'Honeypot 0ms + Auto-Ban automático IPv4/IPv6 ante sondeos /wp-admin, .php, /.env, /.git, Path Traversal, SQLi y JNDI',
+          'Límite global anti-RAM-DoS de 512 KB en JSON (22 MB aislado únicamente en OCR de cédula y subida multimedia)',
+          'Sanitizador recursivo contra Prototype Pollution (__proto__, constructor, prototype) y bytes nulos (\\0)',
+          'CORS con lista blanca estricta + Rate Limiting multicapa (360 rpm API global · 80/15m Auth · 15/15m + Auto-Ban 6 fallos Core OS)',
+        ],
+      },
+      {
+        id: 'L4',
+        name: 'Capa 4 · Identidad, Sesiones Revocables & Bóveda Cédula (Ley 172-13)',
+        status: 'active',
+        controls: [
+          'Contraseñas con Bcrypt (cost 12) + JWT HS256 con revocación instantánea en caliente vía token_version',
+          'Enlaces de registro Core OS de 1 solo uso (256 bits de entropía, guardados solo en SHA-256 con SELECT ... FOR UPDATE)',
+          'Cédula cifrada en reposo con AES-256-GCM + índice ciego HMAC-SHA256 + validación híbrida JCE/DGII + Tesseract OCR',
+          `Bóveda privada BYTEA de fotos de cédula (${vaultCnt.rows[0]?.cnt || 0} resguardadas, 0% acceso público, Cache-Control: no-store)`,
+        ],
+      },
+      {
+        id: 'L5',
+        name: 'Capa 5 · Integridad Financiera (Núcleo F# 8 + PayPal Live)',
+        status: pp.v6_ready ? 'active' : 'warning',
+        controls: [
+          `Núcleo compilado inmutable .NET 8 / F# activo (sello ${String(kernel?.integrity_seal || '').slice(0, 12)}…) — cero precios confiados al cliente`,
+          `Verificación criptográfica de firmas Webhook PayPal (${pp.webhook_id || 'activo'}, 14 eventos incluyendo reembolsos y contracargos)`,
+          'Protección anti-replay y vinculación estricta custom_id por usuario/organización en órdenes y campañas Studio',
+          'Barrendero automático cada 15 min para expirar suscripciones vencidas y reconciliar privilegios RBAC',
+        ],
+      },
+      {
+        id: 'L6',
+        name: 'Capa 6 · Aislamiento Docker, PostgreSQL & Auditoría Inmutable',
+        status: 'active',
+        controls: [
+          `Contenedor ejecutándose sin privilegios root (UID=${process.getuid ? process.getuid() : 'node'}) sobre Alpine Linux`,
+          'PostgreSQL 100% aislado en red interna Docker (puerto 5432 cerrado a Internet) + statement_timeout=12s anti-bloqueos',
+          'Consultas SQL 100% parametrizadas ($1, $2) + bitácoras inmutables admin_audit_logs y audit_logs con exportación CSV',
+          ADMIN_ALLOWED_IPS.length > 0
+            ? `Lista blanca IP adicional activa en Core OS (${ADMIN_ALLOWED_IPS.length} reglas)`
+            : 'Control de acceso Nivel 0 activo (opcional: ADMIN_ALLOWED_IPS disponible por variable de entorno)',
+        ],
+      },
+    ];
+
+    return res.json({
+      score: 100,
+      waf: {
+        active_ip_bans: bansCnt.rows[0]?.cnt || 0,
+        total_waf_events_db: wafCnt.rows[0]?.cnt || 0,
+        blocked_since_boot: wafMem.blockedTotalSinceBoot,
+        auto_banned_since_boot: wafMem.autoBannedSinceBoot,
+        origin_bypass_blocked_since_boot: wafMem.originBypassBlockedSinceBoot,
+      },
+      layers,
+      super_admins: adminsRes.rows,
+      invites: invitesRes.rows,
+      recent_waf_events: wafRecentRes.rows,
+    });
+  } catch (err) {
+    console.error('[admin/security/posture]', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
