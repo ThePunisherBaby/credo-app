@@ -1,7 +1,7 @@
 const os = require('os');
 const { execSync } = require('child_process');
 const { pool } = require('../db/pool');
-const { getClientIp } = require('./systemState');
+const { getClientIp, ipMatchesRule, normalizeIp } = require('./systemState');
 
 // Lightweight pure in-memory telemetry (never hammers PostgreSQL on pings!)
 const ACTIVE_WINDOW_MS = 5 * 60 * 1000; // Active within last 5 minutes
@@ -51,6 +51,15 @@ function recordRequestTelemetry(req, res, next) {
     hourlyStatusBuckets.push({ ts: now, code: statusCode });
     if (hourlyStatusBuckets.length > 12000) {
       hourlyStatusBuckets.splice(0, hourlyStatusBuckets.length - 8000);
+    }
+
+    // Never show WAF-blocked, IP-banned (403), or unauthenticated 404 scanner probes as live active users!
+    if (
+      req._wafBlocked ||
+      statusCode === 403 ||
+      (!req.user && statusCode === 404 && !req.path.startsWith('/api/'))
+    ) {
+      return;
     }
 
     // Ignore static image/css noise for session route display
@@ -338,8 +347,9 @@ async function getGlobalInventoryAndHealth() {
 }
 
 function evictSessionsForUserOrIp({ userId, ip }) {
+  const cleanRule = ip ? normalizeIp(ip) : '';
   for (const [k, v] of activeSessions.entries()) {
-    if ((userId && v.user_id === Number(userId)) || (ip && v.ip === ip)) {
+    if ((userId && v.user_id === Number(userId)) || (cleanRule && ipMatchesRule(v.ip, cleanRule))) {
       activeSessions.delete(k);
     }
   }

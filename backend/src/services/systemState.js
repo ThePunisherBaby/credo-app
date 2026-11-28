@@ -25,7 +25,7 @@ let ipBansCache = [];
 let lastLoadedAt = 0;
 
 function normalizeIp(raw) {
-  let ip = String(raw || '').split(',')[0].trim();
+  let ip = String(raw || '').split(',')[0].trim().toLowerCase();
   if (ip.startsWith('::ffff:')) ip = ip.slice(7);
   return ip;
 }
@@ -42,20 +42,53 @@ function ipv4ToInt(ip) {
   return (((parts[0] << 24) >>> 0) + ((parts[1] << 16) >>> 0) + ((parts[2] << 8) >>> 0) + parts[3]) >>> 0;
 }
 
+function ipv6ToBigInt(ip) {
+  const s = normalizeIp(ip);
+  if (!s.includes(':') || s.includes('.')) return null;
+  const dbl = s.split('::');
+  if (dbl.length > 2) return null;
+  const left = dbl[0] ? dbl[0].split(':') : [];
+  const right = dbl.length === 2 && dbl[1] ? dbl[1].split(':') : [];
+  const missing = dbl.length === 2 ? 8 - (left.length + right.length) : 0;
+  if (missing < 0) return null;
+  const groups = dbl.length === 2 ? [...left, ...Array(missing).fill('0'), ...right] : left;
+  if (groups.length !== 8) return null;
+  let val = 0n;
+  for (const g of groups) {
+    if (!/^[0-9a-f]{1,4}$/.test(g)) return null;
+    val = (val << 16n) + BigInt(parseInt(g, 16));
+  }
+  return val;
+}
+
 function ipMatchesRule(ip, rule) {
   const cleanIp = normalizeIp(ip);
-  const cleanRule = String(rule || '').trim();
+  const cleanRule = normalizeIp(rule);
   if (!cleanIp || !cleanRule) return false;
   if (cleanIp === cleanRule) return true;
-  if (cleanRule.includes('/')) {
-    const [base, bitsStr] = cleanRule.split('/');
-    const bits = Number(bitsStr);
-    const ipInt = ipv4ToInt(cleanIp);
-    const baseInt = ipv4ToInt(base);
-    if (ipInt !== null && baseInt !== null && Number.isInteger(bits) && bits >= 0 && bits <= 32) {
-      const mask = bits === 0 ? 0 : (~0 << (32 - bits)) >>> 0;
-      return (ipInt & mask) === (baseInt & mask);
-    }
+
+  if (!cleanRule.includes('/')) {
+    const v6a = ipv6ToBigInt(cleanIp);
+    const v6b = ipv6ToBigInt(cleanRule);
+    if (v6a !== null && v6b !== null) return v6a === v6b;
+    return false;
+  }
+
+  const [base, bitsStr] = cleanRule.split('/');
+  const bits = Number(bitsStr);
+  const ipInt = ipv4ToInt(cleanIp);
+  const baseInt = ipv4ToInt(base);
+  if (ipInt !== null && baseInt !== null && Number.isInteger(bits) && bits >= 0 && bits <= 32) {
+    const mask = bits === 0 ? 0 : (~0 << (32 - bits)) >>> 0;
+    return (ipInt & mask) === (baseInt & mask);
+  }
+
+  const ipV6 = ipv6ToBigInt(cleanIp);
+  const baseV6 = ipv6ToBigInt(base);
+  if (ipV6 !== null && baseV6 !== null && Number.isInteger(bits) && bits >= 0 && bits <= 128) {
+    if (bits === 0) return true;
+    const shift = BigInt(128 - bits);
+    return (ipV6 >> shift) === (baseV6 >> shift);
   }
   return false;
 }

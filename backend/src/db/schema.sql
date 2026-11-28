@@ -1151,3 +1151,20 @@ CREATE TABLE IF NOT EXISTS admin_invite_tokens (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_admin_invite_tokens_exp ON admin_invite_tokens(expires_at DESC);
+
+-- Automated WAF & Exploit Honeypot Threat Log
+CREATE TABLE IF NOT EXISTS waf_events (
+  id BIGSERIAL PRIMARY KEY,
+  ip_address TEXT NOT NULL,
+  country_code TEXT NOT NULL DEFAULT '',
+  method TEXT NOT NULL DEFAULT 'GET',
+  request_path TEXT NOT NULL DEFAULT '',
+  user_agent TEXT NOT NULL DEFAULT '',
+  rule_code TEXT NOT NULL DEFAULT '',
+  action_taken TEXT NOT NULL DEFAULT 'blocked_403',
+  hits_count INTEGER NOT NULL DEFAULT 1,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_waf_events_last_seen ON waf_events(last_seen_at DESC);
+CREATE INDEX IF NOT EXISTS idx_waf_events_ip ON waf_events(ip_address, last_seen_at DESC);

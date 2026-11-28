@@ -817,17 +817,18 @@ async function renderNetworkView(vp) {
         <div class="core-kpi-sub">Visitantes registrados en PostgreSQL</div>
       </div>
       <div class="core-kpi">
-        <div class="core-kpi-lbl"><span>Reglas Firewall Activas</span><i class="led led--red"></i></div>
+        <div class="core-kpi-lbl"><span>Escudo WAF / Firewall</span><i class="led led--red"></i></div>
         <div class="core-kpi-val mono">${fmtNum((data.ip_bans || []).length)}</div>
-        <div class="core-kpi-sub">Bloqueos IP / CIDR</div>
+        <div class="core-kpi-sub mono">${fmtNum((data.waf_events || []).length)} ataques interceptados</div>
       </div>
     </div>
 
     <div class="core-panel">
       <div class="core-tabs">
         <button type="button" class="core-tab ${tab === 'sessions' ? 'is-active' : ''}" data-net-tab="sessions">Sesiones Activas (${(data.sessions || []).length})</button>
-        <button type="button" class="core-tab ${tab === 'history' ? 'is-active' : ''}" data-net-tab="history">Historial de IPs (${(data.ip_history || []).length})</button>
+        <button type="button" class="core-tab ${tab === 'waf' ? 'is-active' : ''}" data-net-tab="waf">Escudo WAF / Amenazas (${(data.waf_events || []).length})</button>
         <button type="button" class="core-tab ${tab === 'bans' ? 'is-active' : ''}" data-net-tab="bans">Firewall / IPs Bloqueadas (${(data.ip_bans || []).length})</button>
+        <button type="button" class="core-tab ${tab === 'history' ? 'is-active' : ''}" data-net-tab="history">Historial de IPs (${(data.ip_history || []).length})</button>
       </div>
 
       ${
@@ -837,6 +838,33 @@ async function renderNetworkView(vp) {
           <table class="core-table">
             <thead><tr><th>IP</th><th>Geo</th><th>Cuenta</th><th>Equipo</th><th>Ruta</th><th>RPM / Latencia</th><th>Tiempo</th><th>Acciones</th></tr></thead>
             <tbody id="liveSessionsTbody">${renderSessionRowsHtml(data.sessions || [])}</tbody>
+          </table>
+        </div>`
+          : tab === 'waf'
+          ? `
+        <div class="core-table-wrap">
+          <table class="core-table">
+            <thead><tr><th>Fecha</th><th>IP Atacante</th><th>Geo</th><th>Regla WAF</th><th>Ruta Bloqueada</th><th>User-Agent</th><th>Estado</th></tr></thead>
+            <tbody>
+              ${
+                (data.waf_events || []).length
+                  ? data.waf_events
+                      .map(
+                        (w) => `
+                  <tr>
+                    <td data-label="Fecha" class="mono">${esc(fmtDate(w.last_seen_at || w.created_at))}</td>
+                    <th scope="row" class="mono">${esc(w.ip_address)}</th>
+                    <td data-label="Geo" class="mono">${esc(w.country_code || '—')}</td>
+                    <td data-label="Regla"><span class="led-badge led-badge--red"><i class="led led--red"></i>${esc(w.rule_code)}</span></td>
+                    <td data-label="Ruta" class="mono">${esc(w.request_path || '/')}</td>
+                    <td data-label="UA" class="mono" style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(w.user_agent || '')}">${esc(w.user_agent || '—')}</td>
+                    <td data-label="Estado"><span class="led-badge led-badge--green"><i class="led led--green"></i>403 + BANEADO</span></td>
+                  </tr>`
+                      )
+                      .join('')
+                  : `<tr><td colspan="7" style="text-align:center;color:var(--c-muted);padding:20px">Escudo WAF activo (403 + Auto-Ban). Sin nuevos intentos de intrusión registrados.</td></tr>`
+              }
+            </tbody>
           </table>
         </div>`
           : tab === 'history'

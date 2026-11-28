@@ -33,8 +33,36 @@ const CSV_ESCAPE = (v) => {
   return /[",\n\r]/.test(s) ? `"${s}"` : s;
 };
 
+const failedAdminLogins = new Map(); // ip -> { count, firstAt }
+
 function hashInviteToken(raw) {
   return crypto.createHash('sha256').update(String(raw || '').trim()).digest('hex');
+}
+
+async function recordFailedAdminLogin(ip, loginId) {
+  if (!ip) return;
+  const now = Date.now();
+  const prev = failedAdminLogins.get(ip);
+  const entry = !prev || now - prev.firstAt > 15 * 60_000 ? { count: 1, firstAt: now } : { count: prev.count + 1, firstAt: prev.firstAt };
+  failedAdminLogins.set(ip, entry);
+
+  if (entry.count >= 6) {
+    failedAdminLogins.delete(ip);
+    const expiresAt = new Date(now + 24 * 3600_000).toISOString();
+    await pool
+      .query(
+        `INSERT INTO ip_bans (ip_or_cidr, reason, expires_at)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (ip_or_cidr) DO UPDATE SET
+           reason = EXCLUDED.reason,
+           expires_at = EXCLUDED.expires_at,
+           created_at = NOW()`,
+        [ip, `[WAF Brute-Force] 6+ intentos fallidos en Credo Core OS (${String(loginId).slice(0, 40)})`, expiresAt]
+      )
+      .catch(() => {});
+    await refreshSystemState();
+    evictSessionsForUserOrIp({ ip });
+  }
 }
 
 // ============================================================================
@@ -45,6 +73,7 @@ router.post('/auth/login', async (req, res) => {
     if (!isIpAllowedForAdmin(req)) {
       return res.status(403).json({ error: 'IP no autorizada para acceder a Credo Core OS.' });
     }
+    const ip = getClientIp(req);
     const { identifier, email, password } = req.body || {};
     const loginId = String(identifier || email || '').trim().toLowerCase();
     if (!loginId || !password) {
@@ -57,14 +86,16 @@ router.post('/auth/login', async (req, res) => {
     );
     const user = rows[0];
     if (!user || !isUserSuperAdmin(user)) {
+      await recordFailedAdminLogin(ip, loginId);
       return res.status(403).json({ error: 'Acceso denegado. Cuenta sin privilegios super_admin.' });
     }
     const ok = await bcrypt.compare(String(password), user.password_hash);
     if (!ok) {
+      await recordFailedAdminLogin(ip, loginId);
       return res.status(401).json({ error: 'Contraseña incorrecta.' });
     }
 
-    const ip = getClientIp(req);
+    failedAdminLogins.delete(ip);
     await writeAdminAudit({
       admin: user,
       action: 'admin.login',
@@ -427,7 +458,7 @@ router.get('/telemetry/stream', (req, res) => {
 router.get('/network/sessions', async (_req, res) => {
   try {
     const snap = await buildLiveSnapshot();
-    const [bansRes, recentIpsRes] = await Promise.all([
+    const [bansRes, recentIpsRes, wafRes] = await Promise.all([
       pool.query(
         `SELECT b.*, u.username AS banned_by_name
            FROM ip_bans b
@@ -445,6 +476,12 @@ router.get('/network/sessions', async (_req, res) => {
           ORDER BY MAX(h.last_seen_at) DESC
           LIMIT 150`
       ),
+      pool.query(
+        `SELECT id, ip_address, country_code, method, request_path, user_agent, rule_code, action_taken, created_at, last_seen_at
+           FROM waf_events
+          ORDER BY last_seen_at DESC
+          LIMIT 120`
+      ).catch(() => ({ rows: [] })),
     ]);
 
     return res.json({
@@ -454,6 +491,7 @@ router.get('/network/sessions', async (_req, res) => {
       sessions: snap.sessions,
       ip_bans: bansRes.rows,
       ip_history: recentIpsRes.rows,
+      waf_events: wafRes.rows,
     });
   } catch (err) {
     console.error('[admin/network/sessions]', err);
@@ -463,13 +501,13 @@ router.get('/network/sessions', async (_req, res) => {
 
 router.get('/network/ip/:ip/history', async (req, res) => {
   try {
-    const ip = decodeURIComponent(req.params.ip || '').trim();
+    const ip = decodeURIComponent(req.params.ip || '').trim().toLowerCase();
     const [histRes, usersRes] = await Promise.all([
       pool.query(
         `SELECT h.*, u.username, u.full_name, u.email, u.moderation_status, u.active_plan_sku
            FROM ip_visit_history h
            LEFT JOIN users u ON u.id = h.user_id
-          WHERE h.ip_address = $1
+          WHERE LOWER(h.ip_address) = $1
           ORDER BY h.last_seen_at DESC
           LIMIT 100`,
         [ip]
@@ -477,7 +515,7 @@ router.get('/network/ip/:ip/history', async (req, res) => {
       pool.query(
         `SELECT id, username, full_name, email, moderation_status, active_plan_sku, last_seen_at, created_at
            FROM users
-          WHERE last_ip = $1
+          WHERE LOWER(last_ip) = $1
           ORDER BY last_seen_at DESC NULLS LAST`,
         [ip]
       ),
@@ -520,13 +558,15 @@ router.get('/network/ip-bans', async (_req, res) => {
 
 router.post('/network/ip-bans', async (req, res) => {
   try {
+    const { normalizeIp, ipMatchesRule } = require('../services/systemState');
     const { ip_or_cidr, reason = 'Bloqueo administrativo', hours = 0 } = req.body || {};
-    const target = String(ip_or_cidr || '').trim();
+    const target = normalizeIp(ip_or_cidr);
     if (!target || target.length < 3 || target.length > 64) {
       return res.status(400).json({ error: 'IP o rango CIDR inválido.' });
     }
-    if (target === getClientIp(req)) {
-      return res.status(400).json({ error: 'No puedes bloquear tu propia IP actual.' });
+    const callerIp = getClientIp(req);
+    if (ipMatchesRule(callerIp, target)) {
+      return res.status(400).json({ error: 'No puedes bloquear tu propia IP o subred actual.' });
     }
     const expiresAt = Number(hours) > 0 ? new Date(Date.now() + Number(hours) * 3600_000).toISOString() : null;
     const { rows } = await pool.query(
@@ -548,7 +588,7 @@ router.post('/network/ip-bans', async (req, res) => {
       targetType: 'ip_ban',
       targetId: target,
       after: rows[0],
-      ip: getClientIp(req),
+      ip: callerIp,
     });
     return res.status(201).json({ ban: rows[0] });
   } catch (err) {

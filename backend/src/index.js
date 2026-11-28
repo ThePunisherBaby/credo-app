@@ -199,8 +199,10 @@ app.use(
 );
 app.use(express.json({ limit: '22mb' }));
 
-// Global Security & Telemetry Middlewares (IP/CIDR bans -> live in-memory telemetry -> maintenance mode)
+// Global Security & Telemetry Middlewares (IP/CIDR bans -> Active WAF & Honeypot Shield -> auth -> live telemetry -> maintenance)
+const { securityShieldMiddleware } = require('./middleware/securityShield');
 app.use(ipBanMiddleware);
+app.use(securityShieldMiddleware);
 app.use(optionalAuth);
 app.use(recordRequestTelemetry);
 app.use(maintenanceMiddleware);
@@ -225,12 +227,20 @@ app.get('/health', async (_req, res) => {
   }
 });
 
-// Rate limiting for auth endpoints
+// Rate limiting for auth endpoints & strict anti-brute-force on Super-Admin Auth
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 80,
   standardHeaders: true,
   legacyHeaders: false,
+});
+
+const adminAuthLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 15,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Demasiados intentos en Credo Core OS. Intenta nuevamente en 15 minutos.' },
 });
 
 app.use('/api/v1/auth', authLimiter, authRoutes);
@@ -246,6 +256,7 @@ app.use('/api/v1/credo-one', credoOneRoutes);
 app.use('/api/v1/studio', studioRoutes);
 app.use('/api/v1/panel-admin', panelAdminRoutes);
 app.use('/api/v1/platform-ads', platformAdsPublicRoutes);
+app.use(['/api/admin/auth/login', '/api/admin/auth/register-invite', '/api/admin/auth/invite'], adminAuthLimiter);
 app.use('/api/admin', adminCoreRoutes);
 app.use('/api/campaigns', campaignsTelemetryRoutes);
 app.use('/api/v1/campaigns', campaignsTelemetryRoutes);
@@ -373,9 +384,12 @@ if (fs.existsSync(publicDir)) {
     return res.status(404).send('Not Found');
   });
 
-  // SPA fallback
+  // SPA fallback (strictly return 404 for missing static/config files with extensions so scanners never see 200 OK)
   app.get('*', (req, res, next) => {
     if (req.path.startsWith('/api/')) return next();
+    if (/\.[a-z0-9]{1,8}$/i.test(req.path)) {
+      return res.status(404).type('text/plain').send('Not Found');
+    }
     const indexHtml = path.join(publicDir, 'index.html');
     if (fs.existsSync(indexHtml)) {
       res.setHeader('Cache-Control', 'no-cache, must-revalidate');
