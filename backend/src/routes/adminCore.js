@@ -499,7 +499,7 @@ router.post('/auth/register-invite', async (req, res) => {
            verification_note, cedula_verified, role, is_admin, account_status,
            moderation_status, last_ip
          ) VALUES (
-           $1,$2,$3,$4,'','lay_faithful','Super-Admin Credo OS','',
+           $1,$2,$3,$4,'','lay','Super-Admin Credo OS','',
            'DO',ARRAY['es'],'es','#0F1E36','verified','Registrado por enlace único Credo OS',
            TRUE,'super_admin',TRUE,'active','active',$5
          ) RETURNING *`,
@@ -1755,6 +1755,7 @@ router.delete('/users/:id', async (req, res) => {
     if (uRes.rows[0].is_cto || uRes.rows[0].is_ceo || id === req.admin.id) {
       return res.status(400).json({ error: 'No puedes eliminar cuentas ejecutivas ni tu propia cuenta.' });
     }
+    await pool.query('DELETE FROM ip_visit_history WHERE user_id = $1', [id]);
     await pool.query('DELETE FROM users WHERE id = $1', [id]);
     evictSessionsForUserOrIp({ userId: id });
     apiCache.invalidate('users:');
