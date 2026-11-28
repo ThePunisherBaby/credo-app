@@ -11,10 +11,10 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/diosesmiguia/core-os.css?v=51" />
+  <link rel="stylesheet" href="/diosesmiguia/core-os.css?v=54" />
 </head>
 <body>
-  <!-- Super-Admin Dedicated Auth Gate -->
+  <!-- Super-Admin Dedicated Auth + Mandatory 2FA Gate -->
   <main id="coreLoginGate" class="core-login-gate" hidden>
     <div class="core-login-card">
       <div class="core-login-head">
@@ -22,24 +22,68 @@
           <img src="/icons/credo-192.png" alt="Credo" width="32" height="32" />
           <div>
             <h1>CREDO CORE OS</h1>
-            <span class="mono">SUPER-ADMIN CONSOLE · RESTRICTED</span>
+            <span class="mono" id="coreAuthStepSubtitle">SUPER-ADMIN · 2FA OBLIGATORIO</span>
           </div>
         </div>
-        <span class="led-badge"><i class="led led--gold"></i> Nivel 0</span>
+        <span class="led-badge led-badge--gold"><i class="led led--gold"></i> Nivel 0 · 2FA</span>
       </div>
 
+      <!-- Step 1: Primary Username + Password -->
       <form id="coreLoginForm" class="core-form">
         <div class="core-field">
           <label for="coreLoginId">Usuario o correo autorizado</label>
-          <input id="coreLoginId" name="identifier" type="text" required autocomplete="username" spellcheck="false" autocapitalize="none" autocorrect="off" placeholder="paulinosstudios o correo super_admin" />
+          <input id="coreLoginId" name="identifier" type="text" required autocomplete="username" spellcheck="false" autocapitalize="none" autocorrect="off" enterkeyhint="next" placeholder="daniel o correo super_admin" />
         </div>
         <div class="core-field">
           <label for="coreLoginPass">Contraseña maestra</label>
-          <input id="coreLoginPass" name="password" type="password" required autocomplete="current-password" placeholder="••••••••••••" />
+          <input id="coreLoginPass" name="password" type="password" required autocomplete="current-password" enterkeyhint="done" placeholder="••••••••••••" />
         </div>
         <div id="coreLoginErr" class="core-alert core-alert--err" hidden role="alert"></div>
-        <button type="submit" class="btn-primary btn-block" id="coreLoginSubmit">Desbloquear Consola Maestra</button>
+        <button type="submit" class="btn-primary btn-block" id="coreLoginSubmit">Continuar a Verificación 2FA</button>
       </form>
+
+      <!-- Step 2A: Verify 6-Digit TOTP (or 8-Char Recovery Code) -->
+      <form id="core2faVerifyForm" class="core-form" method="POST" hidden>
+        <div class="core-field">
+          <label for="core2faCode">Código de Autenticación 2FA</label>
+          <span id="core2faHint" class="core-field-hint">Ingresa los 6 dígitos de tu app autenticadora (o un código de emergencia XXXX-XXXX).</span>
+          <input id="core2faCode" name="otp" type="text" class="core-otp-input" inputmode="numeric" autocomplete="one-time-code" maxlength="10" required aria-describedby="core2faHint" placeholder="000000" />
+        </div>
+        <div id="core2faVerifyErr" class="core-alert core-alert--err" hidden role="alert"></div>
+        <button type="submit" class="btn-gold btn-block" id="core2faVerifySubmit">Verificar 2FA y Desbloquear Consola</button>
+        <button type="button" class="btn-ghost btn-block" id="core2faBackBtn">← Cambiar cuenta</button>
+      </form>
+
+      <!-- Step 2B: Mandatory First-Time 2FA QR Enrollment -->
+      <form id="core2faEnrollForm" class="core-form" method="POST" hidden>
+        <div class="core-alert" style="border-color:rgba(212,175,55,0.45);color:#F3D97E;font-size:12px">
+          <strong>Activación obligatoria de 2FA (Nivel 0):</strong> Escanea este código QR con <strong>Google Authenticator</strong>, <strong>Contraseñas de Apple</strong>, <strong>Authy</strong> o <strong>1Password</strong>.
+        </div>
+        <div class="core-qr-box">
+          <div class="core-qr-svg" id="core2faQrHost" aria-label="Código QR de configuración 2FA"></div>
+          <div style="width:100%;text-align:center">
+            <span class="core-field-hint">O ingresa esta llave secreta manualmente:</span>
+            <code class="mono" id="core2faSecretText" style="display:inline-block;padding:4px 8px;border-radius:6px;background:#000;border:1px solid var(--c-border);font-size:11.5px;user-select:all;word-break:break-all"></code>
+          </div>
+        </div>
+        <div class="core-field">
+          <label for="core2faEnrollCode">Código de 6 dígitos generado por tu app</label>
+          <span id="core2faEnrollHint" class="core-field-hint">Escribe el código actual de 6 dígitos para confirmar la vinculación.</span>
+          <input id="core2faEnrollCode" name="otp" type="text" class="core-otp-input" inputmode="numeric" autocomplete="one-time-code" pattern="\d{6}" maxlength="6" required aria-describedby="core2faEnrollHint" placeholder="000000" />
+        </div>
+        <div id="core2faEnrollErr" class="core-alert core-alert--err" hidden role="alert"></div>
+        <button type="submit" class="btn-gold btn-block" id="core2faEnrollSubmit">Activar 2FA y Entrar a Credo OS</button>
+      </form>
+
+      <!-- Step 3: One-Time Display of 8 Emergency Recovery Codes -->
+      <div id="core2faBackupBox" class="core-form" hidden>
+        <div class="core-alert" style="border-color:rgba(16,185,129,0.45);color:#6EE7B7;font-size:12px">
+          <strong>✓ ¡2FA activado con éxito!</strong> Guarda estos <strong>8 códigos de emergencia de un solo uso</strong> en un lugar seguro por si algún día cambias o pierdes tu teléfono.
+        </div>
+        <div class="core-backup-grid mono" id="core2faBackupGrid"></div>
+        <button type="button" class="btn-ghost btn-block" id="core2faCopyBackupBtn">Copiar códigos de emergencia</button>
+        <button type="button" class="btn-gold btn-block" id="core2faFinishBackupBtn">Ya los guardé · Entrar a Credo Core OS</button>
+      </div>
     </div>
   </main>
 
@@ -113,7 +157,7 @@
           <img src="/icons/credo-192.png" alt="" width="26" height="26" />
           <div class="core-brand-text">
             <strong>CREDO CORE OS</strong>
-            <span class="mono">v46 · MASTER</span>
+            <span class="mono">v54 · 2FA MASTER</span>
           </div>
         </a>
         <button type="button" class="btn-icon" id="coreCollapseBtn" title="Colapsar barra" aria-label="Colapsar barra">‹</button>
@@ -232,9 +276,12 @@
   <!-- Reusable Native Modal Dialog -->
   <dialog id="coreModalDlg" class="core-dialog" closedby="any" aria-labelledby="coreModalTitle"></dialog>
 
+  <!-- Dedicated Top-Layer Step-Up Re-Authentication Dialog (Password + 2FA) -->
+  <dialog id="coreStepUpDlg" class="core-dialog" aria-labelledby="coreStepUpTitle"></dialog>
+
   <!-- Toast feedback -->
   <div id="coreToast" class="core-toast" role="status" aria-live="polite"></div>
 
-  <script type="module" src="/diosesmiguia/core-os.js?v=53"></script>
+  <script type="module" src="/diosesmiguia/core-os.js?v=54"></script>
 </body>
 </html>

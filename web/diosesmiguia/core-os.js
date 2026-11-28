@@ -9,6 +9,9 @@ const BASE_PATH = '/diosesmiguia';
 const state = {
   token: '',
   admin: null,
+  pending2faChallengeToken: '',
+  pending2faSetupToken: '',
+  lastBackupCodes: [],
   route: BASE_PATH,
   sse: null,
   snapshot: null,
@@ -130,13 +133,17 @@ function toast(msg, kind = 'info') {
 }
 
 async function api(path, opts = {}) {
+  const rawOpts = opts;
   const headers = { ...(opts.headers || {}) };
-  if (state.token) headers.Authorization = `Bearer ${state.token}`;
+  let fetchOpts = { ...opts, credentials: 'same-origin' };
+  delete fetchOpts._retriedStepUp;
+  delete fetchOpts._silentAuthCheck;
+
   if (opts.body && !(opts.body instanceof FormData) && typeof opts.body === 'object') {
     headers['Content-Type'] = 'application/json';
-    opts = { ...opts, body: JSON.stringify(opts.body) };
+    fetchOpts = { ...fetchOpts, body: JSON.stringify(opts.body) };
   }
-  const res = await fetch(`/api/admin${path}`, { ...opts, headers });
+  const res = await fetch(`/api/admin${path}`, { ...fetchOpts, headers });
   const text = await res.text();
   let data = {};
   try {
@@ -144,20 +151,132 @@ async function api(path, opts = {}) {
   } catch {
     data = { raw: text };
   }
+
+  // Zero-Trust High-Impact Action Interceptor: HTTP 428 -> Master Password + Live 2FA Code
+  if (res.status === 428 && data?.code === 'STEP_UP_REQUIRED' && !rawOpts._retriedStepUp) {
+    const stepUpToken = await promptHighImpactStepUp(data.action_label || 'Acción crítica de alto impacto');
+    return api(path, {
+      ...rawOpts,
+      headers: { ...(rawOpts.headers || {}), 'X-Step-Up-Token': stepUpToken },
+      _retriedStepUp: true,
+    });
+  }
+
   if (res.status === 401 || res.status === 403) {
-    const isPreAuth =
+    const isAuthChallenge =
+      rawOpts._silentAuthCheck ||
       path === '/auth/login' ||
+      path === '/auth/login/2fa' ||
+      path === '/auth/enroll-2fa/confirm' ||
+      path === '/auth/step-up' ||
       path === '/auth/register-invite' ||
       path.startsWith('/auth/invite/');
-    if (!isPreAuth) {
-      handleUnauthorized();
+    if (!isAuthChallenge) {
+      handleUnauthorized(data?.code === 'MFA_REQUIRED' ? 'Se requiere verificación 2FA activa para acceder a Credo Core OS.' : '');
     }
-    throw new Error(data.error || 'Sesión expirada o sin privilegios Super-Admin.');
+    const err = new Error(data.error || 'Sesión expirada o sin privilegios Super-Admin.');
+    err.code = data?.code || '';
+    throw err;
   }
   if (!res.ok) {
     throw new Error(data.error || `Error HTTP ${res.status}`);
   }
   return data;
+}
+
+/**
+ * Opens a dedicated Top-Layer modal (<dialog id="coreStepUpDlg">) stacking cleanly above any open modal,
+ * requiring BOTH Master Password + Live 6-Digit 2FA Code before issuing a single-use X-Step-Up-Token.
+ */
+function promptHighImpactStepUp(actionLabel) {
+  return new Promise((resolve, reject) => {
+    const dlg = $('coreStepUpDlg');
+    if (!dlg) {
+      reject(new Error('No se pudo abrir el diálogo de verificación de alto impacto.'));
+      return;
+    }
+
+    let settled = false;
+    const finishCancel = () => {
+      if (settled) return;
+      settled = true;
+      if (dlg.open) dlg.close();
+      reject(new Error('Operación cancelada: se requiere confirmar contraseña maestra y código 2FA.'));
+    };
+
+    dlg.innerHTML = `
+      <div class="core-dlg-head">
+        <h3 id="coreStepUpTitle">🛡 Autorización Nivel 0 (Alto Impacto)</h3>
+        <button type="button" class="action-pill" id="coreStepUpCancelTop">Cancelar</button>
+      </div>
+      <div class="core-dlg-body">
+        <form id="coreStepUpForm" class="core-form" method="POST">
+          <div class="core-alert" style="border-color:rgba(239,68,68,0.45);color:#FCA5A5;font-size:12.5px">
+            <strong>Acción protegida:</strong> ${esc(actionLabel)}<br />
+            <span style="color:var(--c-muted)">Por seguridad Zero-Trust, confirma tu contraseña maestra y tu código 2FA actual.</span>
+          </div>
+          <div class="core-field">
+            <label for="stepUpPassInput">Contraseña maestra</label>
+            <input id="stepUpPassInput" name="password" type="password" required autocomplete="current-password" enterkeyhint="next" placeholder="••••••••••••" />
+          </div>
+          <div class="core-field">
+            <label for="stepUpOtpInput">Código 2FA de 6 dígitos</label>
+            <span id="stepUpOtpHint" class="core-field-hint">Ingresa los 6 dígitos actuales de tu autenticador (o un código de emergencia XXXX-XXXX).</span>
+            <input id="stepUpOtpInput" name="otp" type="text" class="core-otp-input" inputmode="numeric" autocomplete="one-time-code" maxlength="10" required aria-describedby="stepUpOtpHint" placeholder="000000" />
+          </div>
+          <div id="coreStepUpErr" class="core-alert core-alert--err" hidden role="alert"></div>
+          <div class="core-actions-row" style="justify-content:flex-end">
+            <button type="button" class="btn-ghost" id="coreStepUpCancelBtn">Cancelar</button>
+            <button type="submit" class="btn-danger" id="coreStepUpSubmitBtn">Autorizar y Ejecutar</button>
+          </div>
+        </form>
+      </div>
+    `;
+
+    dlg.onclose = () => {
+      if (!settled) finishCancel();
+    };
+    dlg.querySelector('#coreStepUpCancelTop')?.addEventListener('click', finishCancel);
+    dlg.querySelector('#coreStepUpCancelBtn')?.addEventListener('click', finishCancel);
+
+    dlg.querySelector('#coreStepUpForm')?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const errEl = dlg.querySelector('#coreStepUpErr');
+      const subBtn = dlg.querySelector('#coreStepUpSubmitBtn');
+      const passVal = dlg.querySelector('#stepUpPassInput')?.value || '';
+      const otpVal = dlg.querySelector('#stepUpOtpInput')?.value.trim() || '';
+      if (errEl) errEl.hidden = true;
+      if (subBtn) {
+        subBtn.disabled = true;
+        subBtn.textContent = 'Verificando Contraseña + 2FA…';
+      }
+      try {
+        const res = await api('/auth/step-up', {
+          method: 'POST',
+          body: {
+            password: passVal,
+            totp_code: otpVal,
+            action_label: actionLabel,
+          },
+        });
+        settled = true;
+        dlg.close();
+        resolve(res.step_up_token);
+      } catch (err) {
+        if (errEl) {
+          errEl.textContent = err.message || 'Credenciales de alto impacto inválidas.';
+          errEl.hidden = false;
+        }
+        if (subBtn) {
+          subBtn.disabled = false;
+          subBtn.textContent = 'Autorizar y Ejecutar';
+        }
+      }
+    });
+
+    if (!dlg.open) dlg.showModal();
+    dlg.querySelector('#stepUpPassInput')?.focus();
+  });
 }
 
 function openModal(title, bodyHtml, onBind) {
@@ -211,13 +330,73 @@ function meterClass(pct) {
   return 'core-meter-fill';
 }
 
-/* ==================== AUTH & SSE TELEMETRY ==================== */
+/* ==================== AUTH, 2FA GATE & SSE TELEMETRY ==================== */
+
+function setAuthGateStep(step, payload = {}) {
+  const loginForm = $('coreLoginForm');
+  const verifyForm = $('core2faVerifyForm');
+  const enrollForm = $('core2faEnrollForm');
+  const backupBox = $('core2faBackupBox');
+  const subtitle = $('coreAuthStepSubtitle');
+
+  if (loginForm) loginForm.hidden = step !== 'credentials';
+  if (verifyForm) verifyForm.hidden = step !== 'verify_2fa';
+  if (enrollForm) enrollForm.hidden = step !== 'enroll_2fa';
+  if (backupBox) backupBox.hidden = step !== 'backup_codes';
+
+  if (step === 'credentials') {
+    state.pending2faChallengeToken = '';
+    state.pending2faSetupToken = '';
+    if (subtitle) subtitle.textContent = 'SUPER-ADMIN · 2FA OBLIGATORIO';
+  } else if (step === 'verify_2fa') {
+    state.pending2faChallengeToken = payload.challenge_token || '';
+    if ($('core2faVerifyErr')) $('core2faVerifyErr').hidden = true;
+    if (subtitle) {
+      subtitle.textContent = payload.username
+        ? `@${String(payload.username).toUpperCase()} · PASO 2/2: CÓDIGO 2FA`
+        : 'PASO 2/2 · VERIFICACIÓN 2FA';
+    }
+    if ($('core2faCode')) {
+      $('core2faCode').value = '';
+      $('core2faCode').focus();
+    }
+  } else if (step === 'enroll_2fa') {
+    state.pending2faSetupToken = payload.setup_token || '';
+    if ($('core2faEnrollErr')) $('core2faEnrollErr').hidden = true;
+    if (subtitle) {
+      subtitle.textContent = payload.username
+        ? `@${String(payload.username).toUpperCase()} · VINCULAR 2FA`
+        : 'VINCULACIÓN OBLIGATORIA 2FA';
+    }
+    const qrHost = $('core2faQrHost');
+    if (qrHost) {
+      const svg = String(payload.qr_svg || '').trim();
+      qrHost.innerHTML = svg.startsWith('<svg') ? svg : '';
+    }
+    if ($('core2faSecretText')) {
+      $('core2faSecretText').textContent = payload.secret_base32 || '';
+    }
+    if ($('core2faEnrollCode')) {
+      $('core2faEnrollCode').value = '';
+      $('core2faEnrollCode').focus();
+    }
+  } else if (step === 'backup_codes') {
+    const codes = Array.isArray(payload.backup_codes) ? payload.backup_codes : [];
+    state.lastBackupCodes = codes;
+    if (subtitle) subtitle.textContent = '8 CÓDIGOS DE EMERGENCIA · 1 SOLO USO';
+    const grid = $('core2faBackupGrid');
+    if (grid) {
+      grid.innerHTML = codes.map((c) => `<div class="core-backup-code">${esc(c)}</div>`).join('');
+    }
+  }
+}
 
 function showLoginGate(msg = '') {
   stopSse();
   $('coreApp').hidden = true;
   if ($('coreInviteGate')) $('coreInviteGate').hidden = true;
   $('coreLoginGate').hidden = false;
+  setAuthGateStep('credentials');
   const errEl = $('coreLoginErr');
   if (msg) {
     errEl.textContent = msg;
@@ -227,11 +406,11 @@ function showLoginGate(msg = '') {
   }
 }
 
-function handleUnauthorized() {
+function handleUnauthorized(customMsg = '') {
   state.token = '';
   state.admin = null;
   localStorage.removeItem(TOKEN_KEY);
-  showLoginGate('Tu sesión Super-Admin expiró. Vuelve a iniciar sesión.');
+  showLoginGate(customMsg || 'Tu sesión Super-Admin expiró. Vuelve a iniciar sesión con tu código 2FA.');
 }
 
 function showAppShell() {
@@ -243,7 +422,7 @@ function showAppShell() {
   if (chip && state.admin) {
     chip.innerHTML = `
       <strong>${esc(state.admin.full_name || state.admin.username)}</strong>
-      <span class="mono">@${esc(state.admin.username)} · ${esc((state.admin.role || 'super_admin').toUpperCase())}</span>
+      <span class="mono">@${esc(state.admin.username)} · 2FA ACTIVO</span>
     `;
   }
   startSse();
@@ -259,9 +438,8 @@ function stopSse() {
 
 function startSse() {
   stopSse();
-  if (!state.token) return;
-  const url = `/api/admin/telemetry/stream?token=${encodeURIComponent(state.token)}`;
-  const es = new EventSource(url);
+  if (!state.admin) return;
+  const es = new EventSource('/api/admin/telemetry/stream', { withCredentials: true });
   state.sse = es;
   const led = $('coreSseLed');
 
@@ -1017,12 +1195,19 @@ async function renderSecurityView(vp) {
     </div>
 
     <div class="core-panel">
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px">
-        <h3 style="margin:0;font-size:14px">Inventario de Cuentas Nivel 0 (Super-Admin / Ejecutivos)</h3>
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:10px">
+        <div>
+          <h3 style="margin:0;font-size:14px">Inventario de Cuentas Nivel 0 &amp; Gestión de Mi Llave 2FA</h3>
+          <span style="font-size:11.5px;color:var(--c-muted)">Cada acción de alto impacto exige Contraseña Maestra + Código 2FA de un solo uso.</span>
+        </div>
+        <div class="core-actions-row">
+          <button type="button" class="action-pill" id="secRegenBackupBtn">Regenerar 8 Códigos de Emergencia</button>
+          <button type="button" class="action-pill action-pill--danger" id="secRotateDeviceBtn">Cambiar Teléfono / App 2FA</button>
+        </div>
       </div>
       <div class="core-table-wrap">
         <table class="core-table">
-          <thead><tr><th>ID</th><th>Usuario</th><th>Nombre</th><th>Correo</th><th>Privilegio</th><th>Última IP</th><th>Última Actividad</th></tr></thead>
+          <thead><tr><th>ID</th><th>Usuario</th><th>Nombre</th><th>Correo</th><th>Estado 2FA</th><th>Privilegio</th><th>Última IP</th><th>Última Actividad</th></tr></thead>
           <tbody>
             ${admins
               .map(
@@ -1032,6 +1217,11 @@ async function renderSecurityView(vp) {
                 <th scope="row" class="mono">@${esc(a.username)}</th>
                 <td>${esc(a.full_name || '—')}</td>
                 <td class="mono">${esc(a.email || '—')}</td>
+                <td>${
+                  a.totp_enabled
+                    ? `<span class="led-badge led-badge--green"><i class="led led--green"></i>2FA ACTIVO</span>`
+                    : `<span class="led-badge led-badge--amber"><i class="led led--amber"></i>AL ENTRAR</span>`
+                }</td>
                 <td><span class="led-badge led-badge--gold"><i class="led led--gold"></i>${a.is_cto ? 'CTO · SUPER_ADMIN' : a.is_ceo ? 'CEO · SUPER_ADMIN' : 'SUPER_ADMIN'}</span></td>
                 <td class="mono">${esc(a.last_ip || '—')}</td>
                 <td class="mono">${esc(fmtDate(a.last_seen_at))}</td>
@@ -1079,6 +1269,56 @@ async function renderSecurityView(vp) {
 
   $('secRefreshBtn')?.addEventListener('click', () => renderSecurityView(vp));
   $('secQuickBanBtn')?.addEventListener('click', () => openBanIpModal(''));
+
+  $('secRegenBackupBtn')?.addEventListener('click', async () => {
+    try {
+      const res = await api('/auth/2fa/rotate', {
+        method: 'POST',
+        body: { mode: 'backup_codes' },
+      });
+      const codes = res.backup_codes || [];
+      openModal(
+        'Nuevos 8 Códigos de Emergencia 2FA (Un Solo Uso)',
+        `
+        <div style="display:flex;flex-direction:column;gap:12px">
+          <div class="core-alert" style="border-color:rgba(16,185,129,0.45);color:#6EE7B7;font-size:12px">
+            Los códigos anteriores fueron invalidados. Guarda estos <strong>8 códigos nuevos</strong> en un lugar seguro.
+          </div>
+          <div class="core-backup-grid mono">
+            ${codes.map((c) => `<div class="core-backup-code">${esc(c)}</div>`).join('')}
+          </div>
+          <button type="button" class="btn-gold btn-block" id="modalCopyBackupBtn">Copiar códigos al portapapeles</button>
+        </div>
+        `,
+        (body) => {
+          body.querySelector('#modalCopyBackupBtn')?.addEventListener('click', async () => {
+            await navigator.clipboard.writeText(codes.join('\n')).catch(() => {});
+            toast('Códigos de emergencia copiados', 'ok');
+          });
+        }
+      );
+    } catch (err) {
+      toast(err.message, 'err');
+    }
+  });
+
+  $('secRotateDeviceBtn')?.addEventListener('click', async () => {
+    try {
+      const res = await api('/auth/2fa/rotate', {
+        method: 'POST',
+        body: { mode: 'new_device' },
+      });
+      stopSse();
+      state.admin = null;
+      $('coreApp').hidden = true;
+      $('coreLoginGate').hidden = false;
+      setAuthGateStep('enroll_2fa', res);
+      toast('Escanea el nuevo código QR para vincular tu nuevo autenticador.', 'ok');
+    } catch (err) {
+      toast(err.message, 'err');
+    }
+  });
+
   $('secNewInviteBtn')?.addEventListener('click', () => {
     openModal(
       'Generar Enlace Criptográfico de Un Solo Uso (Super-Admin)',
@@ -1885,7 +2125,7 @@ async function renderUsersView(vp) {
         `Foto Privada de Cédula · ${nm}`,
         `
         <div style="display:flex;flex-direction:column;gap:12px">
-          <img src="/api/admin/cedula-photo/${encodeURIComponent(pid)}?token=${encodeURIComponent(state.token)}" alt="Cédula de ${esc(nm)}" style="width:100%;max-height:420px;object-fit:contain;border-radius:8px;border:1px solid var(--c-border);background:#000" />
+          <img src="/api/admin/cedula-photo/${encodeURIComponent(pid)}" alt="Cédula de ${esc(nm)}" style="width:100%;max-height:420px;object-fit:contain;border-radius:8px;border:1px solid var(--c-border);background:#000" />
           ${ocr ? `<div><div style="font-size:11px;font-weight:700;color:var(--c-muted);margin-bottom:4px">TEXTO DETECTADO POR OCR</div><pre class="core-pre">${esc(ocr)}</pre></div>` : ''}
         </div>
       `
@@ -2119,7 +2359,7 @@ async function renderUserDossierView(vp, userId) {
       `Foto Privada de Cédula · ${u.full_name}`,
       `
       <div style="display:flex;flex-direction:column;gap:12px">
-        <img src="/api/admin/cedula-photo/${encodeURIComponent(u.cedula_photo_id)}?token=${encodeURIComponent(state.token)}" alt="Cédula de ${esc(u.full_name)}" style="width:100%;max-height:420px;object-fit:contain;border-radius:8px;border:1px solid var(--c-border);background:#000" />
+        <img src="/api/admin/cedula-photo/${encodeURIComponent(u.cedula_photo_id)}" alt="Cédula de ${esc(u.full_name)}" style="width:100%;max-height:420px;object-fit:contain;border-radius:8px;border:1px solid var(--c-border);background:#000" />
         ${u.cedula_ocr_text ? `<div><div style="font-size:11px;font-weight:700;color:var(--c-muted);margin-bottom:4px">TEXTO OCR (${esc(u.cedula_verified_source || 'photo_ocr')})</div><pre class="core-pre">${esc(u.cedula_ocr_text)}</pre></div>` : ''}
       </div>
     `
@@ -2610,7 +2850,7 @@ async function renderFinanceView(vp) {
         <p>MRR/ARR en vivo, libro contable exportable, campañas pagas ($1/día = 500 alcance), webhooks PayPal y CRM Enterprise.</p>
       </div>
       <div class="core-actions-row">
-        <a href="/api/admin/finance/export.csv?token=${encodeURIComponent(state.token)}" class="btn-gold" download>Exportar CSV Contable</a>
+        <a href="/api/admin/finance/export.csv" class="btn-gold" download>Exportar CSV Contable</a>
       </div>
     </div>
 
@@ -3211,7 +3451,7 @@ async function renderAuditView(vp) {
         <h2>Audit Logs Forenses (Inmutables)</h2>
         <p>Registro completo de cada acción ejecutada en Credo Core OS con estado Antes/Después e IP de origen.</p>
       </div>
-      <a href="/api/admin/audit/export.csv?token=${encodeURIComponent(state.token)}" class="btn-gold" download>Exportar Audit CSV</a>
+      <a href="/api/admin/audit/export.csv" class="btn-gold" download>Exportar Audit CSV</a>
     </div>
 
     <div class="core-panel">
@@ -3370,15 +3610,18 @@ function bindGlobalEvents() {
     }
   });
 
-  // Logout
-  $('coreLogoutBtn')?.addEventListener('click', () => {
+  // Logout (clears HttpOnly SameSite=Strict session cookie on server)
+  $('coreLogoutBtn')?.addEventListener('click', async () => {
+    try {
+      await fetch('/api/admin/auth/logout', { method: 'POST', credentials: 'same-origin' });
+    } catch {}
     state.token = '';
     state.admin = null;
     localStorage.removeItem(TOKEN_KEY);
     showLoginGate('');
   });
 
-  // Dedicated Super-Admin login
+  // Step 1: Primary Super-Admin credentials -> transitions to Step 2A (verify_2fa) or Step 2B (enroll_2fa)
   $('coreLoginForm')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     const errEl = $('coreLoginErr');
@@ -3394,18 +3637,103 @@ function bindGlobalEvents() {
           password: $('coreLoginPass').value,
         },
       });
-      state.token = res.token;
-      state.admin = res.admin;
-      localStorage.setItem(TOKEN_KEY, res.token);
       $('coreLoginPass').value = '';
+      if (res.step === 'enroll_2fa') {
+        setAuthGateStep('enroll_2fa', res);
+      } else if (res.step === 'verify_2fa') {
+        setAuthGateStep('verify_2fa', res);
+      } else if (res.authenticated && res.admin) {
+        state.admin = res.admin;
+        showAppShell();
+      }
+    } catch (err) {
+      errEl.textContent = err.message;
+      errEl.hidden = false;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Continuar a Verificación 2FA';
+    }
+  });
+
+  // Back to Step 1 from 2FA verification
+  $('core2faBackBtn')?.addEventListener('click', () => {
+    setAuthGateStep('credentials');
+    $('coreLoginId')?.focus();
+  });
+
+  // Step 2A: Verify 6-digit TOTP (or 8-char recovery code) -> establishes HttpOnly MFA session
+  $('core2faVerifyForm')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const errEl = $('core2faVerifyErr');
+    const btn = $('core2faVerifySubmit');
+    errEl.hidden = true;
+    btn.disabled = true;
+    btn.textContent = 'Validando código 2FA…';
+    try {
+      const res = await api('/auth/login/2fa', {
+        method: 'POST',
+        body: {
+          challenge_token: state.pending2faChallengeToken,
+          totp_code: $('core2faCode').value.trim(),
+        },
+      });
+      state.admin = res.admin;
+      $('core2faCode').value = '';
+      if (res.method === 'backup_code') {
+        toast(`Acceso con código de emergencia (${res.remaining_backup_codes ?? 0} restantes).`, 'info');
+      }
       showAppShell();
     } catch (err) {
       errEl.textContent = err.message;
       errEl.hidden = false;
     } finally {
       btn.disabled = false;
-      btn.textContent = 'Desbloquear Consola Maestra';
+      btn.textContent = 'Verificar 2FA y Desbloquear Consola';
     }
+  });
+
+  // Step 2B: Confirm first-time 2FA QR enrollment -> shows 8 single-use emergency backup codes
+  $('core2faEnrollForm')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const errEl = $('core2faEnrollErr');
+    const btn = $('core2faEnrollSubmit');
+    errEl.hidden = true;
+    btn.disabled = true;
+    btn.textContent = 'Activando llave 2FA…';
+    try {
+      const res = await api('/auth/enroll-2fa/confirm', {
+        method: 'POST',
+        body: {
+          setup_token: state.pending2faSetupToken,
+          totp_code: $('core2faEnrollCode').value.trim(),
+        },
+      });
+      state.admin = res.admin;
+      $('core2faEnrollCode').value = '';
+      if (Array.isArray(res.backup_codes) && res.backup_codes.length) {
+        setAuthGateStep('backup_codes', { backup_codes: res.backup_codes });
+      } else {
+        showAppShell();
+      }
+    } catch (err) {
+      errEl.textContent = err.message;
+      errEl.hidden = false;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Activar 2FA y Entrar a Credo OS';
+    }
+  });
+
+  // Step 3: Copy & finish emergency recovery codes screen
+  $('core2faCopyBackupBtn')?.addEventListener('click', async () => {
+    if (!state.lastBackupCodes?.length) return;
+    await navigator.clipboard.writeText(state.lastBackupCodes.join('\n')).catch(() => {});
+    toast('8 códigos de emergencia copiados al portapapeles', 'ok');
+  });
+
+  $('core2faFinishBackupBtn')?.addEventListener('click', () => {
+    state.lastBackupCodes = [];
+    showAppShell();
   });
 
   // Show/hide password toggle on single-use invite registration form
@@ -3610,15 +3938,14 @@ async function openInviteGate(inviteToken) {
             password: $('invPassword').value,
           },
         });
-        state.token = res.token;
-        state.admin = res.admin;
-        localStorage.setItem(TOKEN_KEY, res.token);
         $('invPassword').value = '';
         try {
           history.replaceState(null, '', BASE_PATH);
         } catch {}
-        toast('Cuenta Super-Admin creada. Enlace consumido con éxito.', 'ok');
-        showAppShell();
+        gate.hidden = true;
+        $('coreLoginGate').hidden = false;
+        setAuthGateStep('enroll_2fa', res);
+        toast('Cuenta creada. Ahora escanea el código QR para activar tu 2FA obligatorio.', 'ok');
       } catch (err) {
         errEl.textContent = err.message || 'No se pudo completar el registro.';
         errEl.hidden = false;
@@ -3635,26 +3962,28 @@ async function openInviteGate(inviteToken) {
 
 async function boot() {
   bindGlobalEvents();
+  // Purge any legacy JS-accessible admin token from localStorage (session now lives in HttpOnly cookie)
+  const hadLegacyToken = Boolean(localStorage.getItem(TOKEN_KEY));
+  localStorage.removeItem(TOKEN_KEY);
+  state.token = '';
+
   const inviteToken = new URLSearchParams(window.location.search).get('invite')?.trim() || '';
   if (inviteToken) {
     await openInviteGate(inviteToken);
     return;
   }
 
-  const saved = localStorage.getItem(TOKEN_KEY) || localStorage.getItem(MAIN_TOKEN_KEY) || '';
-  if (!saved) {
-    showLoginGate('');
-    return;
-  }
-  state.token = saved;
   try {
-    const me = await api('/auth/me');
+    const me = await api('/auth/me', { _silentAuthCheck: true });
     state.admin = me.admin;
-    localStorage.setItem(TOKEN_KEY, saved);
     showAppShell();
   } catch {
-    state.token = '';
-    showLoginGate('');
+    state.admin = null;
+    showLoginGate(
+      hadLegacyToken
+        ? '2FA Obligatorio activado en Credo Core OS. Inicia sesión para vincular tu autenticador.'
+        : ''
+    );
   }
 }
 

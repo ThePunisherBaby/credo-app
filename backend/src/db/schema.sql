@@ -1168,3 +1168,10 @@ CREATE TABLE IF NOT EXISTS waf_events (
 );
 CREATE INDEX IF NOT EXISTS idx_waf_events_last_seen ON waf_events(last_seen_at DESC);
 CREATE INDEX IF NOT EXISTS idx_waf_events_ip ON waf_events(ip_address, last_seen_at DESC);
+
+-- Super-Admin Mandatory TOTP 2FA Vault (AES-256-GCM encrypted secret + SHA-256 recovery codes + anti-replay step)
+ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_secret_encrypted TEXT NOT NULL DEFAULT '';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_backup_hashes TEXT[] NOT NULL DEFAULT '{}';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_last_used_step BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_enrolled_at TIMESTAMPTZ;

@@ -1,12 +1,16 @@
 const crypto = require('crypto');
 const express = require('express');
 const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const { JWT_SECRET } = require('../config');
 const { pool } = require('../db/pool');
 const {
   requireSuperAdmin,
   isUserSuperAdmin,
   isIpAllowedForAdmin,
-  signToken,
+  signAdminMfaToken,
+  setAdminSessionCookie,
+  clearAdminSessionCookie,
   signImpersonationToken,
 } = require('../middleware/auth');
 const {
@@ -25,6 +29,15 @@ const {
 const { decryptCedula, formatCedula } = require('../services/cedulaVerifier');
 const { ensureOrgForSubscription, reconcileUserEntitlements } = require('../middleware/rbac');
 const { apiCache } = require('../utils/fastCache');
+const {
+  generateTotpSecretBase32,
+  encryptTotpSecret,
+  decryptTotpSecret,
+  verifyTotpCode,
+  hashBackupCode,
+  generateBackupCodes,
+  buildEnrollmentQr,
+} = require('../services/totpService');
 
 const router = express.Router();
 
@@ -34,9 +47,29 @@ const CSV_ESCAPE = (v) => {
 };
 
 const failedAdminLogins = new Map(); // ip -> { count, firstAt }
+const validStepUpNonces = new Map(); // jti -> { adminId, expiresAt }
+
+function pruneExpiredStepUpNonces() {
+  const now = Date.now();
+  for (const [jti, rec] of validStepUpNonces.entries()) {
+    if (rec.expiresAt <= now) validStepUpNonces.delete(jti);
+  }
+}
 
 function hashInviteToken(raw) {
   return crypto.createHash('sha256').update(String(raw || '').trim()).digest('hex');
+}
+
+function serializeAdminProfile(user) {
+  return {
+    id: user.id,
+    username: user.username,
+    full_name: user.full_name,
+    email: user.email,
+    role: 'super_admin',
+    avatar_url: user.avatar_url || '',
+    totp_enabled: Boolean(user.totp_enabled),
+  };
 }
 
 async function recordFailedAdminLogin(ip, loginId) {
@@ -65,9 +98,79 @@ async function recordFailedAdminLogin(ip, loginId) {
   }
 }
 
+async function prepareTotpEnrollmentPayload(user) {
+  let secretBase32 = decryptTotpSecret(user.totp_secret_encrypted);
+  if (!secretBase32 || user.totp_enabled) {
+    secretBase32 = generateTotpSecretBase32();
+    const encrypted = encryptTotpSecret(secretBase32);
+    await pool.query(`UPDATE users SET totp_secret_encrypted = $2, updated_at = NOW() WHERE id = $1`, [
+      user.id,
+      encrypted,
+    ]);
+  }
+  const { otpauthUrl, qrSvg } = await buildEnrollmentQr({
+    accountLabel: user.username || user.email,
+    secretBase32,
+  });
+  const setupToken = jwt.sign(
+    {
+      sub: user.id,
+      purpose: 'admin_2fa_setup',
+      tv: Number(user.token_version || 1),
+    },
+    JWT_SECRET,
+    { expiresIn: '10m' }
+  );
+  return {
+    step: 'enroll_2fa',
+    setup_token: setupToken,
+    secret_base32: secretBase32,
+    otpauth_url: otpauthUrl,
+    qr_svg: qrSvg,
+    username: user.username,
+  };
+}
+
+/**
+ * Verifies either a 6-digit TOTP code OR one of the admin's single-use 8-char emergency backup codes.
+ */
+async function verifyAdminTotpOrBackup(userRow, rawCode, { allowCurrentStepReuse = false } = {}) {
+  const clean = String(rawCode || '').trim();
+  if (!clean) return { ok: false };
+
+  const secretBase32 = decryptTotpSecret(userRow.totp_secret_encrypted);
+  if (/^\d{6}$/.test(clean.replace(/\s+/g, ''))) {
+    const res = verifyTotpCode(secretBase32, clean, userRow.totp_last_used_step, { allowCurrentStepReuse });
+    if (res.valid) {
+      if (res.matchedStep > Number(userRow.totp_last_used_step || 0)) {
+        await pool.query(`UPDATE users SET totp_last_used_step = $2 WHERE id = $1`, [userRow.id, res.matchedStep]);
+      }
+      return { ok: true, method: 'totp' };
+    }
+    return { ok: false };
+  }
+
+  // Fallback: single-use emergency backup code (XXXX-XXXX)
+  const cleanAlpha = clean.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (cleanAlpha.length === 8 && Array.isArray(userRow.totp_backup_hashes) && userRow.totp_backup_hashes.length > 0) {
+    const candidateHash = hashBackupCode(cleanAlpha);
+    if (userRow.totp_backup_hashes.includes(candidateHash)) {
+      const remaining = userRow.totp_backup_hashes.filter((h) => h !== candidateHash);
+      await pool.query(`UPDATE users SET totp_backup_hashes = $2, updated_at = NOW() WHERE id = $1`, [
+        userRow.id,
+        remaining,
+      ]);
+      return { ok: true, method: 'backup_code', remaining_backup_codes: remaining.length };
+    }
+  }
+  return { ok: false };
+}
+
 // ============================================================================
-// SUPER-ADMIN DEDICATED AUTH (/api/admin/auth/*)
+// SUPER-ADMIN DEDICATED 2FA AUTH (/api/admin/auth/*)
 // ============================================================================
+
+// Step 1: Primary credentials -> returns 2FA challenge OR mandatory first-time 2FA QR enrollment
 router.post('/auth/login', async (req, res) => {
   try {
     if (!isIpAllowedForAdmin(req)) {
@@ -92,35 +195,176 @@ router.post('/auth/login', async (req, res) => {
     const ok = await bcrypt.compare(String(password), user.password_hash);
     if (!ok) {
       await recordFailedAdminLogin(ip, loginId);
-      return res.status(401).json({ error: 'Contraseña incorrecta.' });
+      return res.status(401).json({ error: 'Contraseña maestra incorrecta.' });
     }
 
     failedAdminLogins.delete(ip);
-    await writeAdminAudit({
-      admin: user,
-      action: 'admin.login',
-      targetType: 'session',
-      targetId: String(user.id),
-      after: { username: user.username, ip },
-      ip,
-    });
 
-    const token = signToken(user);
-    return res.json({
-      token,
-      admin: {
-        id: user.id,
-        username: user.username,
-        full_name: user.full_name,
-        email: user.email,
-        role: 'super_admin',
-        avatar_url: user.avatar_url || '',
+    // Mandatory 2FA onboarding if admin has not yet activated TOTP
+    if (!user.totp_enabled) {
+      const enrollData = await prepareTotpEnrollmentPayload(user);
+      return res.json(enrollData);
+    }
+
+    // Issue short-lived 5-minute 2FA challenge token (never grants console access until TOTP verified!)
+    const challengeToken = jwt.sign(
+      {
+        sub: user.id,
+        purpose: 'admin_2fa_challenge',
+        tv: Number(user.token_version || 1),
       },
+      JWT_SECRET,
+      { expiresIn: '5m' }
+    );
+
+    return res.json({
+      step: 'verify_2fa',
+      challenge_token: challengeToken,
+      username: user.username,
     });
   } catch (err) {
     console.error('[admin/auth/login]', err);
     return res.status(500).json({ error: 'Error al autenticar en Credo Core OS.' });
   }
+});
+
+// Step 2A: Verify 6-digit TOTP (or emergency recovery code) and issue HttpOnly SameSite=Strict MFA session
+router.post('/auth/login/2fa', async (req, res) => {
+  try {
+    if (!isIpAllowedForAdmin(req)) {
+      return res.status(403).json({ error: 'IP no autorizada para acceder a Credo Core OS.' });
+    }
+    const ip = getClientIp(req);
+    const { challenge_token, totp_code } = req.body || {};
+    if (!challenge_token || !totp_code) {
+      return res.status(400).json({ error: 'Ingresa tu código de autenticación 2FA.' });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(String(challenge_token), JWT_SECRET);
+    } catch {
+      return res.status(401).json({ error: 'El desafío 2FA expiró (5 min). Ingresa tu contraseña nuevamente.' });
+    }
+    if (decoded.purpose !== 'admin_2fa_challenge') {
+      return res.status(401).json({ error: 'Token de desafío inválido.' });
+    }
+
+    const { rows } = await pool.query(`SELECT * FROM users WHERE id = $1 LIMIT 1`, [decoded.sub]);
+    const user = rows[0];
+    if (!user || !isUserSuperAdmin(user) || !user.totp_enabled) {
+      return res.status(403).json({ error: 'Cuenta sin 2FA activo.' });
+    }
+    if (Number(decoded.tv || 1) !== Number(user.token_version || 1)) {
+      return res.status(401).json({ error: 'Sesión invalidada. Vuelve a iniciar sesión.' });
+    }
+
+    const check = await verifyAdminTotpOrBackup(user, totp_code, { allowCurrentStepReuse: false });
+    if (!check.ok) {
+      await recordFailedAdminLogin(ip, user.username);
+      return res.status(401).json({ error: 'Código 2FA inválido o ya utilizado. Espera el nuevo código e intenta de nuevo.' });
+    }
+
+    failedAdminLogins.delete(ip);
+    const mfaJwt = signAdminMfaToken(user);
+    setAdminSessionCookie(res, mfaJwt, req);
+
+    await writeAdminAudit({
+      admin: user,
+      action: check.method === 'backup_code' ? 'admin.login_2fa_backup_code' : 'admin.login_2fa',
+      targetType: 'session',
+      targetId: String(user.id),
+      after: { username: user.username, method: check.method, ip },
+      ip,
+    });
+
+    return res.json({
+      authenticated: true,
+      method: check.method,
+      remaining_backup_codes: check.remaining_backup_codes,
+      admin: serializeAdminProfile(user),
+    });
+  } catch (err) {
+    console.error('[admin/auth/login/2fa]', err);
+    return res.status(500).json({ error: 'No se pudo verificar el código 2FA.' });
+  }
+});
+
+// Step 2B: Confirm first-time 2FA QR enrollment -> enables totp_enabled, generates 8 backup codes & issues HttpOnly cookie
+router.post('/auth/enroll-2fa/confirm', async (req, res) => {
+  try {
+    if (!isIpAllowedForAdmin(req)) {
+      return res.status(403).json({ error: 'IP no autorizada para acceder a Credo Core OS.' });
+    }
+    const ip = getClientIp(req);
+    const { setup_token, totp_code } = req.body || {};
+    if (!setup_token || !totp_code) {
+      return res.status(400).json({ error: 'Escanea el código QR e ingresa los 6 dígitos generados.' });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(String(setup_token), JWT_SECRET);
+    } catch {
+      return res.status(401).json({ error: 'La sesión de activación 2FA expiró (10 min). Vuelve a iniciar sesión.' });
+    }
+    if (decoded.purpose !== 'admin_2fa_setup') {
+      return res.status(401).json({ error: 'Token de configuración inválido.' });
+    }
+
+    const { rows } = await pool.query(`SELECT * FROM users WHERE id = $1 LIMIT 1`, [decoded.sub]);
+    const user = rows[0];
+    if (!user || !isUserSuperAdmin(user)) {
+      return res.status(403).json({ error: 'Cuenta no autorizada.' });
+    }
+
+    const secretBase32 = decryptTotpSecret(user.totp_secret_encrypted);
+    const check = verifyTotpCode(secretBase32, totp_code, 0, { allowCurrentStepReuse: true });
+    if (!check.valid) {
+      await recordFailedAdminLogin(ip, user.username);
+      return res.status(401).json({ error: 'El código de 6 dígitos no coincide. Verifica la hora de tu teléfono e intenta de nuevo.' });
+    }
+
+    const { plainCodes, hashes } = generateBackupCodes(8);
+    const upd = await pool.query(
+      `UPDATE users
+          SET totp_enabled = TRUE,
+              totp_backup_hashes = $2,
+              totp_last_used_step = $3,
+              totp_enrolled_at = NOW(),
+              updated_at = NOW()
+        WHERE id = $1
+        RETURNING *`,
+      [user.id, hashes, check.matchedStep]
+    );
+
+    const updatedUser = upd.rows[0];
+    const mfaJwt = signAdminMfaToken(updatedUser);
+    setAdminSessionCookie(res, mfaJwt, req);
+
+    await writeAdminAudit({
+      admin: updatedUser,
+      action: 'admin.2fa_enrolled',
+      targetType: 'user',
+      targetId: String(updatedUser.id),
+      after: { username: updatedUser.username, backup_codes_generated: plainCodes.length, ip },
+      ip,
+    });
+
+    return res.status(201).json({
+      authenticated: true,
+      backup_codes: plainCodes,
+      admin: serializeAdminProfile(updatedUser),
+    });
+  } catch (err) {
+    console.error('[admin/auth/enroll-2fa]', err);
+    return res.status(500).json({ error: 'No se pudo activar 2FA.' });
+  }
+});
+
+router.post('/auth/logout', (req, res) => {
+  clearAdminSessionCookie(res, req);
+  return res.json({ ok: true });
 });
 
 // Verify single-use Super-Admin invite token (read-only check, does NOT consume token)
@@ -159,7 +403,7 @@ router.get('/auth/invite/:token', async (req, res) => {
   }
 });
 
-// Consume single-use invite token atomically and register/activate Super-Admin account
+// Consume single-use invite token atomically -> immediately transitions to mandatory 2FA QR enrollment!
 router.post('/auth/register-invite', async (req, res) => {
   const client = await pool.connect();
   try {
@@ -212,7 +456,6 @@ router.post('/auth/register-invite', async (req, res) => {
     }
 
     const passwordHash = await bcrypt.hash(rawPass, 12);
-
     const existingRes = await client.query(
       `SELECT * FROM users WHERE LOWER(email) = $1 OR LOWER(username) = $2`,
       [cleanEmail, cleanUsername]
@@ -234,6 +477,7 @@ router.post('/auth/register-invite', async (req, res) => {
                 password_hash = $5,
                 role = 'super_admin',
                 is_admin = TRUE,
+                totp_enabled = FALSE,
                 verification_status = 'verified',
                 cedula_verified = TRUE,
                 account_status = 'active',
@@ -290,18 +534,9 @@ router.post('/auth/register-invite', async (req, res) => {
       ip,
     });
 
-    const jwtToken = signToken(user);
-    return res.status(201).json({
-      token: jwtToken,
-      admin: {
-        id: user.id,
-        username: user.username,
-        full_name: user.full_name,
-        email: user.email,
-        role: 'super_admin',
-        avatar_url: user.avatar_url || '',
-      },
-    });
+    // Require mandatory 2FA enrollment right after invite registration!
+    const enrollData = await prepareTotpEnrollmentPayload(user);
+    return res.status(201).json(enrollData);
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     console.error('[admin/auth/register-invite]', err);
@@ -311,24 +546,204 @@ router.post('/auth/register-invite', async (req, res) => {
   }
 });
 
-// Protect EVERY route below with strict Super-Admin + optional IP allowlist
+// ============================================================================
+// PROTECT EVERY ROUTE BELOW WITH STRICT SUPER-ADMIN + MFA:TRUE + IP ALLOWLIST
+// ============================================================================
 router.use(requireSuperAdmin);
 
-router.get('/auth/me', (req, res) => {
-  const u = req.admin;
+router.get('/auth/me', async (req, res) => {
+  const { rows } = await pool.query(
+    `SELECT totp_enabled, totp_enrolled_at, CARDINALITY(totp_backup_hashes) AS backup_codes_remaining
+       FROM users WHERE id = $1 LIMIT 1`,
+    [req.admin.id]
+  );
+  const m = rows[0] || {};
   return res.json({
     admin: {
-      id: u.id,
-      username: u.username,
-      full_name: u.full_name,
-      email: u.email,
-      role: 'super_admin',
-      avatar_url: u.avatar_url || '',
+      ...serializeAdminProfile(req.admin),
+      totp_enabled: Boolean(m.totp_enabled),
+      totp_enrolled_at: m.totp_enrolled_at || null,
+      backup_codes_remaining: Number(m.backup_codes_remaining || 0),
     },
   });
 });
 
-// Generate a new single-use Super-Admin registration link from inside Core OS
+// Step-Up Re-Authentication Endpoint: Verifies BOTH Master Password + Live 2FA Code -> Single-Use 90s Nonce Token
+router.post('/auth/step-up', async (req, res) => {
+  try {
+    const ip = getClientIp(req);
+    const { password, totp_code, action_label = 'Acción de alto impacto' } = req.body || {};
+    if (!password || !totp_code) {
+      return res.status(400).json({ error: 'Debes confirmar tanto tu contraseña maestra como tu código 2FA.' });
+    }
+
+    const { rows } = await pool.query(`SELECT * FROM users WHERE id = $1 LIMIT 1`, [req.admin.id]);
+    const user = rows[0];
+    if (!user || !user.totp_enabled) {
+      return res.status(403).json({ error: 'Cuenta sin 2FA activo.' });
+    }
+
+    const passOk = await bcrypt.compare(String(password), user.password_hash);
+    if (!passOk) {
+      await recordFailedAdminLogin(ip, user.username);
+      return res.status(401).json({ error: 'Contraseña maestra incorrecta.' });
+    }
+
+    const mfaCheck = await verifyAdminTotpOrBackup(user, totp_code, { allowCurrentStepReuse: true });
+    if (!mfaCheck.ok) {
+      await recordFailedAdminLogin(ip, user.username);
+      return res.status(401).json({ error: 'Código 2FA inválido.' });
+    }
+
+    failedAdminLogins.delete(ip);
+    pruneExpiredStepUpNonces();
+    const jti = crypto.randomUUID();
+    validStepUpNonces.set(jti, {
+      adminId: user.id,
+      expiresAt: Date.now() + 90_000,
+    });
+
+    const stepUpToken = jwt.sign(
+      {
+        sub: user.id,
+        purpose: 'admin_step_up',
+        jti,
+      },
+      JWT_SECRET,
+      { expiresIn: '90s' }
+    );
+
+    await writeAdminAudit({
+      admin: user,
+      action: 'admin.step_up_authorized',
+      targetType: 'step_up',
+      targetId: jti.slice(0, 12),
+      after: { action_label: String(action_label).slice(0, 140), method: mfaCheck.method },
+      ip,
+    });
+
+    return res.json({
+      step_up_token: stepUpToken,
+      expires_in: 90,
+    });
+  } catch (err) {
+    console.error('[admin/auth/step-up]', err);
+    return res.status(500).json({ error: 'Error verificando autorización de alto impacto.' });
+  }
+});
+
+// Declarative Zero-Trust High-Impact Action Guard (Requires single-use Password + 2FA X-Step-Up-Token)
+function classifyHighImpactAction(req) {
+  const m = req.method;
+  const p = req.path;
+  if (m === 'GET' || m === 'HEAD' || m === 'OPTIONS') return null;
+
+  if (m === 'POST' && p === '/auth/invites') return 'Generar enlace Super-Admin de un solo uso';
+  if (m === 'POST' && p === '/auth/2fa/rotate') return 'Rotar llave 2FA o regenerar códigos de emergencia';
+  if (m === 'POST' && p === '/network/ip-bans') return 'Bloquear IP o rango CIDR en el Firewall';
+  if (m === 'DELETE' && /^\/network\/ip-bans\/\d+$/.test(p)) return 'Desbloquear IP o rango CIDR del Firewall';
+  if (m === 'DELETE' && /^\/ads\/\d+$/.test(p)) return 'Eliminar anuncio global de la plataforma';
+  if (m === 'PUT' && /^\/users\/\d+$/.test(p)) {
+    const b = req.body || {};
+    if (b.role !== undefined || b.is_admin !== undefined || b.password) {
+      return 'Modificar rol administrativo o contraseña de usuario';
+    }
+  }
+  if (m === 'POST' && /^\/users\/\d+\/plan$/.test(p)) return 'Otorgar o revocar membresía Credo One manualmente';
+  if (m === 'POST' && /^\/users\/\d+\/moderate$/.test(p)) {
+    if (['ban', 'suspend'].includes(req.body?.action)) {
+      return `Aplicar sanción crítica (${req.body.action.toUpperCase()}) a cuenta de usuario`;
+    }
+  }
+  if (m === 'POST' && /^\/users\/\d+\/impersonate$/.test(p)) return 'Suplantar sesión de usuario (Impersonate)';
+  if (m === 'DELETE' && /^\/users\/\d+$/.test(p)) return 'Eliminar cuenta de usuario permanentemente';
+  if (m === 'DELETE' && /^\/content\/\d+$/.test(p)) return 'Eliminar publicación y archivos multimedia permanentemente';
+  if (m === 'POST' && /^\/live\/\d+\/cut$/.test(p)) return 'Cortar o restaurar señal de transmisión en vivo';
+  if (m === 'PATCH' && /^\/campaigns\/\d+$/.test(p)) return 'Modificar estado financiero u operativo de campaña';
+  if (m === 'POST' && /^\/enterprise-leads\/\d+\/activate$/.test(p)) return 'Activar suscripción corporativa Enterprise';
+  if (m === 'POST' && p === '/broadcasts') return 'Enviar notificación Push masiva a la comunidad';
+  if (m === 'PUT' && p === '/settings') return 'Modificar Kill Switches o configuración crítica del servidor';
+
+  return null;
+}
+
+router.use((req, res, next) => {
+  const actionLabel = classifyHighImpactAction(req);
+  if (!actionLabel) return next();
+
+  pruneExpiredStepUpNonces();
+  const rawStepUp = String(req.headers['x-step-up-token'] || '').trim();
+  if (!rawStepUp) {
+    return res.status(428).json({
+      error: `Confirmación de Alto Impacto requerida: ${actionLabel}`,
+      code: 'STEP_UP_REQUIRED',
+      action_label: actionLabel,
+    });
+  }
+
+  try {
+    const decoded = jwt.verify(rawStepUp, JWT_SECRET);
+    if (decoded.purpose !== 'admin_step_up' || Number(decoded.sub) !== Number(req.admin.id)) {
+      throw new Error('mismatch');
+    }
+    const nonce = validStepUpNonces.get(decoded.jti);
+    if (!nonce || nonce.adminId !== req.admin.id || nonce.expiresAt <= Date.now()) {
+      throw new Error('consumed_or_expired');
+    }
+    // Strictly single-use: burn nonce immediately before executing the high-impact action!
+    validStepUpNonces.delete(decoded.jti);
+    return next();
+  } catch {
+    return res.status(428).json({
+      error: `Tu autorización de alto impacto expiró. Confirma nuevamente contraseña y 2FA para: ${actionLabel}`,
+      code: 'STEP_UP_REQUIRED',
+      action_label: actionLabel,
+    });
+  }
+});
+
+// Rotate 2FA secret or regenerate 8 recovery codes (protected by High-Impact Step-Up!)
+router.post('/auth/2fa/rotate', async (req, res) => {
+  try {
+    const mode = req.body?.mode === 'new_device' ? 'new_device' : 'backup_codes';
+    const ip = getClientIp(req);
+    if (mode === 'backup_codes') {
+      const { plainCodes, hashes } = generateBackupCodes(8);
+      await pool.query(`UPDATE users SET totp_backup_hashes = $2, updated_at = NOW() WHERE id = $1`, [
+        req.admin.id,
+        hashes,
+      ]);
+      await writeAdminAudit({
+        admin: req.admin,
+        action: 'admin.2fa_backup_codes_regenerated',
+        targetType: 'user',
+        targetId: String(req.admin.id),
+        ip,
+      });
+      return res.json({ ok: true, mode, backup_codes: plainCodes });
+    }
+
+    // Full 2FA device rotation: resets totp_enabled = FALSE, clears session cookie, and returns fresh QR enrollment
+    const { rows } = await pool.query(
+      `UPDATE users SET totp_enabled = FALSE, totp_secret_encrypted = '', token_version = COALESCE(token_version, 1) + 1 WHERE id = $1 RETURNING *`,
+      [req.admin.id]
+    );
+    clearAdminSessionCookie(res, req);
+    await writeAdminAudit({
+      admin: req.admin,
+      action: 'admin.2fa_device_rotation_started',
+      targetType: 'user',
+      targetId: String(req.admin.id),
+      ip,
+    });
+    const enrollData = await prepareTotpEnrollmentPayload(rows[0]);
+    return res.json({ ok: true, mode, ...enrollData });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// Generate a new single-use Super-Admin registration link from inside Core OS (protected by High-Impact Step-Up!)
 router.post('/auth/invites', async (req, res) => {
   try {
     const ttlMinutes = Math.max(5, Math.min(1440, Number(req.body?.ttl_minutes) || 60));
@@ -2246,7 +2661,7 @@ router.get('/security/posture', async (_req, res) => {
       pool.query(`SELECT COUNT(*)::int AS cnt FROM ip_bans WHERE expires_at IS NULL OR expires_at > NOW()`),
       pool.query(`SELECT COUNT(*)::int AS cnt FROM waf_events`).catch(() => ({ rows: [{ cnt: 0 }] })),
       pool.query(
-        `SELECT id, username, full_name, email, role, is_cto, is_ceo, last_ip, last_seen_at
+        `SELECT id, username, full_name, email, role, is_cto, is_ceo, totp_enabled, totp_enrolled_at, last_ip, last_seen_at
            FROM users
           WHERE role = 'super_admin' OR is_cto = TRUE OR is_ceo = TRUE
           ORDER BY id ASC`
@@ -2301,18 +2716,18 @@ router.get('/security/posture', async (_req, res) => {
           'Honeypot 0ms + Auto-Ban automático IPv4/IPv6 ante sondeos /wp-admin, .php, /.env, /.git, Path Traversal, SQLi y JNDI',
           'Límite global anti-RAM-DoS de 512 KB en JSON (22 MB aislado únicamente en OCR de cédula y subida multimedia)',
           'Sanitizador recursivo contra Prototype Pollution (__proto__, constructor, prototype) y bytes nulos (\\0)',
-          'CORS con lista blanca estricta + Rate Limiting multicapa (360 rpm API global · 80/15m Auth · 15/15m + Auto-Ban 6 fallos Core OS)',
+          'CORS con lista blanca estricta + Rate Limiting multicapa (360 rpm API global · 80/15m Auth · 20/15m + Auto-Ban 6 fallos Core OS)',
         ],
       },
       {
         id: 'L4',
-        name: 'Capa 4 · Identidad, Sesiones Revocables & Bóveda Cédula (Ley 172-13)',
+        name: 'Capa 4 · 2FA TOTP Obligatorio, Step-Up Alto Impacto & Bóveda Cédula',
         status: 'active',
         controls: [
-          'Contraseñas con Bcrypt (cost 12) + JWT HS256 con revocación instantánea en caliente vía token_version',
-          'Enlaces de registro Core OS de 1 solo uso (256 bits de entropía, guardados solo en SHA-256 con SELECT ... FOR UPDATE)',
-          'Cédula cifrada en reposo con AES-256-GCM + índice ciego HMAC-SHA256 + validación híbrida JCE/DGII + Tesseract OCR',
-          `Bóveda privada BYTEA de fotos de cédula (${vaultCnt.rows[0]?.cnt || 0} resguardadas, 0% acceso público, Cache-Control: no-store)`,
+          '2FA TOTP RFC 6238 obligatorio al entrar (secreto cifrado AES-256-GCM + QR SVG local sin fuga externa + anti-replay)',
+          'Sesión Nivel 0 en cookie HttpOnly; Secure; SameSite=Strict (cero tokens expuestos en localStorage ante XSS)',
+          'Step-Up Zero-Trust (HTTP 428): toda acción crítica exige re-confirmar Contraseña Maestra + Código 2FA con nonce de 1 solo uso',
+          `Cédulas AES-256-GCM + bóveda privada BYTEA (${vaultCnt.rows[0]?.cnt || 0} fotos resguardadas, 0% acceso público)`,
         ],
       },
       {

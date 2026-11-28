@@ -151,12 +151,77 @@ function isIpAllowedForAdmin(req) {
   return rules.some((rule) => ipMatchesRule(ip, rule));
 }
 
+const ADMIN_COOKIE_NAME = 'credo_core_sid';
+
+function parseCookies(req) {
+  const raw = req.headers?.cookie || '';
+  if (!raw) return {};
+  const out = {};
+  for (const part of raw.split(';')) {
+    const idx = part.indexOf('=');
+    if (idx <= 0) continue;
+    const k = part.slice(0, idx).trim();
+    const v = part.slice(idx + 1).trim();
+    try {
+      out[k] = decodeURIComponent(v);
+    } catch {
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
+function extractAdminToken(req, { allowQueryToken = false } = {}) {
+  const cookies = parseCookies(req);
+  if (cookies[ADMIN_COOKIE_NAME]) {
+    return cookies[ADMIN_COOKIE_NAME];
+  }
+  return extractBearerToken(req, { allowQueryToken });
+}
+
+function setAdminSessionCookie(res, token, req) {
+  const isLocal = req?.hostname === 'localhost' || req?.hostname === '127.0.0.1';
+  const flags = [
+    `${ADMIN_COOKIE_NAME}=${encodeURIComponent(token)}`,
+    'Path=/',
+    'HttpOnly',
+    'SameSite=Strict',
+    'Max-Age=43200', // 12 hours
+  ];
+  if (!isLocal) flags.push('Secure');
+  res.setHeader('Set-Cookie', flags.join('; '));
+}
+
+function clearAdminSessionCookie(res, req) {
+  const isLocal = req?.hostname === 'localhost' || req?.hostname === '127.0.0.1';
+  const flags = [
+    `${ADMIN_COOKIE_NAME}=`,
+    'Path=/',
+    'HttpOnly',
+    'SameSite=Strict',
+    'Max-Age=0',
+  ];
+  if (!isLocal) flags.push('Secure');
+  res.setHeader('Set-Cookie', flags.join('; '));
+}
+
 async function requireSuperAdmin(req, res, next) {
   if (!isIpAllowedForAdmin(req)) {
     return res.status(403).json({ error: 'IP no autorizada para Credo Core OS.' });
   }
   const allowQuery = req.path.includes('/stream') || req.path.endsWith('.csv');
-  const token = extractBearerToken(req, { allowQueryToken: allowQuery });
+  const token = extractAdminToken(req, { allowQueryToken: allowQuery });
+  if (!token) {
+    return res.status(401).json({ error: 'Sesión Super-Admin con 2FA requerida.' });
+  }
+
+  let payload;
+  try {
+    payload = jwt.verify(token, JWT_SECRET);
+  } catch {
+    return res.status(401).json({ error: 'Sesión Super-Admin expirada o inválida.' });
+  }
+
   const user = await loadUserFromToken(token);
   if (!user) {
     return res.status(401).json({ error: 'Sesión Super-Admin requerida.' });
@@ -164,6 +229,18 @@ async function requireSuperAdmin(req, res, next) {
   if (!isUserSuperAdmin(user) || user._impersonated_by) {
     return res.status(403).json({ error: 'Acceso exclusivo para Super-Admin (Credo Core OS).' });
   }
+
+  // Strictly verify 2FA enrollment AND mfa:true claim on the session JWT!
+  const mfaRes = await pool.query('SELECT totp_enabled FROM users WHERE id = $1 LIMIT 1', [user.id]);
+  const totpEnabled = Boolean(mfaRes.rows[0]?.totp_enabled);
+  if (!totpEnabled || payload.mfa !== true) {
+    return res.status(403).json({
+      error: 'Autenticación de 2 Factores (2FA) obligatoria para acceder a Credo Core OS.',
+      code: 'MFA_REQUIRED',
+      totp_enabled: totpEnabled,
+    });
+  }
+
   req.user = user;
   req.admin = user;
   return next();
@@ -187,6 +264,21 @@ function signToken(user) {
     },
     JWT_SECRET,
     { expiresIn: '30d' }
+  );
+}
+
+function signAdminMfaToken(user) {
+  return jwt.sign(
+    {
+      sub: user.id,
+      rank: user.ecclesiastical_rank,
+      role: 'super_admin',
+      isAdmin: true,
+      mfa: true,
+      tv: Number(user.token_version || 1),
+    },
+    JWT_SECRET,
+    { expiresIn: '12h' }
   );
 }
 
@@ -215,5 +307,8 @@ module.exports = {
   isUserSuperAdmin,
   isIpAllowedForAdmin,
   signToken,
+  signAdminMfaToken,
+  setAdminSessionCookie,
+  clearAdminSessionCookie,
   signImpersonationToken,
 };

@@ -287,10 +287,11 @@ const authLimiter = rateLimit({
 
 const adminAuthLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 15,
+  max: 20,
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req) => require('./services/systemState').getClientIp(req) || req.ip,
+  skip: (req) => req.method === 'GET' && req.path === '/me',
   message: { error: 'Demasiados intentos en Credo Core OS. Intenta nuevamente en 15 minutos.' },
 });
 
@@ -308,7 +309,7 @@ app.use('/api/v1/credo-one', credoOneRoutes);
 app.use('/api/v1/studio', studioRoutes);
 app.use('/api/v1/panel-admin', panelAdminRoutes);
 app.use('/api/v1/platform-ads', platformAdsPublicRoutes);
-app.use(['/api/admin/auth/login', '/api/admin/auth/register-invite', '/api/admin/auth/invite'], adminAuthLimiter);
+app.use('/api/admin/auth', adminAuthLimiter);
 app.use('/api/admin', adminCoreRoutes);
 app.use('/api/campaigns', campaignsTelemetryRoutes);
 app.use('/api/v1/campaigns', campaignsTelemetryRoutes);
