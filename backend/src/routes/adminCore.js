@@ -2237,7 +2237,10 @@ router.get('/security/posture', async (_req, res) => {
     const { getWafStats } = require('../middleware/securityShield');
     const { getPayPalStatusSnapshot } = require('../services/paypal');
     const fsharpKernel = require('../services/fsharpKernel');
-    const { ADMIN_ALLOWED_IPS } = require('../config');
+    const allowedIps = String(process.env.ADMIN_ALLOWED_IPS || '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
 
     const [bansCnt, wafCnt, adminsRes, invitesRes, vaultCnt, wafRecentRes] = await Promise.all([
       pool.query(`SELECT COUNT(*)::int AS cnt FROM ip_bans WHERE expires_at IS NULL OR expires_at > NOW()`),
@@ -2331,8 +2334,8 @@ router.get('/security/posture', async (_req, res) => {
           `Contenedor ejecutándose sin privilegios root (UID=${process.getuid ? process.getuid() : 'node'}) sobre Alpine Linux`,
           'PostgreSQL 100% aislado en red interna Docker (puerto 5432 cerrado a Internet) + statement_timeout=12s anti-bloqueos',
           'Consultas SQL 100% parametrizadas ($1, $2) + bitácoras inmutables admin_audit_logs y audit_logs con exportación CSV',
-          ADMIN_ALLOWED_IPS.length > 0
-            ? `Lista blanca IP adicional activa en Core OS (${ADMIN_ALLOWED_IPS.length} reglas)`
+          allowedIps.length > 0
+            ? `Lista blanca IP adicional activa en Core OS (${allowedIps.length} reglas)`
             : 'Control de acceso Nivel 0 activo (opcional: ADMIN_ALLOWED_IPS disponible por variable de entorno)',
         ],
       },
