@@ -237,6 +237,7 @@ function showAppShell() {
   $('coreLoginGate').hidden = true;
   if ($('coreInviteGate')) $('coreInviteGate').hidden = true;
   $('coreApp').hidden = false;
+  window.scrollTo(0, 0);
   const chip = $('coreAdminChip');
   if (chip && state.admin) {
     chip.innerHTML = `
